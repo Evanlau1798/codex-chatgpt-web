@@ -1,4 +1,5 @@
 import type { ChatGptTurnEnvironment } from "./environment";
+import type { ChatGptToolEvidenceGuard } from "./tool-evidence-guard";
 import { estimateTokens } from "../../lib/token-estimate";
 import type { AgentWait } from "./turn-broker-agent-wait";
 import type { BrokerRetirementFailure } from "./turn-broker-protocol";
@@ -9,6 +10,8 @@ export interface PendingTurn extends ChatGptTurnEnvironment {
 }
 
 export interface PendingInvocation {
+  queuedAt: number;
+  deliveredAt?: number;
   request: BrokerToolRequest;
   resolve: (result: BrokerToolResult) => void;
   reject: (error: Error) => void;
@@ -51,8 +54,10 @@ export interface SafeTurnControl {
 
 export interface TurnChannel {
   traceId: string;
+  toolEvidence?: ChatGptToolEvidenceGuard;
   externalOwner: boolean;
   readonly outputEnabled: boolean;
+  readonly predictionEnabled?: boolean;
   onProgress?: () => void;
   environment: PendingTurn;
   bindingId?: string;

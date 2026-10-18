@@ -345,6 +345,7 @@ test("launcher repairs its runtime before building the tunnel MCP command", asyn
       runtimeRepairs += 1;
       return repairedRuntime;
     },
+    resolveProxy: async () => "DIRECT",
     coreHome: root,
     browserDescriptorPath: config.browserHostDescriptorPath,
     runtimeInvocationFactory: ({ installedRuntimeRoot, args }) => ({
@@ -868,6 +869,7 @@ if (args[1] === "connect") {
     app: { getVersion: () => "0.2.0", isPackaged: false },
     logger: { info() {}, warn() {}, error() {} },
     sourceRoot: root, coreHome: root, browserDescriptorPath: path.join(root, "launcher.json"),
+    resolveProxy: async () => "DIRECT",
   });
   let monitored = false;
   const config = { mode: "full", brokerSocketPath: path.join(root, "broker.sock"), tunnel: {
@@ -2219,9 +2221,10 @@ test("observed CLI fresh-conversation changes retire completed tabs once and def
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-fresh-config-"));
   const descriptorPath = path.join(root, "launcher.json");
   const configPath = path.join(root, "config.json");
-  const state = { experimentalFreshConversationPerTurn: false, useSavedChats: false, autoApproveToolCalls: false,
-    biggerContextAvailable: true, experimentalBiggerContext: false,
-    plusNativeContextAvailable: false, experimentalPlusNativeContext: false };
+  // Start with the same initialized defaults as the launcher, so adding a setting
+  // cannot be mistaken for a fresh-conversation update after setup rolls back.
+  const state = { ...require("../electron/state.cjs").createStateStore(path.join(root, "state.json")).read(),
+    biggerContextAvailable: true, plusNativeContextAvailable: false };
   const key = "a".repeat(64);
   const old = { id: "old", traceId: "old-trace", status: "ready", interactionMode: "automatic", conversationKey: key,
     connectorIdentity: "Codex Native2", connectorBound: true };

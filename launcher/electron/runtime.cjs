@@ -491,6 +491,8 @@ class RuntimeHost {
 
   setExperimentalPlusNativeContext(...args) { return setupOperations.setExperimentalPlusNativeContext.apply(this, args); }
   setExperimentalNoAutoCompact(...args) { return setupOperations.setExperimentalNoAutoCompact.apply(this, args); }
+  setComposerPredictions(...args) { return setupOperations.setComposerPredictions.apply(this, args); }
+
 
   upgradeManagedRuntime(...args) { return setupOperations.upgradeManagedRuntime.apply(this, args); }
 

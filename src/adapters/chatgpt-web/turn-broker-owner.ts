@@ -2,7 +2,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 import type { ChatGptTurnEnvironment } from "./environment";
 import { callTurnBroker } from "./turn-broker-client";
 import { assertRetirementFailure, type BrokerRetirementFailure } from "./turn-broker-protocol";
-import type { BrokerRequest, BrokerToolRequest, BrokerToolResult, BrokerTurnOutputEvent } from "./turn-broker-protocol";
+import type { BrokerRequest, BrokerToolRequest, BrokerToolResult, BrokerTurnOutputEvent, BrokerOutputCapability } from "./turn-broker-protocol";
 import { assertSurfaceNonce } from "./turn-broker-safe";
 
 export interface TurnBrokerOwner {
@@ -11,7 +11,7 @@ export interface TurnBrokerOwner {
     ttlMs?: number,
     traceId?: string,
     onProgress?: () => void,
-    outputEnabled?: boolean,
+    outputEnabled?: BrokerOutputCapability,
   ): Promise<string>;
   registerSafe(environment: ChatGptTurnEnvironment, surfaceNonce: string, ttlMs?: number, traceId?: string): Promise<string>;
   updateEnvironment(token: string, environment: ChatGptTurnEnvironment): void | Promise<void>;
@@ -41,7 +41,7 @@ export interface ExternalOwnerDispatchTarget extends TurnBrokerOwner {
     ttlMs?: number,
     traceId?: string,
     onProgress?: () => void,
-    outputEnabled?: boolean,
+    outputEnabled?: BrokerOutputCapability,
   ): Promise<string>;
   registerExternalSafe(environment: ChatGptTurnEnvironment, surfaceNonce: string, ttlMs?: number, traceId?: string): Promise<string>;
 }
@@ -62,8 +62,11 @@ export function dispatchExternalOwnerRequest(
     if (request.outputEnabled !== undefined && typeof request.outputEnabled !== "boolean") {
       throw new Error("turn owner output capability is invalid");
     }
+    if (request.predictionEnabled !== undefined && (typeof request.predictionEnabled !== "boolean"
+      || (request.predictionEnabled && request.outputEnabled !== true))) throw new Error("turn owner prediction capability is invalid");
     return target.registerExternal(
-      environment, request.ttlMs, request.traceId, undefined, request.outputEnabled === true,
+      environment, request.ttlMs, request.traceId, undefined,
+      request.predictionEnabled ? { predictions: true } : request.outputEnabled === true,
     ).then(token => ({ token }));
   }
   if (request.method === "owner_register_safe") {
@@ -231,7 +234,7 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
     ttlMs?: number,
     traceId = "unknown",
     _onProgress?: () => void,
-    outputEnabled = false,
+    outputEnabled: BrokerOutputCapability = false,
   ): Promise<string> {
     const response = await callTurnBroker<{ token?: unknown }>(this.socketPath, {
       method: "owner_register",
@@ -239,6 +242,7 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
       ...(ttlMs !== undefined ? { ttlMs } : {}),
       ...(traceId !== "unknown" ? { traceId } : {}),
       ...(outputEnabled ? { outputEnabled: true } : {}),
+      ...(typeof outputEnabled === "object" ? { predictionEnabled: true } : {}),
     });
     if (typeof response.token !== "string" || !response.token.startsWith("turn_")) {
       throw new Error("DEV turn owner received an invalid broker token");
@@ -437,5 +441,8 @@ function assertBrokerTurnOutputEvent(value: unknown): BrokerTurnOutputEvent {
     || typeof event.text !== "string" || event.text.length === 0) {
     throw new Error("DEV turn owner received invalid output");
   }
+  if (event.nextMessagePrediction !== undefined && (event.kind !== "final"
+    || (event.nextMessagePrediction !== null && (typeof event.nextMessagePrediction !== "string"
+      || event.nextMessagePrediction.length > 2_000)))) throw new Error("DEV turn owner received invalid prediction");
   return event as BrokerTurnOutputEvent;
 }

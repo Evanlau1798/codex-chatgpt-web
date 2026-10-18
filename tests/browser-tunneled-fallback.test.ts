@@ -1,12 +1,14 @@
 import { expect, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
+import { ChatGptTurnLiveness } from "../src/adapters/chatgpt-web/turn-liveness";
+import { BrowserDiagnosticHistory } from "../src/adapters/chatgpt-web/browser-diagnostic-history";
 import { resolveChatGptWebModelMode } from "../src/adapters/chatgpt-web/model";
 import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_CONTROL_SELECTOR, CHATGPT_STOP_BUTTON_SELECTOR, CHATGPT_TEMPORARY_CHAT_URL, CHATGPT_USER_TURN_SELECTOR } from "../src/chatgpt-session";
 import type { BrokerTurnOutputEvent } from "../src/adapters/chatgpt-web/turn-broker-protocol";
@@ -15,6 +17,8 @@ import { publishPendingFinalizationOutput, submitTurnOutput, waitForTurnOutput, 
 import type { TurnChannel } from "../src/adapters/chatgpt-web/turn-broker-state";
 import { chatGptSameSurfaceRecoveryDecision, CHATGPT_SAME_SURFACE_RECOVERY_PROMPT } from "../src/adapters/chatgpt-web/runtime-lifecycle";
 import { chatGptSameSurfaceRecoveryPrompt } from "../src/adapters/chatgpt-web/same-surface-recovery";
+import { createChatGptSameSurfaceRetry } from "../src/adapters/chatgpt-web/same-surface-recovery";
+import { ChatGptTurnSession, ChatGptTextFeed, ChatGptTraceFeed, chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import * as launcherControl from "../src/launcher-browser-host";
 const hostSource = createRequire(import.meta.url).resolve("../launcher/electron/browser-host.cjs");
 const hostRequire = createRequire(hostSource);
@@ -29,6 +33,7 @@ const OLD = "Review in progress.";
 const FINAL = "Findings: No blocking defects. Review complete.";
 
 async function runFixture(options: {
+  diagnosticsRoot?: string;
   manualApproval?: boolean;
   approvalOutcome?: "timeout" | "aborted";
   stale?: boolean; tunneledFinal?: boolean; steering?: boolean; batches?: number;
@@ -40,6 +45,9 @@ async function runFixture(options: {
   composerBusyAfterAdmission?: boolean;
   boundRecoveryParagraphs?: boolean;
   localizedGeneration?: boolean;
+  streamingGeneration?: boolean;
+  keepResponseStreamAfterFinal?: boolean;
+  turnTimeoutMs?: number;
   lateFinalBeforeRecoverySend?: boolean;
   lateFinalAfterFinalizationCas?: boolean;
   lateDomFinalBeforeRecoverySend?: boolean;
@@ -53,6 +61,10 @@ async function runFixture(options: {
   recoverySendActivationCallback?: boolean;
   finalDuringRecoverySubmission?: boolean;
   recoveryReceiptFails?: boolean;
+  remainingWorkAfterRecovery?: boolean;
+  pauseAfterRecoveryWork?: boolean;
+  errorRecovery?: BrowserTurn["retryPromptForError"];
+  onToolSettled?: () => void;
   steeringBeforeRecoverySend?: boolean;
   recentToolProgress?: boolean;
   delayedSecondBatch?: boolean;
@@ -66,7 +78,7 @@ async function runFixture(options: {
   progressScenario?: "status" | "native-tool" | "static" | "foreign";
 } = {}) {
   const recoverable = options.emptyStopped || options.postToolRecovery;
-  const diagnostics = mkdtempSync(join(tmpdir(), "boole-browser-"));
+  const diagnostics = options.diagnosticsRoot ?? mkdtempSync(join(tmpdir(), "boole-browser-"));
   const progress = new ChatGptExternalTurnProgress();
   const actions: string[] = [];
   const selections: Array<{ url: string; model: string; effort: string; family?: string }> = [];
@@ -112,6 +124,7 @@ async function runFixture(options: {
   let snapshotsBeforeDispatch = 0;
   let domWaits = 0;
   let lastToolResultAt = now;
+  let streamRequest: any;
   let fallbackAgeMs: number | undefined;
   let recoveryDecisionAgeMs: number | undefined;
   let resumedGenerationChecks = 0;
@@ -130,7 +143,9 @@ async function runFixture(options: {
     progress.recordToolResult();
     lastToolResultAt = now;
     actions.push("tool-settled");
-    if (options.toolBatchAtRecoveryInsertion && actions.includes("recovery-tool-started")) {
+    options.onToolSettled?.();
+    if (options.toolBatchAtRecoveryInsertion && actions.includes("recovery-tool-started")
+      || options.remainingWorkAfterRecovery && actions.includes("remaining-work-started") && !options.pauseAfterRecoveryWork) {
       submitTurnOutput(channel, "final", FINAL);
     }
     if (options.finalAfterToolWithoutAssistantTurn) submitTurnOutput(channel, "final", FINAL);
@@ -143,6 +158,7 @@ async function runFixture(options: {
     else if (!options.stale) text = options.emptyStopped ? "" : FINAL;
   };
   const hidden: any = {
+    locator() { return this; },
     count: async () => 0, isVisible: async () => false,
     filter() { return this; }, first() { return this; }, last() { return this; }, nth() { return this; },
     getByText() { return this; }, getByRole() { return this; }, getByTestId() { return this; },
@@ -156,6 +172,12 @@ async function runFixture(options: {
     ...hidden, nth: () => response, page: () => page,
     evaluateAll: async () => {
       now += options.recentToolProgress ? 500 : options.emptyStopped ? 15_000 : 61_000; // Advance observation time, never sleep to guess tool completion.
+      if (streamRequest && now - lastToolResultAt >= 300_000) {
+        if (!options.keepResponseStreamAfterFinal) page.emit("requestfinished", streamRequest);
+        streamRequest = undefined;
+        actions.push(options.keepResponseStreamAfterFinal ? "final-on-open-stream" : "response-stream-settled");
+        submitTurnOutput(channel, "final", FINAL);
+      }
       if (options.progressScenario && submitted && ++progressObservations === 9) submitTurnOutput(channel, "final", FINAL);
       if (pendingSecondBatch && now - lastToolResultAt >= 75_000) {
         pendingSecondBatch = false;
@@ -178,6 +200,7 @@ async function runFixture(options: {
   };
   const page: any = Object.assign(new EventEmitter(), {
     isClosed: () => false, url: () => submitted && options.conversationRoute || options.initialRoute || CHATGPT_TEMPORARY_CHAT_URL, evaluate: async () => ({}),
+    mainFrame: () => page,
     getByText: () => hidden,
     keyboard: { press: async () => { actions.push("composer-end"); } },
     locator: (selector: string) => {
@@ -266,6 +289,7 @@ async function runFixture(options: {
   if (options.manualApproval) approvalHost.syncViewVisibility();
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
     config: { appName: "Codex Native2", browserDiagnosticsPath: diagnostics, autoApproveToolCalls: false,
+      turnTimeoutMs: options.turnTimeoutMs,
       ...(options.manualApproval ? { browserHostDescriptorPath: "fixture-control" } : {}) },
     // Date.now is already controlled by this fixture; yield I/O without a real 250ms poll.
     pauseObservation: () => { actions.push("observation-poll"); return new Promise<void>(resolve => setImmediate(resolve)); },
@@ -433,6 +457,14 @@ async function runFixture(options: {
     onSubmitted: () => {
       actions.push("submitted");
       progressStartedAt = now;
+      if (options.streamingGeneration) {
+        const request = streamRequest = { method: () => "POST", url: () => "https://chatgpt.com/backend-api/f/conversation",
+          frame: () => page.mainFrame(), postDataJSON: () => ({ model: "gpt-6" }) };
+        page.emit("request", request);
+        page.emit("response", { request: () => request, status: () => 200,
+          headers: () => ({ "content-type": "text/event-stream" }), text: async () => "data: [DONE]\n\n" });
+        actions.push("response-stream-started");
+      }
       if (options.untunneled) batch = progress.recordToolBatch(1);
     }, onTextDelta: delta => { deltas.push(delta); },
     onSendActivated: () => {
@@ -444,6 +476,7 @@ async function runFixture(options: {
     onCommentary: text => { commentary.push(text); },
     onProgress: () => { progressTimes.push(now); },
     retryPromptForError: async (error, attempt) => {
+      if (options.errorRecovery) return options.errorRecovery(error, attempt);
       if (!recoverable) return undefined;
       if (pendingSecondBatch) actions.push("recovery-before-delayed-tool");
       if (options.emptyStopped) recoveryDecisionAgeMs = now - lastToolResultAt;
@@ -491,21 +524,27 @@ async function runFixture(options: {
         return false;
       }
       if (channel.outputFinalSequence !== undefined) return false;
-      if (!finalizationStarted && revision === 1) {
+      if (!finalizationStarted && revision === (channel.activityRevision || 1)) {
         finalizationStarted = true;
         channel.finalizationOnly = true;
-        channel.activityRevision = 2;
+        channel.activityRevision = revision + 1;
         return true;
       }
       return false;
     },
     cancelFinalizationOnly: async revision => {
       actions.push(`finalization-cancel:${revision}`);
-      if (!finalizationStarted || revision !== 2 || channel.finalizationOutputArmed) return false;
+      if (!finalizationStarted || revision !== channel.activityRevision || channel.finalizationOutputArmed) return false;
       finalizationStarted = false;
       channel.finalizationOnly = false;
-      channel.activityRevision = 3;
+      channel.activityRevision += 1;
       publishPendingFinalizationOutput(channel);
+      if (recoverable && submitted >= 2 && !options.recoveryFails) {
+        if (options.remainingWorkAfterRecovery && submitted === 2) {
+          progress.recordToolBatch(1);
+          actions.push("remaining-work-started");
+        } else submitTurnOutput(channel, "final", FINAL);
+      }
       return true;
     },
     armFinalizationOutput: async revision => {
@@ -514,7 +553,7 @@ async function runFixture(options: {
       channel.finalizationOutputArmed = true;
       channel.activityRevision = 3;
       publishPendingFinalizationOutput(channel);
-      if (recoverable && submitted === 2 && !options.recoveryFails) {
+      if (recoverable && submitted === 2 && !options.recoveryFails && !options.remainingWorkAfterRecovery) {
         submitTurnOutput(channel, "final", FINAL);
       }
       return true;
@@ -565,7 +604,7 @@ async function runFixture(options: {
     warn.mockRestore();
     approvalControl?.mockRestore();
     progress.retire(new Error("fixture finished"));
-    rmSync(diagnostics, { recursive: true, force: true });
+    if (!options.diagnosticsRoot) rmSync(diagnostics, { recursive: true, force: true });
   }
   expect(pendingReaders).toBe(0);
   expect(channel.outputWaiters.size).toBe(0);
@@ -577,6 +616,29 @@ async function runFixture(options: {
   return { answer, error, actions, deltas, snapshotsBeforeDispatch, logs, commentary, composerText,
     fallbackAgeMs, recoveryDecisionAgeMs, selections, progressTimes, progressStartedAt, approvalVisibility, approvalTab, otherTab };
 }
+
+test("successful worker turns preserve the earlier failed diagnostic history", async () => {
+  const root = mkdtempSync(join(tmpdir(), "worker-diagnostic-retention-"));
+  const failure = join(root, "previous-failure");
+  const history = new BrowserDiagnosticHistory(root, failure);
+  try {
+    history.start();
+    writeFileSync(join(failure, "01-turn-failed.json"), "{}");
+    history.finish("failed");
+    utimesSync(failure, 100, 100);
+    for (let index = 0; index < 10; index++) {
+      const result = await runFixture({ diagnosticsRoot: root, tunneledFinal: true });
+      expect(result.error).toBeUndefined();
+      expect(result.answer).toBe(FINAL);
+    }
+    expect(existsSync(join(failure, "01-turn-failed.json"))).toBeTrue();
+    const states = readdirSync(root).map(name => JSON.parse(readFileSync(join(root, name, ".trace-state"), "utf8")));
+    expect(states.filter(state => state.status === "completed")).toHaveLength(10);
+    expect(states.filter(state => state.status === "failed")).toHaveLength(1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 30_000);
 
 test("native fallback observation uses the worker scheduler while preserving final and tool settlement", async () => {
   const result = await runFixture();
@@ -615,6 +677,7 @@ async function runLateCompletionActionFixture() {
   let now = 100_000;
   const clock = spyOn(Date, "now").mockImplementation(() => now);
   const hidden: any = {
+    locator() { return this; },
     count: async () => 0, isVisible: async () => false,
     filter() { return this; }, first() { return this; }, last() { return this; }, nth() { return this; },
     getByText() { return this; }, getByRole() { return this; }, getByTestId() { return this; },
@@ -745,6 +808,69 @@ test("localized ongoing generation after settled native tools does not trigger f
   expect(result.actions.some(action => action.startsWith("finalization-only:"))).toBe(false);
 });
 
+test("an owned open response stream without Stop preserves tools and waits for the atomic final", async () => {
+  const result = await runFixture({ emptyStopped: true, streamingGeneration: true });
+  expect(result.error).toBeUndefined();
+  expect(result.answer).toBe(FINAL);
+  expect(result.actions).toContain("response-stream-settled");
+  expect(result.actions).not.toContain("recovery:eligible");
+  expect(result.actions.filter(action => action === "send")).toHaveLength(1);
+  expect(result.actions.some(action => action.startsWith("finalization-only:"))).toBe(false);
+});
+
+test("an owned open response stream never extends the hard turn deadline", async () => {
+  const result = await runFixture({ emptyStopped: true, streamingGeneration: true, turnTimeoutMs: 180_000 });
+  expect(String(result.error)).toContain("timed out");
+  expect(result.actions).not.toContain("response-stream-settled");
+  expect(result.actions).not.toContain("recovery:eligible");
+  expect(result.actions.filter(action => action === "send")).toHaveLength(1);
+});
+
+test("an accepted atomic final does not wait for an idle response stream to close", async () => {
+  const result = await runFixture({ emptyStopped: true, streamingGeneration: true,
+    keepResponseStreamAfterFinal: true, turnTimeoutMs: 600_000 });
+  expect(result.error).toBeUndefined();
+  expect(result.answer).toBe(FINAL);
+  expect(result.actions).toContain("final-on-open-stream");
+  expect(result.actions).not.toContain("recovery:eligible");
+  expect(result.actions.filter(action => action === "send")).toHaveLength(1);
+});
+
+test("worker heartbeat records liveness timing without adding visible output or another send", async () => {
+  const result = await runFixture({ emptyStopped: true, streamingGeneration: true });
+  expect(result.error).toBeUndefined();
+  expect(result.answer).toBe(FINAL);
+  expect(result.logs.some(line => line.includes("worker_liveness=") && line.includes('"elapsedMs":'))).toBe(true);
+  expect(result.commentary.join(" ")).not.toContain("worker_liveness");
+  expect(result.deltas.join("")).toBe(FINAL);
+  expect(result.actions.filter(action => action === "send")).toHaveLength(1);
+});
+
+test("liveness diagnostics distinguish idle heartbeats, output and native progress with bounded duration warnings", () => {
+  let now = 0;
+  const timer = new ChatGptTurnLiveness(() => now);
+  expect(timer.heartbeat()?.timing.outputProgressAgeMs).toBeNull();
+  now = 10_000;
+  timer.submitted(); timer.generation();
+  expect(timer.heartbeat()).toBeUndefined();
+  now = 60_000;
+  expect(timer.heartbeat()?.timing).toMatchObject({ elapsedMs: 60_000, submittedAgeMs: 50_000,
+    heartbeatGapMs: 50_000, outputProgressAgeMs: null, generationSignalAgeMs: 50_000 });
+  timer.progress();
+  now = 600_000;
+  expect(timer.heartbeat({ revision: 1, lastToolBatchRevision: 1, activeToolCalls: 1, lastProgressAt: 900 }, 1000))
+    .toMatchObject({ level: "warn", timing: { elapsedMs: 600_000, outputProgressAgeMs: 540_000,
+      nativeProgressAgeMs: 100, activeToolCalls: 1, longRunning: true } });
+  now = 610_000;
+  expect(timer.heartbeat()).toBeUndefined();
+  now = 660_000;
+  expect(timer.heartbeat()?.level).toBe("info");
+  now = 1_200_000;
+  expect(timer.heartbeat()?.level).toBe("warn");
+  // Browser deadlines, broker state and visible feeds are not available to this sampler.
+  expect(timer.heartbeat()).toBeUndefined();
+});
+
 test("a settled tool can be followed by another tool after a long reasoning gap", async () => {
   const result = await runFixture({ emptyStopped: true, batches: 2, delayedSecondBatch: true });
   expect(result.error).toBeUndefined();
@@ -843,12 +969,12 @@ test("a late Native final cancels an attached recovery prompt before send and re
   expect(result.actions).toContain("clear");
 });
 
-test("a late Native final after finalization CAS is buffered until recovery submission is armed", async () => {
+test("a late Native final after finalization CAS is buffered until the submission fence reopens", async () => {
   const result = await runFixture({ emptyStopped: true, lateFinalAfterFinalizationCas: true });
   expect(result.error).toBeUndefined();
   expect(result.answer).toBe(FINAL);
   expect(result.actions).toContain("late-final-buffered");
-  expect(result.actions).toContain("finalization-output-arm:2");
+  expect(result.actions).toContain("finalization-cancel:2");
   expect(result.actions.filter(action => action === "send")).toHaveLength(2);
 });
 
@@ -903,43 +1029,78 @@ test("a tool batch arriving at recovery insertion is still acknowledged and disp
   expect(result.actions.filter(action => action === "send")).toHaveLength(1);
 });
 
+test("recovery reopens unfinished work before accepting the final answer", async () => {
+  const result = await runFixture({ emptyStopped: true, remainingWorkAfterRecovery: true });
+  expect(result.error).toBeUndefined();
+  expect(result.answer).toBe(FINAL);
+  expect(result.actions).toContain("remaining-work-started");
+  expect(result.actions.filter(action => action === "tool-dispatched")).toHaveLength(2);
+  expect(result.actions).toContain("finalization-cancel:2");
+  expect(result.actions).not.toContain("finalization-output-arm:2");
+  expect(result.actions.filter(action => action === "send")).toHaveLength(2);
+});
+
+test("production recovery renews only after new work completes, then delivers one atomic final", async () => {
+  const session = new ChatGptTurnSession({ mode: "tools", token: Promise.resolve("turn_worker_budget"),
+    browser: new Promise<string>(() => {}), trace: new ChatGptTraceFeed(), text: new ChatGptTextFeed(), cancel: () => {} });
+  session.observeCanonicalRequest({ modelId: "chatgpt-web/high", stream: true,
+    context: { tools: [], messages: [] }, options: {}, _canonicalContextComplete: true });
+  const find = spyOn(chatGptTurnSessions, "find").mockImplementation(() => session);
+  let settled = 0;
+  try {
+    const errorRecovery = createChatGptSameSurfaceRetry({ traceId: "worker_budget", executionKey: "worker_budget",
+      enhancedMode: true, outputTunnel: true, turnToken: () => "turn_worker_budget", abortSignal: new AbortController().signal });
+    const result = await runFixture({ emptyStopped: true, remainingWorkAfterRecovery: true, pauseAfterRecoveryWork: true,
+      errorRecovery, onToolSettled: () => {
+        const callId = `call_worker_budget_${++settled}`;
+        session.setOutstanding([{ callId, wireName: "exec_command", freeform: false, arguments: {} }]);
+        session.markResultDelivered(callId);
+      } });
+    expect(result.error).toBeUndefined();
+    expect(result.answer).toBe(FINAL);
+    expect(result.deltas).toEqual([FINAL]);
+    expect(result.actions.filter(action => action === "send")).toHaveLength(3);
+    expect(result.actions.filter(action => action === "tool-dispatched")).toHaveLength(2);
+  } finally { find.mockRestore(); }
+});
+
 test("missing-final recovery has no separate send-activation callback after finalization CAS", async () => {
   const result = await runFixture({ emptyStopped: true, recoverySendActivationCallback: true });
   expect(result.error).toBeUndefined();
   expect(result.answer).toBe(FINAL);
   expect(result.actions).not.toContain("recovery-send-activated");
   const finalization = result.actions.indexOf("finalization-only:1");
-  const arm = result.actions.indexOf("finalization-output-arm:2");
+  const resumed = result.actions.indexOf("finalization-cancel:2");
   const recoverySeal = result.actions.findIndex((action, index) =>
     index > finalization && action === "final-answer-admission-sealed");
   const recoveryReopen = result.actions.findIndex((action, index) =>
-    index > arm && action === "final-answer-admission-reopened");
+    index > resumed && action === "final-answer-admission-reopened");
   expect(finalization).toBeLessThan(recoverySeal);
-  expect(recoverySeal).toBeLessThan(arm);
-  expect(arm).toBeLessThan(recoveryReopen);
+  expect(recoverySeal).toBeLessThan(resumed);
+  expect(resumed).toBeLessThan(recoveryReopen);
   expect(result.actions.filter(action => action === "send")).toHaveLength(2);
 });
 
-test("a final submitted while the recovery click is being acknowledged is delivered after arming", async () => {
+test("a final submitted while the recovery click is being acknowledged is delivered after reopening", async () => {
   const result = await runFixture({ emptyStopped: true, finalDuringRecoverySubmission: true });
   expect(result.error).toBeUndefined();
   expect(result.answer).toBe(FINAL);
   expect(result.deltas).toEqual([FINAL]);
-  expect(result.actions.indexOf("send")).toBeLessThan(result.actions.indexOf("finalization-output-arm:2"));
+  expect(result.actions.indexOf("send")).toBeLessThan(result.actions.indexOf("finalization-cancel:2"));
   expect(result.actions.filter(action => action === "send")).toHaveLength(2);
 });
 
-test("an unknown recovery click receipt keeps finalization closed through bounded submission confirmation", async () => {
+test("an unknown recovery click receipt reopens work before bounded submission confirmation", async () => {
   const result = await runFixture({ emptyStopped: true, recoveryReceiptFails: true });
   expect(result.error).toBeUndefined();
   expect(result.answer).toBe(FINAL);
   expect(result.actions.filter(action => action === "send")).toHaveLength(2);
-  expect(result.actions).not.toContain("finalization-cancel:2");
-  expect(result.actions).toContain("finalization-output-arm:2");
-  expect(result.actions.indexOf("finalization-output-arm:2")).toBeLessThan(result.actions.lastIndexOf("submission-confirmed"));
+  expect(result.actions).toContain("finalization-cancel:2");
+  expect(result.actions).not.toContain("finalization-output-arm:2");
+  expect(result.actions.indexOf("finalization-cancel:2")).toBeLessThan(result.actions.lastIndexOf("submission-confirmed"));
 });
 
-test("a final accepted before an unknown recovery receipt is published after arming", async () => {
+test("a final accepted before an unknown recovery receipt is published after reopening", async () => {
   const result = await runFixture({
     emptyStopped: true,
     finalDuringRecoverySubmission: true,
@@ -948,8 +1109,8 @@ test("a final accepted before an unknown recovery receipt is published after arm
   expect(result.error).toBeUndefined();
   expect(result.answer).toBe(FINAL);
   expect(result.deltas).toEqual([FINAL]);
-  expect(result.actions).toContain("finalization-output-arm:2");
-  expect(result.actions).not.toContain("finalization-cancel:2");
+  expect(result.actions).not.toContain("finalization-output-arm:2");
+  expect(result.actions).toContain("finalization-cancel:2");
 });
 
 test("a user draft entered while finalization CAS is pending is preserved", async () => {

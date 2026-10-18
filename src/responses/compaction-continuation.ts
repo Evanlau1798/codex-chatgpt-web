@@ -26,7 +26,7 @@ export function rememberCompletedCompaction(
   const source = extractChatGptCompactionSourceRevision(parsed);
   const sources = replacement ? [source, extractChatGptCompactionSourceRevision({
     ...parsed, _rawBody: { ...(parsed._rawBody as object), input: replacement },
-  })] : [source];
+  }, { recoverCheckpoint: false })] : [source];
   if (!replacement && compactionItem) {
     // Native v2 retains user messages but drops synthetic delegated tool outputs. Match the
     // exact retained instruction from the validated input, as the v1 replacement does above.

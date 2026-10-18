@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
+import { historicalSources } from "./audit-historical-sources";
 
 type Entry = {
   path: string;
@@ -146,10 +147,10 @@ test("v5.0.1 candidate blobs and upstream test mappings remain executable", () =
     /(?:^|\/)tests\/.*\.test\./.test(entry.path) || entry.path === "scripts/smoke-codex-interrupt.ts"
   );
   for (const entry of upstreamTests) expect(entry.assertions.length, entry.path).toBeGreaterThan(0);
-  const sources = new Map<string, string>();
+  const sources = historicalSources(publishedLedgerCommit,
+    ledger.entries.flatMap(entry => entry.assertions.map(assertion => assertion.path)));
   for (const entry of ledger.entries) {
     for (const assertion of entry.assertions) {
-      if (!sources.has(assertion.path)) sources.set(assertion.path, git(["show", `${publishedLedgerCommit}:${assertion.path}`]).replace(/\r\n/g, "\n"));
       const source = sources.get(assertion.path)!;
       expect(source, `${entry.path} -> ${assertion.path}`).toContain(assertion.contains);
     }

@@ -539,6 +539,7 @@ function syncBrowserPreferences(stateStore, config) {
     && config?.browserInteractionMode !== "manual" && config?.solAvailable === true && config?.proAvailable === false;
   const experimentalPlusNativeContext = config?.experimentalPlusNativeContext === true;
   const biggerContextEnabled = config?.experimentalBiggerContext === true;
+  const composerPredictionsEnabled = config?.composerPredictionsEnabled === true;
   const useSavedChats = config?.useSavedChats === true;
   const autoApproveToolCalls = config?.autoApproveToolCalls === true;
   const enabled = config?.experimentalFreshConversationPerTurn === true
@@ -548,7 +549,8 @@ function syncBrowserPreferences(stateStore, config) {
   if (runtimeHost?.currentOperation()) return current;
   const retentionChanged = current.experimentalFreshConversationPerTurn !== enabled || current.useSavedChats !== useSavedChats
     || current.experimentalBiggerContext !== biggerContextEnabled;
-  if (!retentionChanged && current.autoApproveToolCalls === autoApproveToolCalls
+  if (!retentionChanged && current.composerPredictionsEnabled === composerPredictionsEnabled
+    && current.autoApproveToolCalls === autoApproveToolCalls
     && current.biggerContextAvailable === biggerContextAvailable
     && current.plusNativeContextAvailable === plusNativeContextAvailable
     && current.experimentalPlusNativeContext === experimentalPlusNativeContext) return current;
@@ -559,7 +561,7 @@ function syncBrowserPreferences(stateStore, config) {
       && (current.useSavedChats !== useSavedChats || tab.interactionMode === "automatic"))
     .map(tab => tab.conversationKey));
   for (const key of retainedKeys) releaseRetainedConversation(browserHost, key);
-  const state = stateStore.update({ experimentalFreshConversationPerTurn: enabled, useSavedChats, autoApproveToolCalls, biggerContextAvailable,
+  const state = stateStore.update({ composerPredictionsEnabled, experimentalFreshConversationPerTurn: enabled, useSavedChats, autoApproveToolCalls, biggerContextAvailable,
     experimentalBiggerContext: biggerContextEnabled, plusNativeContextAvailable, experimentalPlusNativeContext });
   send("launcher:state-changed", state);
   return state;
@@ -568,7 +570,8 @@ function syncBrowserPreferences(stateStore, config) {
 function registerIpc({ logger, stateStore }) {
   const runtimeChannels = new Set([
     "launcher:setup-core", "launcher:setup-mcp", "launcher:uninstall-integration",
-    "launcher:bigger-context", "launcher:skill-attachments", "launcher:fresh-conversation-per-turn",
+    "launcher:composer-predictions", "launcher:bigger-context", "launcher:skill-attachments", "launcher:fresh-conversation-per-turn",
+    "launcher:no-auto-compact", "launcher:plus-native-context",
     "launcher:use-saved-chats", "launcher:zero-risk-pro", "launcher:browser-interaction-mode",
     "launcher:auto-approve-tool-calls",
     "launcher:connector-name", "launcher:mcp-verify", "launcher:doctor", "launcher:cancel-turns",
@@ -863,7 +866,7 @@ function registerIpc({ logger, stateStore }) {
     send("launcher:browser-state", browserHost.snapshot());
     return state;
   });
-  handle("launcher:no-auto-compact", "launcher:plus-native-context", async (_event, enabled) => {
+  handle("launcher:no-auto-compact", async (_event, enabled) => {
     const result = await runtimeHost.setExperimentalNoAutoCompact(enabled === true);
     const state = stateStore.update({
       experimentalNoAutoCompact: result.enabled,
@@ -1106,6 +1109,14 @@ function registerIpc({ logger, stateStore }) {
       ...autostart,
     };
   });
+  handle("launcher:composer-predictions", async (_event, enabled) => {
+    if (browserHost.activeTraceId || browserHost.currentOperation()) {
+      throw new Error("Finish or cancel active ChatGPT turns before changing next-message predictions");
+    }
+    if (typeof enabled !== "boolean") throw new Error("Next-message predictions preference must be a boolean");
+    await runtimeHost.setComposerPredictions(enabled);
+    return syncBrowserPreferences(stateStore, runtimeHost.runtimeConfigSnapshot().config);
+  });
   handle("launcher:fresh-conversation-per-turn", async (_event, enabled) => {
     if (browserHost.activeTraceId || browserHost.currentOperation()) {
       throw new Error("Finish or cancel active ChatGPT turns before changing browser conversation retention");
@@ -1306,6 +1317,7 @@ async function start() {
     coreHome: CORE_HOME,
     browserDescriptorPath: BROWSER_DESCRIPTOR_PATH,
     launcherProfile: LAUNCHER_PROFILE.kind,
+    resolveProxy: url => session.fromPartition(LAUNCHER_PROFILE.browserPartition).resolveProxy(url),
     publishOperation,
     onConfigRead: config => {
       // Setup may read an intermediate config before rollback. The setting IPC commits
@@ -1437,6 +1449,7 @@ async function start() {
       codexRestartRequired: false,
       autoStart: false,
       experimentalBiggerContext: config?.experimentalBiggerContext === true,
+      composerPredictionsEnabled: config?.composerPredictionsEnabled === true,
       experimentalSkillAttachments: config?.experimentalSkillAttachments === true,
       experimentalPlusNativeContext: config?.experimentalPlusNativeContext === true,
       experimentalNoAutoCompact: config?.experimentalNoAutoCompact === true,
@@ -1529,6 +1542,7 @@ async function start() {
       const patch = {
         mcpRuntimeInstalled: config.mode === "full",
         experimentalBiggerContext: config.experimentalBiggerContext === true,
+        composerPredictionsEnabled: config.composerPredictionsEnabled === true,
         experimentalSkillAttachments: config.experimentalSkillAttachments === true,
         experimentalPlusNativeContext: config.experimentalPlusNativeContext === true,
         experimentalNoAutoCompact: config.experimentalNoAutoCompact === true,

@@ -9,7 +9,7 @@ export interface ChatGptTunneledOutputReader {
   seal(afterSequence: number, expectedRevision: number): Promise<boolean>;
 }
 
-interface TunnelObservation { running: boolean; responsePresent: boolean; toolCallsInFlight?: boolean }
+interface TunnelObservation { running: boolean; responsePresent: boolean; toolCallsInFlight?: boolean; responseStreamActive?: boolean }
 
 export interface ChatGptFinalTiming {
   status: "complete" | "retry" | "fallback" | "error";
@@ -143,7 +143,7 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
         return { status: "retry", retry: { text: preemptiveRetry }, lastSequence: sequence };
       }
       if (!final) {
-        if (observed.running || observed.toolCallsInFlight) {
+        if (observed.running || observed.toolCallsInFlight || observed.responseStreamActive) {
           stoppedWithoutFinalSince = undefined;
           missingResponseSince = undefined;
           terminalEvidenceSince = undefined;
@@ -169,7 +169,7 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
           const sealRevision = options.completionFence ? await options.completionFence.begin() : 0;
           if (sealRevision === undefined) { stoppedWithoutFinalSince = undefined; continue; }
           const confirmed = await observe();
-          if (!confirmed.responsePresent || confirmed.running || confirmed.toolCallsInFlight) {
+          if (!confirmed.responsePresent || confirmed.running || confirmed.toolCallsInFlight || confirmed.responseStreamActive) {
             stoppedWithoutFinalSince = undefined;
             continue;
           }
@@ -183,7 +183,7 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
             const arrived = await Promise.race([pending, delay(0)]);
             options.signal?.throwIfAborted();
             if (arrived.kind === "output") { acceptOutput(arrived.event); continue; }
-            if (!current.responsePresent || current.running || current.toolCallsInFlight) {
+            if (!current.responsePresent || current.running || current.toolCallsInFlight || current.responseStreamActive) {
               stoppedWithoutFinalSince = undefined;
               continue;
             }

@@ -1,3 +1,5 @@
+import { isNativeOpenPageContext } from "../../responses/native-context";
+import { isNativeAgentsMdContext } from "../../responses/native-context";
 import { hasEnvironmentContextFragment, isContextualCodexUserMessage } from "./contextual-user-message";
 import { codexTurnMetadataFromBody } from "./environment-identity";
 
@@ -24,7 +26,7 @@ export function isUserOrParentInstruction(
   metadata?: Record<string, unknown>,
 ): item is Record<string, unknown> {
   if (item?.type === "message" && item.role === "user") {
-    return !isContextualCodexUserMessage(item.content) && !hasEnvironmentContextFragment(item);
+    return !isNativeOpenPageContext(item) && !isNativeAgentsMdContext(item) && !isContextualCodexUserMessage(item.content) && !hasEnvironmentContextFragment(item);
   }
   if (item?.type !== "agent_message" || typeof item.id !== "string" || !item.id
     || metadata?.subagent_kind !== "thread_spawn"
@@ -133,6 +135,7 @@ export function currentTurnUserRevision(
   let contextualFallback: CurrentTurnUserRevision | undefined;
   for (let index = input.length - 1; index >= 0; index -= 1) {
     const item = record(input[index]);
+    if (item && (isNativeAgentsMdContext(item) || isNativeOpenPageContext(item))) continue;
     const ordinaryUser = item?.type === "message" && item.role === "user";
     if (!ordinaryUser && !isNativeInstruction(item, metadata)) continue;
     const messageTurnId = itemTurnId(item);

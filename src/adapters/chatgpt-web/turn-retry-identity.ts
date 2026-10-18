@@ -49,3 +49,22 @@ export function chatGptPromptFailureKey(parsed: CodexParsedRequest): string {
     options: parsed.options,
   })).digest("hex");
 }
+
+/** A native reconnect may refresh harness context, but must not resend a rejected user revision. */
+export function chatGptModelFailureKey(parsed: CodexParsedRequest): string {
+  const identity = extractChatGptTurnIdentity(parsed);
+  const executionKey = chatGptTurnExecutionKey(parsed); // validates native identity and complete compaction input
+  return createHash("sha256").update(JSON.stringify({
+    executionKey: parsed._compactionRequest ? {
+      turn: chatGptTurnRetryKey(parsed), modelId: parsed.modelId,
+      modelFamily: parsed._chatgptModelFamily, reasoning: parsed.options.reasoning,
+    } : executionKey,
+    revision: parsed._compactionRequest
+      ? (parsed._rawBody as { input: unknown[] }).input.filter(item => {
+          // Refreshed harness instructions do not authorize resending a rejected compact turn.
+          const role = item && typeof item === "object" ? (item as { role?: unknown }).role : undefined;
+          return role !== "developer" && role !== "system";
+        })
+      : currentTurnUserRevision(parsed._rawBody, identity.turnId!),
+  })).digest("hex");
+}

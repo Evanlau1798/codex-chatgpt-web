@@ -56,7 +56,8 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`model selection reuses the $
 
 // Captured in the Plus DEV launcher on Oct 8: the new default row is just "6",
 // the model toggle omits aria-hidden, and GPT-6's header shows only the effort.
-test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("GPT-6 and GPT-5.6 remain distinct across effort changes and pre-send verification", async () => {
+for (const repeatedVersion of [false, true])
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`GPT-6 and GPT-5.6 remain distinct across effort changes and pre-send verification${repeatedVersion ? " with repeated version headers" : ""}`, async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
   try {
     const page = await browser.newPage();
@@ -76,7 +77,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("GPT-6 and GPT-5.6 remain dis
         const labels=['Instant','Medium','High']; let family='6',value=1;
         function render(){
           document.querySelector('#status').textContent=family+' '+labels[value]+', '+(value+1)+' of 3.';
-          toggle.firstElementChild.textContent=(family==='6'?'':'5.6 Sol ')+labels[value];
+          toggle.firstElementChild.textContent=(family==='6'?'':'5.6 Sol ')+(${repeatedVersion} ? family+' ' : '')+labels[value];
           document.querySelector('[data-model-picker-power-slider]').innerHTML='<span data-orientation="horizontal" aria-disabled="false">'
             +labels.map((_,i)=>'<span data-selected="'+(i<=value)+'"></span>').join('')
             +'<span role="slider" aria-hidden="true" aria-valuemin="0" aria-valuemax="2" aria-valuenow="'+value+'"></span></span>';

@@ -358,6 +358,7 @@ export class LauncherBrowserHelperClient {
                   prepared: {
                     text: prepared.text,
                     images: prepared.images,
+                    ...(prepared.turnToken ? { turnToken: prepared.turnToken } : {}),
                     ...(prepared.skillFiles ? { skillFiles: prepared.skillFiles } : {}),
                     ...(prepared.multipart ? { multipart: prepared.multipart } : {}),
                     ...(prepared.modelInputText ? { modelInputText: prepared.modelInputText } : {}),

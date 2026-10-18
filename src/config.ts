@@ -110,6 +110,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     proAvailable: false,
     experimentalBiggerContext: false,
     experimentalPlusNativeContext: false,
+    composerPredictionsEnabled: false,
     experimentalSkillAttachments: false,
     experimentalNoAutoCompact: false,
     experimentalFreshConversationPerTurn: false,
@@ -405,13 +406,10 @@ function parseConfig(value: unknown, path: string): AppConfig {
     throw new Error(`Invalid extraHighAvailable in ${path}`);
   }
   for (const feature of ["experimentalBiggerContext", "experimentalPlusNativeContext", "experimentalSkillAttachments",
-    "experimentalComposerPlainText", "experimentalNoAutoCompact"] as const) {
+    "experimentalComposerPlainText", "experimentalNoAutoCompact", "composerPredictionsEnabled", "zeroRiskProEnabled"] as const) {
     if (parsed[feature] !== undefined && typeof parsed[feature] !== "boolean") {
       throw new Error(`Invalid ${feature} in ${path}`);
     }
-  }
-  if (parsed.zeroRiskProEnabled !== undefined && typeof parsed.zeroRiskProEnabled !== "boolean") {
-    throw new Error(`Invalid zeroRiskProEnabled in ${path}`);
   }
   if (parsed.stallTimeoutSec !== undefined
     && (!Number.isFinite(parsed.stallTimeoutSec) || parsed.stallTimeoutSec <= 0)) {
@@ -477,6 +475,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     proAvailable,
     modelCapabilities: parseChatGptWebModelCapabilities(parsed.modelCapabilities),
     experimentalBiggerContext,
+    composerPredictionsEnabled: parsed.composerPredictionsEnabled === true,
     experimentalSkillAttachments,
     experimentalPlusNativeContext: parsed.experimentalPlusNativeContext === true,
     experimentalNoAutoCompact: parsed.experimentalNoAutoCompact === true,

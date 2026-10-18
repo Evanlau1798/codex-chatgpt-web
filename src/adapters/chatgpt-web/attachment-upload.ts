@@ -12,6 +12,7 @@ export async function observeChatGptAttachmentUploads(page: Page, names: string[
   });
   const expected = new Set(names);
   const completed = new Set<string>();
+  const creations = new Set<string>();
   const streams = new Map<string, { name: string; fileId?: string; decoder: StringDecoder; pending: string; buffered?: string[]; activation?: Promise<void> }>();
   let failure: Error | undefined;
   let disposed = false;
@@ -22,9 +23,13 @@ export async function observeChatGptAttachmentUploads(page: Page, names: string[
   void ready.catch(() => {});
   const fail = (message: string, status = 502) => {
     if (disposed || failure) return;
+    const limited = status === 429;
     failure = new ChatGptWebAdapterError(
-      `ChatGPT attachment upload failed before the prompt was sent: ${message}. The original prompt and attachments were preserved.`,
-      { status, errorType: "server_error", code: "chatgpt_attachment_upload_failed", retryable: false },
+      limited
+        ? "ChatGPT has reached its file-upload limit. Wait until the limit shown in ChatGPT clears before retrying. The original prompt and attachments were preserved."
+        : `ChatGPT attachment upload failed before the prompt was sent: ${message}. The original prompt and attachments were preserved.`,
+      { status, errorType: limited ? "rate_limit_error" : "server_error",
+        code: limited ? "upload_quota_exceeded" : "chatgpt_attachment_upload_failed", retryable: false },
     );
     reject(failure);
   };
@@ -54,14 +59,25 @@ export async function observeChatGptAttachmentUploads(page: Page, names: string[
   const onRequest = (event: any) => {
     if (disposed || event.frameId !== frameTree.frame.id || event.request.method !== "POST") return;
     const url = new URL(event.request.url);
-    if (url.origin !== origin || !(url.pathname === "/backend-api/files/process_upload_stream"
+    // Captured in the DEV launcher: uploads first POST /files. A rejection here
+    // precedes the processing stream. Track this owned request too.
+    const creation = url.pathname === "/backend-api/files";
+    if (url.origin !== origin || !(creation || url.pathname === "/backend-api/files/process_upload_stream"
       || /^\/backend-api\/files\/upload_reservations\/[^/]+\/claim_and_finish$/.test(url.pathname))) return;
     let body;
     try { body = JSON.parse(event.request.postData ?? ""); } catch { return; }
-    if (!expected.has(body.file_name)) return;
+    if (!expected.has(body?.file_name)) return;
+    if (creation) { creations.add(event.requestId); return; }
     streams.set(event.requestId, { name: body.file_name, fileId: body.file_id, decoder: new StringDecoder("utf8"), pending: "", buffered: [] });
   };
   const onResponse = (event: any) => {
+    if (creations.has(event.requestId)) {
+      if (!disposed && (event.response.status < 200 || event.response.status >= 300)) {
+        fail(`file creation HTTP ${event.response.status}`, event.response.status);
+      }
+      // A file ID is not proof that the upload completed. Wait for processing.
+      return;
+    }
     const stream = streams.get(event.requestId);
     if (!stream || disposed) return;
     if (event.response.status < 200 || event.response.status >= 300) {
@@ -88,6 +104,7 @@ export async function observeChatGptAttachmentUploads(page: Page, names: string[
     else consume(event.requestId, stream.decoder.write(Buffer.from(event.data, "base64")));
   };
   const onFinished = (event: any) => {
+    creations.delete(event.requestId);
     const stream = streams.get(event.requestId);
     if (!stream || disposed || completed.has(stream.name)) return;
     // Handles a short response which finished before streamResourceContent was enabled.
@@ -100,6 +117,7 @@ export async function observeChatGptAttachmentUploads(page: Page, names: string[
     }).catch(() => { if (!completed.has(stream.name)) fail("upload processing ended without confirmation"); });
   };
   const onFailed = (event: any) => {
+    if (creations.delete(event.requestId)) fail("file creation connection failed");
     const stream = streams.get(event.requestId);
     if (stream) void (stream.activation ?? Promise.resolve()).then(() => {
       if (!completed.has(stream.name)) fail("upload processing connection failed");

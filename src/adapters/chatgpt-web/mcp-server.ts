@@ -369,7 +369,7 @@ export async function runChatGptMcpServer(options: {
           if (!(error instanceof Error) || error.message !== "output control is unavailable for this turn") throw error;
         }
       }
-      if (query && isConnectorContractProbeQuery(query, contract)) {
+      if (query && isConnectorContractProbeQuery(query, contract, requestId)) {
         return withTurn("codex_tool_inventory", requestId, extra, () => {
           if (!recordConnectorContractProbeQuery(query, contract)) {
             throw new Error("Connector contract probe changed during validation");

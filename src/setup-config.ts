@@ -31,6 +31,7 @@ export interface SetupOptions {
   autoApproveToolCalls?: boolean;
   useEnhancedWebSessionMode?: boolean;
   experimentalBiggerContext?: boolean;
+  composerPredictionsEnabled?: boolean;
   experimentalSkillAttachments?: boolean;
   experimentalPlusNativeContext?: boolean;
   experimentalNoAutoCompact?: boolean;
@@ -105,6 +106,7 @@ export function buildSetupConfig(
     config.browserHost = "managed-chrome";
     delete config.browserHostDescriptorPath;
   }
+  if (options.composerPredictionsEnabled !== undefined) config.composerPredictionsEnabled = options.composerPredictionsEnabled;
   if (options.autoApproveToolCalls !== undefined) config.autoApproveToolCalls = options.autoApproveToolCalls;
   if (options.experimentalSkillAttachments !== undefined) {
     config.experimentalSkillAttachments = options.experimentalSkillAttachments;

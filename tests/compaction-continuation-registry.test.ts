@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { rememberCompactionContinuation, isAcceptedCompactionContinuation } from "../src/adapters/chatgpt-web/compaction-continuation";
+import { rememberCompactionContinuation, isAcceptedCompactionContinuation, recoverCompactionInstruction } from "../src/adapters/chatgpt-web/compaction-continuation";
 import { encodeCompactionSummary } from "../src/responses/compaction";
 import type { CodexParsedRequest } from "../src/types";
 
@@ -50,6 +50,29 @@ test("the 256-entry limit evicts least recently used evidence but refreshes acce
   expect(entries[1]!.accepts()).toBeFalse();
 });
 
+test("an aborted primary instruction revokes its checkpoint and every retained representation", () => {
+  const f = fixture();
+  const retained = { turnId: "older", content: "Earlier human task" };
+  rememberCompactionContinuation(f.parsed, f.identity, [f.source, retained], "Checkpoint A");
+  for (const owner of ["unrelated", f.identity.turnId, f.source.turnId]) {
+    const parsed = { ...f.parsed, _rawBody: { input: [...(f.parsed._rawBody as { input: unknown[] }).input, {
+      type: "message", role: "user", id: "abort-notice", content: "<turn_aborted>The user interrupted this turn.</turn_aborted>",
+      internal_chat_message_metadata_passthrough: { turn_id: owner },
+    }] } };
+    const valid = owner !== f.source.turnId;
+    expect(isAcceptedCompactionContinuation(parsed, f.identity, f.source)).toBe(valid);
+    expect(isAcceptedCompactionContinuation(parsed, f.identity, retained)).toBe(valid);
+    expect(recoverCompactionInstruction(parsed, f.identity) !== undefined).toBe(valid);
+  }
+  const untagged = { content: "Source without an authenticated turn owner" };
+  rememberCompactionContinuation(f.parsed, f.identity, [untagged], "Checkpoint A");
+  const unknownOwner = { ...f.parsed, _rawBody: { input: [...(f.parsed._rawBody as { input: unknown[] }).input, {
+    type: "message", role: "user", content: "<turn_aborted>Interrupted.</turn_aborted>",
+    internal_chat_message_metadata_passthrough: { turn_id: "previous" },
+  }] } };
+  expect(isAcceptedCompactionContinuation(unknownOwner, f.identity, untagged)).toBeFalse();
+});
+
 test("a fresh daemon cannot invent checkpoint authorization from replay text", async () => {
   const f = fixture(); f.remember();
   const module = new URL("../src/adapters/chatgpt-web/compaction-continuation.ts", import.meta.url).href;
@@ -63,12 +86,13 @@ test("an exact daemon checkpoint survives process restart without granting misma
   const root = mkdtempSync(join(tmpdir(), "compaction-proof-"));
   const path = join(root, "checkpoints.json");
   const f = fixture();
+  const retained = { turnId: "older", content: "Earlier human task" };
   const module = new URL("../src/adapters/chatgpt-web/compaction-continuation.ts", import.meta.url).href;
   const probe = async (write: boolean, parsed = f.parsed, identity = f.identity, source = f.source) => {
     const script = `import { loadCompactionContinuationState, rememberCompactionContinuation, isAcceptedCompactionContinuation } from ${JSON.stringify(module)};
       loadCompactionContinuationState(${JSON.stringify(path)});
       const parsed=${JSON.stringify(parsed)}, identity=${JSON.stringify(identity)}, source=${JSON.stringify(source)};
-      if (${write}) rememberCompactionContinuation(parsed, identity, [source], "Checkpoint A");
+      if (${write}) rememberCompactionContinuation(parsed, identity, [source, ${JSON.stringify(retained)}], "Checkpoint A");
       console.log(isAcceptedCompactionContinuation(parsed, identity, source));`;
     const child = Bun.spawn([process.execPath, "-e", script], { stdout: "pipe", stderr: "pipe" });
     const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
@@ -81,13 +105,30 @@ test("an exact daemon checkpoint survives process restart without granting misma
     expect(await probe(true)).toBeTrue();
     expect(await probe(false)).toBeTrue();
     const snapshot = readFileSync(path, "utf8");
-    for (const secret of ["Checkpoint A", "Current task", f.identity.threadId]) expect(snapshot).not.toContain(secret);
+    for (const secret of ["Checkpoint A", "Current task", f.identity.threadId, f.source.turnId, retained.content]) expect(snapshot).not.toContain(secret);
+    const withAbort = (owner: string) => ({ ...f.parsed, _rawBody: { input: [...(f.parsed._rawBody as { input: unknown[] }).input, {
+      type: "message", role: "user", id: "abort-notice", content: "<turn_aborted>The user interrupted this turn.</turn_aborted>",
+      internal_chat_message_metadata_passthrough: { turn_id: owner },
+    }] } });
+    expect(await probe(false, withAbort("unrelated"))).toBeTrue();
+    expect(await probe(false, withAbort(f.source.turnId))).toBeFalse();
+    expect(await probe(false, withAbort(f.source.turnId), f.identity, retained)).toBeFalse();
+    const legacy = JSON.parse(snapshot);
+    for (const [, entry] of legacy.checkpoints) delete entry.sourceTurnHash;
+    writeFileSync(path, JSON.stringify(legacy));
+    expect(await probe(false)).toBeTrue();
+    expect(await probe(false, withAbort("unrelated"))).toBeTrue();
+    expect(await probe(false, withAbort(f.source.turnId))).toBeFalse();
+    expect(await probe(false, withAbort(f.source.turnId), f.identity, retained)).toBeFalse();
+    writeFileSync(path, snapshot);
     expect(await probe(false, { ...f.parsed, modelId: "other" })).toBeFalse();
     expect(await probe(false, { ...f.parsed, options: { reasoning: "high" } })).toBeFalse();
     expect(await probe(false, f.parsed, { ...f.identity, turnId: "other" })).toBeFalse();
     expect(await probe(false, f.parsed, f.identity, { ...f.source, content: "changed" })).toBeFalse();
     expect(await probe(false, { ...f.parsed, _rawBody: { input: [f.item("Checkpoint B")] } })).toBeFalse();
-    for (const invalid of ["{broken", '{"version":2,"checkpoints":[]}', snapshot.replace(/[a-f0-9]{64}/, "invalid")]) {
+    const invalidOwner = JSON.parse(snapshot);
+    invalidOwner.checkpoints[0][1].sourceTurnHash = 42;
+    for (const invalid of ["{broken", '{"version":2,"checkpoints":[]}', snapshot.replace(/[a-f0-9]{64}/, "invalid"), JSON.stringify(invalidOwner)]) {
       writeFileSync(path, invalid);
       expect(await probe(false)).toBeFalse();
     }

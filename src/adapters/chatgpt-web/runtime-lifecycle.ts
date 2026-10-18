@@ -100,9 +100,9 @@ export interface ChatGptSameSurfaceRecoveryDecision {
 
 export const CHATGPT_SAME_SURFACE_RECOVERY_PROMPT = [
   "The currently issued Codex Native2 tool calls have settled. This does not establish that the user's requested work is complete.",
-  "Do not call any work tool or repeat completed tool calls.",
-  "Use only actual completed tool results as evidence. Explicitly identify any requested work that has not been executed or verified; never turn this recovery into a claim that missing actions succeeded.",
-  "Produce the complete user-facing answer now by calling codex_tool_call exactly once with the current turn_token, wire_name codex.control.output, and arguments kind=final with the answer text.",
+  "Continue the remaining work using the available Codex Native2 tools and the completed results above. Do not repeat completed tool calls or abandon unfinished work merely because this response stopped.",
+  "Use only actual completed tool results as evidence; never claim that missing actions succeeded. If a genuine blocker prevents completion, report that blocker and the unfinished work accurately.",
+  "Only when the requested work is complete or genuinely blocked, submit the complete user-facing answer by calling codex_tool_call exactly once with the current turn_token, wire_name codex.control.output, and arguments kind=final with the answer text.",
   "After the output control acknowledges the final, end this response immediately. Do not write ordinary assistant prose or call another tool.",
 ].join(" ");
 

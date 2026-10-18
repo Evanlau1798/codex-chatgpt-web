@@ -110,6 +110,7 @@ test("the executable manifest owns every deterministic lifecycle test", () => {
   expect(sharedLifecycleTests).toContain("tests/lifecycle-race-ordering.test.ts");
   expect(sharedLifecycleTests).toContain("tests/broker-retirement-boundary.test.ts");
   expect(sharedLifecycleTests).toContain("tests/turn-broker-compaction.test.ts");
+  expect(sharedLifecycleTests).toContain("tests/server-compaction-continuation.test.ts");
   expect(sharedLifecycleTests).toContain("tests/zero-risk-adapter-outcomes.test.ts");
   for (const contract of [
     "tests/lifecycle-smoke-claude-config.test.ts",

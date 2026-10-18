@@ -6,10 +6,88 @@ import { join } from "node:path";
 import { callTurnBroker, RemoteTurnBroker, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
 import { submitNativeOutputControl } from "../src/adapters/chatgpt-web/native-output-control";
+import { scopeHash } from "../src/adapters/chatgpt-web/mcp-request-diagnostics";
 
 const environment = (root: string) => ({
   cwd: root, roots: [root], writableRoots: [root],
   sandboxPolicy: { type: "dangerFullAccess" as const }, tools: [],
+});
+
+test.each(["commentary", "final"] as const)("unsupported %s is rejected before Native acknowledgement and keeps the same turn usable", async kind => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-evidence-admission-"));
+  const socket = defaultBrokerEndpoint(root), broker = TurnBroker.forSocket(socket);
+  try {
+    const token = await broker.register(environment(root), undefined, "evidence-admission", undefined, true);
+    const revision = broker.beginCompletionFence(token);
+    await assert.rejects(submitNativeOutputControl(socket, token,
+      { kind, text: "The command was blocked by a security policy." }, undefined), /Native tool error/);
+    expect(broker.beginCompletionFence(token)).toBe(revision);
+    const activityId = "activity_1234567890123456";
+    await callTurnBroker(socket, { method: "claim", token, activityId });
+    await callTurnBroker(socket, { method: "activity_complete", token, activityId });
+    const final = { kind: "final", text: "No Native result was received for that command." };
+    expect(await submitNativeOutputControl(socket, token, final, undefined)).toMatchObject({ accepted: true, sequence: 1, duplicate: false });
+    expect(await submitNativeOutputControl(socket, token, final, undefined)).toMatchObject({ sequence: 1, duplicate: true });
+    expect(await broker.nextOutput(token, 0)).toMatchObject({ sequence: 1, text: final.text });
+    await assert.rejects(submitNativeOutputControl(socket, token, { kind: "final", text: "Different final." }, undefined), /conflicting final/);
+  } finally { await broker.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test.each([false, true, "true"])("Native admission uses only returned errors from its own turn (isError=%s)", async isError => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-evidence-result-"));
+  const socket = defaultBrokerEndpoint(root), broker = TurnBroker.forSocket(socket);
+  try {
+    const token = await broker.register(environment(root), undefined, "evidence-result", undefined, true);
+    const activityId = "activity_1234567890123456";
+    const { bindingId } = await callTurnBroker<{ bindingId: string }>(socket, { method: "claim", token, activityId });
+    const invocation = callTurnBroker(socket, { method: "invoke", bindingId, wireName: "read_file", arguments: {} });
+    const [request] = await broker.nextToolBatch(token);
+    const result = { isError: isError as boolean, content: [{ type: "text", text: "Permission denied by policy." }] };
+    broker.completeTool(token, request!.callId, result);
+    expect(await invocation).toEqual(result);
+    await callTurnBroker(socket, { method: "activity_complete", token, activityId });
+    const final = { kind: "final", text: "The command was blocked by a security policy." };
+    if (isError === true) expect(await submitNativeOutputControl(socket, token, final, undefined)).toMatchObject({ accepted: true });
+    else await assert.rejects(submitNativeOutputControl(socket, token, final, undefined), /Native tool error/);
+    const other = await broker.register(environment(root), undefined, "evidence-isolation", undefined, true);
+    await assert.rejects(submitNativeOutputControl(socket, other, final, undefined), /Native tool error/);
+  } finally { await broker.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("finalization-only admission rejects unsupported claims before storing its atomic final", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-evidence-finalization-"));
+  const socket = defaultBrokerEndpoint(root), broker = TurnBroker.forSocket(socket);
+  try {
+    const token = await broker.register(environment(root), undefined, "evidence-finalization", undefined, true);
+    expect(broker.beginFinalizationOnly(token, 0)).toBeTrue();
+    const revision = broker.beginCompletionFence(token)!;
+    await assert.rejects(submitNativeOutputControl(socket, token,
+      { kind: "final", text: "The command was blocked by a security policy." }, undefined), /Native tool error/);
+    expect(broker.beginCompletionFence(token)).toBe(revision);
+    expect(await submitNativeOutputControl(socket, token, { kind: "final", text: "Correct final." }, undefined)).toMatchObject({ accepted: true, sequence: 1 });
+    expect(broker.armFinalizationOutput(token, revision)).toBeTrue();
+    expect(await broker.nextOutput(token, 0)).toMatchObject({ kind: "final", sequence: 1, text: "Correct final." });
+  } finally { await broker.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("opt-in same-final suggestions are atomic, bounded and private to the final event", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-output-prediction-"));
+  const socket = defaultBrokerEndpoint(root);
+  const broker = TurnBroker.forSocket(socket);
+  const owner = new RemoteTurnBroker(socket);
+  try {
+    const disabled = await broker.register(environment(root), undefined, "prediction-off", undefined, true);
+    const token = await owner.register(environment(root), undefined, "prediction-on", undefined, { predictions: true });
+    const args = { kind: "final", text: "Complete answer.", next_message_prediction: "Show the diff." };
+    await assert.rejects(submitNativeOutputControl(socket, disabled, args, undefined), /prediction.*enabled/i);
+    await assert.rejects(submitNativeOutputControl(socket, token, { ...args, kind: "commentary" }, undefined), /prediction.*final/i);
+    await assert.rejects(submitNativeOutputControl(socket, token, { ...args, next_message_prediction: "x".repeat(2_001) }, undefined), /prediction.*invalid/i);
+    const first = await submitNativeOutputControl(socket, token, args, undefined);
+    expect(first).toEqual({ accepted: true, sequence: 1, duplicate: false });
+    expect(await submitNativeOutputControl(socket, token, args, undefined)).toMatchObject({ sequence: 1, duplicate: true });
+    await assert.rejects(submitNativeOutputControl(socket, token, { ...args, next_message_prediction: "Different." }, undefined), /conflicting final/);
+    expect(await owner.nextOutput(token, 0)).toEqual({ sequence: 1, kind: "final", text: "Complete answer.", nextMessagePrediction: "Show the diff." });
+  } finally { await broker.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
 // Await pipe I/O normally: Bun's promise matchers can re-enter its Windows pipe event loop.
@@ -50,8 +128,8 @@ test("turn output is ordered and final delivery is fail closed", async () => {
     assert.deepEqual(await nextAttempt, { sequence: 4, kind: "final", text: "Retried final." });
     const receipts = log.mock.calls.flat().filter(line => String(line).includes("output accepted"));
     expect(receipts).toHaveLength(5);
-    expect(receipts).toContain("[chatgpt-web] broker trace=output-test output accepted kind=final sequence=3 chars=5 duplicate=false");
-    expect(receipts).toContain("[chatgpt-web] broker trace=output-test output accepted kind=final sequence=3 chars=5 duplicate=true");
+    expect(receipts).toContain("[chatgpt-web] broker trace=output-test output accepted kind=final sequence=3 chars=5 duplicate=false referenceHash=" + scopeHash(token));
+    expect(receipts).toContain("[chatgpt-web] broker trace=output-test output accepted kind=final sequence=3 chars=5 duplicate=true referenceHash=" + scopeHash(token));
     expect(String(receipts)).toContain("kind=commentary sequence=1");
     expect(String(receipts)).toContain("kind=reasoning sequence=2");
     for (const privateValue of [token, "Checking the repository.", "The shared boundary is the smallest fix.", "Done.", "Retried final."]) {
@@ -141,7 +219,7 @@ test("final-answer recovery closes work tools and arms final output only after b
   }
 });
 
-test("an unsubmitted final-answer recovery can reopen work tools with the exact revision", async () => {
+test("a recovery submission fence reopens unfinished Native work with the exact revision", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-output-finalization-cancel-"));
   const socket = defaultBrokerEndpoint(root);
   const broker = TurnBroker.forSocket(socket);
@@ -153,6 +231,12 @@ test("an unsubmitted final-answer recovery can reopen work tools with the exact 
     assert.equal(await owner.beginFinalizationOnly(token, revision!), true);
     assert.equal(await owner.cancelFinalizationOnly(token, revision! + 1), true);
     assert.equal(await owner.cancelFinalizationOnly(token, revision! + 1), false);
+    const activityId = "activity_remaining_work_123456";
+    await callTurnBroker(socket, { method: "claim", token, activityId });
+    await assert.rejects(submitNativeOutputControl(
+      socket, token, { kind: "final", text: "Premature completion." }, undefined,
+    ), /work tools are still active/);
+    await callTurnBroker(socket, { method: "activity_complete", token, activityId });
     expect(await submitNativeOutputControl(
       socket, token, { kind: "final", text: "Late final remains admissible." }, undefined,
     )).toMatchObject({ accepted: true });

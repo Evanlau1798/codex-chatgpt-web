@@ -60,6 +60,8 @@ Setup options:
   --retained-conversation      Disable fresh chat per turn (default)
   --saved-chats                Save Codex/Claude task chats to ChatGPT history (API stays Temporary)
   --temporary-chats            Use Temporary Chat for task conversations (default)
+  --composer-predictions       Opt into same-final suggestions with a local TTL cache (Enhanced)
+  --no-composer-predictions    Disable next-message suggestions (default)
   --skill-attachments          Experimental selected skills as text attachments
   --inline-skills              Keep selected skills inline (default)
   --no-auto-compact            Disable Codex auto compact for routed Web models (experimental)

@@ -47,6 +47,7 @@ const releaseChild = deferred<void>();
 let childPending = false;
 let childAborted = false;
 let childCompleted = false;
+let grandchildCompleted = false;
 const requestLog: Array<{
   role: Role;
   step: number;
@@ -180,6 +181,7 @@ async function* toolCall(name: string, args: Record<string, unknown>): AsyncGene
 async function* finalAnswer(text: string): AsyncGenerator<AdapterEvent> {
   yield { type: "text_delta", text, phase: "final_answer" };
   if (text === "CHILD_LIFECYCLE_OK") childCompleted = true;
+  if (text === "GRANDCHILD_LIFECYCLE_OK") grandchildCompleted = true;
   yield { type: "done", stopReason: "stop", endTurn: true };
 }
 
@@ -212,6 +214,12 @@ async function* firstWait(body: Record<string, unknown>): AsyncGenerator<Adapter
   yield* toolCall("wait_agent", protocol === "v1"
     ? { targets: [spawnedAgentId(body)], timeout_ms: 500 }
     : { timeout_ms: 500 });
+}
+
+async function* delayedGrandchildAnswer(): AsyncGenerator<AdapterEvent> {
+  // Exercise a pending nested wait instead of depending on a sub-500ms provider response.
+  await Bun.sleep(750);
+  yield* finalAnswer("GRANDCHILD_LIFECYCLE_OK");
 }
 
 function responseFor(role: Role, step: number, body: Record<string, unknown>): AsyncIterable<AdapterEvent> {
@@ -272,13 +280,21 @@ function responseFor(role: Role, step: number, body: Record<string, unknown>): A
       reasoning_effort: explicitChildReasoningEffort,
     });
     if (step === 1) return toolCall("wait_agent", protocol === "v1"
-      ? { targets: [spawnedAgentId(body)], timeout_ms: 500 }
-      : { timeout_ms: 500 });
-    if (step === 2) return finalAnswer("CHILD_LIFECYCLE_OK");
+      ? { targets: [spawnedAgentId(body)], timeout_ms: 5_000 }
+      : { timeout_ms: 5_000 });
+    if (step === 2) {
+      const input = body.input as Array<Record<string, unknown>>;
+      const call = input.findLast(item => item.type === "function_call" && item.name === "wait_agent")!;
+      const output = input.find(item => item.type === "function_call_output" && item.call_id === call.call_id)!;
+      if (JSON.parse(String(output.output)).timed_out !== false || !grandchildCompleted) {
+        throw new Error("Child finished before the grandchild completed its response");
+      }
+      return finalAnswer("CHILD_LIFECYCLE_OK");
+    }
     if (step === 3) return finalAnswer("CHILD_FOLLOWUP_OK");
     throw new Error(`Unexpected child lifecycle step ${step}`);
   }
-  if (step === 0) return finalAnswer("GRANDCHILD_LIFECYCLE_OK");
+  if (step === 0) return delayedGrandchildAnswer();
   throw new Error(`Unexpected grandchild lifecycle step ${step}`);
 }
 

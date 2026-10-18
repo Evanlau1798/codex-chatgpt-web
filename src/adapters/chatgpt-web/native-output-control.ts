@@ -5,7 +5,7 @@ import type { CodexParsedRequest } from "../../types";
 export const CODEX_OUTPUT_CONTROL_WIRE_NAME = "codex.control.output";
 
 export async function readNativeOutputControlInventory(socketPath: string, token: string, signal?: AbortSignal) {
-  const state = await callTurnBroker<{ finalizationOnly: boolean }>(socketPath,
+  const state = await callTurnBroker<{ finalizationOnly: boolean; predictionEnabled?: boolean }>(socketPath,
     { method: "read_output_control", token }, 5_000, signal);
   return {
     tools: [{ wire_name: CODEX_OUTPUT_CONTROL_WIRE_NAME, name: CODEX_OUTPUT_CONTROL_WIRE_NAME,
@@ -13,7 +13,8 @@ export async function readNativeOutputControlInventory(socketPath: string, token
       description: "Bound output control. Call codex_tool_call with this wire_name, the same turn_token, and arguments containing kind and text. This does not execute work tools. After final accepted=true, end immediately.",
       parameters: { type: "object", additionalProperties: false, required: ["kind", "text"],
         properties: { kind: { type: "string", enum: state.finalizationOnly ? ["final"] : ["commentary", "reasoning", "final"] },
-          text: { type: "string", minLength: 1, maxLength: 1_000_000 } } } }],
+          text: { type: "string", minLength: 1, maxLength: 1_000_000 },
+          ...(state.predictionEnabled ? { next_message_prediction: { type: ["string", "null"], maxLength: 2_000 } } : {}) } } }],
     total: 1, next_offset: null,
     ...(state.finalizationOnly ? { work_tools_closed: true } : {}),
   };
@@ -53,7 +54,7 @@ export async function submitNativeOutputControl(
   signal?: AbortSignal,
 ): Promise<{ accepted: true; sequence: number; duplicate: boolean }> {
   if (input !== undefined) throw new Error("Codex Native output control does not accept freeform input");
-  if (!args || Object.keys(args).some(key => key !== "kind" && key !== "text")) {
+  if (!args || Object.keys(args).some(key => key !== "kind" && key !== "text" && key !== "next_message_prediction")) {
     throw new Error("Codex Native output control accepts only kind and text");
   }
   const kind = args.kind;
@@ -64,6 +65,7 @@ export async function submitNativeOutputControl(
   }
   return callTurnBroker(socketPath, {
     method: "submit_output", token, outputKind: kind, outputText: text,
+    ...(Object.hasOwn(args, "next_message_prediction") ? { nextMessagePrediction: args.next_message_prediction as string | null } : {}),
   }, 5_000, signal);
 }
 

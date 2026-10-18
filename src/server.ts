@@ -7,6 +7,8 @@ import { DEFAULT_CHATGPT_AUTOMATIC_WEB_SESSION_LIMIT, chatGptAccountSafety } fro
 import { closeChatGptBrowserWorkers, discardChatGptStartupPages } from "./adapters/chatgpt-web/browser-worker";
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
 import { chatGptTurnExecutionKey, chatGptTurnSessions } from "./adapters/chatgpt-web/turn-execution";
+import { chatGptModelFailureKey } from "./adapters/chatgpt-web/turn-retry-identity";
+import { chatGptWebTurnRetryPolicy } from "./adapters/chatgpt-web/retry-policy";
 import { ChatGptThreadEnvironmentStore } from "./adapters/chatgpt-web/thread-environment";
 import { handleClaudeSteeringHook } from "./messages/steering-hook";
 import { handleTurnCancellation } from "./server-turn-cancellation";
@@ -15,8 +17,10 @@ import {
   extractChatGptTurnUserRevision,
   extractChatGptTurnIdentity,
   extractCodexTurnIdentityFromBody,
+  isCodexComposerPrediction,
 } from "./adapters/chatgpt-web/environment";
 import { rememberCompletedCompaction } from "./responses/compaction-continuation";
+import { composerPredictionEnabled, composerPredictionResponse, rememberComposerPrediction } from "./composer-predictions";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
 import type { AppConfig } from "./config";
 import { providerConfig } from "./config";
@@ -119,7 +123,7 @@ export async function responseRequest(
   // shortcut cannot make an unknown or unavailable model look enabled, then
   // handle the exact title contract before lifecycle identity registration,
   // adapter, broker, or browser work.
-  if (typeof requestedModel === "string" && isChatGptWebModelSlug(requestedModel)) {
+  if (typeof requestedModel === "string" && isChatGptWebModelSlug(requestedModel) && !isCodexComposerPrediction(raw)) {
     try {
       requireChatGptWebModelRoute(requestedModel, config);
     } catch (error) {
@@ -127,6 +131,10 @@ export async function responseRequest(
     }
     const titleAuxiliary = codexTitleAuxiliaryResponse(raw);
     if (titleAuxiliary) return titleAuxiliary;
+  }
+  if (typeof requestedModel === "string" && isChatGptWebModelSlug(requestedModel) && isCodexComposerPrediction(raw)) {
+    return composerPredictionResponse(expandPreviousResponseInput(raw) as Record<string, unknown>, config,
+      chatGptWebExecutionNamespace(providerConfig(config)));
   }
   try {
     const identity = extractCodexTurnIdentityFromBody(raw);
@@ -147,6 +155,7 @@ export async function responseRequest(
     ? (raw as { previous_response_id?: unknown }).previous_response_id
     : undefined;
   const expanded = expandPreviousResponseInput(raw);
+  const executionConfig = config;
   let parsed: CodexParsedRequest;
   let route: ChatGptWebModelRoute;
   try {
@@ -154,7 +163,7 @@ export async function responseRequest(
     parsed._canonicalContextComplete = typeof requestedPreviousResponseId !== "string"
       || expanded !== raw
       || parsed._contextCompactionBoundary === true;
-    route = routeChatGptWebRequest(parsed, config);
+    route = routeChatGptWebRequest(parsed, executionConfig);
     const identity = extractChatGptTurnIdentity(parsed);
     if (identity.threadId && identity.turnId) {
       options.onTurnIdentity?.({ threadId: identity.threadId, turnId: identity.turnId });
@@ -184,9 +193,11 @@ export async function responseRequest(
   }
 
   const compaction = parsed._compactionRequest === true;
+  if (!compaction && !parsed._localCompactionRequest && composerPredictionEnabled(config)) parsed._composerPrediction = { enabled: true };
   const compactionItem = compaction && parsed._compactionResponseFormat !== "message";
   const rememberCompletedResponse = (response: Record<string, unknown>): void => {
     if (!compaction) {
+      rememberComposerPrediction(parsed, response, chatGptWebExecutionNamespace(providerConfig(config)));
       if (options.rememberState !== false) rememberResponseState(parsed._rawBody, response, { force: true });
       return;
     }
@@ -216,11 +227,13 @@ export async function responseRequest(
     parsed.context.messages.push({ role: "user", content: COMPACT_PROMPT, timestamp: Date.now() });
   }
 
-  const provider = providerConfig(config);
+  const provider = providerConfig(executionConfig);
   let traceId: string | undefined;
+  let modelRejectionKey: string | undefined;
   try {
     traceId = chatGptWebTraceId(provider, parsed);
     if (!compaction) extractChatGptTurnUserRevision(parsed);
+    modelRejectionKey = `${chatGptWebExecutionNamespace(provider)}:model:${chatGptModelFailureKey(parsed)}`;
   } catch (error) {
     // A cancelled browser session can only exist after the adapter accepted canonical native
     // turn identity and user-revision metadata. Requests without that identity have no matching
@@ -252,6 +265,14 @@ export async function responseRequest(
       status: 400,
       headers: { "content-type": "application/json" },
     });
+  }
+  if (modelRejectionKey) {
+    const rejected = chatGptWebTurnRetryPolicy.terminalFailure(modelRejectionKey);
+    // Codex ignores retryable=false on unknown SSE errors, including exhausted final recovery.
+    // The receipt makes the same rejected revision HTTP 400 without another browser send.
+    if (rejected) return Response.json({ error: {
+      type: rejected.errorType, code: rejected.code, message: rejected.message,
+    }, retryable: false }, { status: 400 });
   }
   const adapter = adapterFactory(provider);
   const queue = new AsyncEventQueue<AdapterEvent>();

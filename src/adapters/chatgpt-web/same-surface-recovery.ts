@@ -20,7 +20,7 @@ export function chatGptSameSurfaceRecoveryPrompt(token: string, returnedErrors: 
     "<codex_native_turn_binding>",
     `turn_token ${token}`,
     "</codex_native_turn_binding>",
-    "Call codex_tool_call directly with the following payload, replacing only the text placeholder with your entire answer. Do not use input or look up this control in inventory:",
+    "After completing the remaining work (or identifying a genuine blocker), call codex_tool_call directly with the following final payload, replacing only the text placeholder with your entire answer. Do not use input or look up this control in inventory:",
     JSON.stringify({ turn_token: token, wire_name: "codex.control.output", arguments: { kind: "final", text: "<complete user-facing answer>" } }),
     "After accepted=true, end immediately without further calls or prose.",
   // Keep this owned control in one paragraph: Lexical textContent omits paragraph separators.
@@ -80,15 +80,19 @@ export function createChatGptSameSurfaceRetry(options: {
 }): ErrorRetry | undefined {
   if (!options.enhancedMode || !options.outputTunnel) return undefined;
   let diagnosticLogged = false;
+  let recoveredResultCount: number | undefined;
   return async (error, attempt) => {
     const upstream = await options.upstream?.(error);
     if (upstream) return upstream;
     const session = chatGptTurnSessions.find(options.executionKey);
     if (!session) return undefined;
+    const completedResults = session.completedToolResultCount();
+    // Only delivered work results renew the budget; heartbeat and cancelled calls cannot.
+    const recoveryAttempt = recoveredResultCount === undefined || completedResults > recoveredResultCount ? 1 : 2;
     const decision = chatGptSameSurfaceRecoveryDecision(
       error,
       session,
-      attempt,
+      recoveryAttempt,
       options.enhancedMode,
       options.abortSignal,
     );
@@ -105,6 +109,7 @@ export function createChatGptSameSurfaceRetry(options: {
     if (!decision.eligible) return undefined;
     const token = options.turnToken();
     if (!token) return undefined;
-    return { text: chatGptSameSurfaceRecoveryPrompt(token, options.returnedErrors?.()), replaceCandidate: true };
+    return { text: chatGptSameSurfaceRecoveryPrompt(token, options.returnedErrors?.()), replaceCandidate: true,
+      onSubmitted: () => { recoveredResultCount = completedResults; } };
   };
 }

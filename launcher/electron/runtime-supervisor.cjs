@@ -17,6 +17,7 @@ const {
 const { runtimeInvocation } = require("./runtime-command.cjs");
 const { normalizeContextModes } = require("./context-mode.cjs");
 const { windowsTrustEnvironment } = require("./windows-trust.cjs");
+const { tunnelConnectionEnvironment } = require("./tunnel-proxy.cjs");
 
 const RESTART_WINDOW_MS = 60_000;
 const MAX_RESTARTS_PER_WINDOW = 5;
@@ -372,6 +373,7 @@ class RuntimeSupervisor {
     publishOperation,
     runtimeInvocationFactory = runtimeInvocation,
     onConfigRead,
+    resolveProxy,
   }) {
     this.app = app;
     this.logger = logger;
@@ -387,6 +389,7 @@ class RuntimeSupervisor {
     this.publishOperation = publishOperation;
     this.runtimeInvocationFactory = runtimeInvocationFactory;
     this.onConfigRead = onConfigRead;
+    this.resolveProxy = resolveProxy;
     this.configPath = path.join(coreHome, "config.json");
     this.statePath = path.join(coreHome, "runtime", "launcher-supervisor.json");
     this.daemon = null;
@@ -546,9 +549,9 @@ class RuntimeSupervisor {
     if (!preservesLiveOwnership) this.writeState("external", detail);
   }
 
-  childEnvironment(name, config) {
+  childEnvironment(name, config, environment = process.env) {
     const env = {
-      ...process.env,
+      ...environment,
       CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR: this.browserDescriptorPath,
     };
     delete env.CODEX_CHATGPT_WEB_API_KEY;
@@ -1107,15 +1110,18 @@ class RuntimeSupervisor {
   }
 
   async runTunnelConnectCommand(config) {
+    const connection = await tunnelConnectionEnvironment({ resolveProxy: this.resolveProxy });
     const contract = config.browserInteractionMode === "manual" ? "safe" : "native";
     const invocation = this.runtimeCommand([
       "mcp", "--contract", contract, "--broker-socket", config.brokerSocketPath,
     ]);
     return await this.runTunnelCommand(
       config,
-      managedTunnelConnectArgs(config, invocation),
+      [...managedTunnelConnectArgs(config, invocation), "--control-plane-base-url", connection.baseURL],
       TUNNEL_START_TIMEOUT_MS,
       "Tunnel managed startup",
+      // Finish initialization before another chat can call the shared MCP server.
+      { ...connection.env, MCP_STDIO_SEND_INITIALIZED_NOTIFICATION: "true" },
     );
   }
 
@@ -1666,14 +1672,14 @@ class RuntimeSupervisor {
     );
   }
 
-  async runTunnelCommand(config, args, timeoutMs, label) {
+  async runTunnelCommand(config, args, timeoutMs, label, env = process.env) {
     const tunnel = config.tunnel;
     if (!tunnel) throw new Error("launcher-owned tunnel has no runtime configuration");
     return await new Promise((resolve, reject) => {
       const child = spawn(tunnel.binaryPath, args, {
         cwd: tunnel.profileDir,
         detached: DETACH_OWNED_CHILD,
-        env: { ...this.childEnvironment("tunnel", config), MCP_CONNECTION_MAX_TTL: TUNNEL_MCP_CONNECTION_MAX_TTL },
+        env: this.childEnvironment("tunnel", config, { ...process.env, ...env, MCP_CONNECTION_MAX_TTL: TUNNEL_MCP_CONNECTION_MAX_TTL }),
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
       });

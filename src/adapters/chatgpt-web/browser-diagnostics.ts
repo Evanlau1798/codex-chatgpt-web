@@ -1,8 +1,8 @@
+import { BrowserDiagnosticHistory } from "./browser-diagnostic-history";
 import { randomUUID } from "node:crypto";
-import { chmodSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "playwright-core";
-import { chatGptResponseStructures } from "./browser-response-structure";
+import { chatGptResponseStructureLogEntries, chatGptResponseStructures } from "./browser-response-structure";
 import { atomicWriteFile, getConfigDir } from "../../config";
 import {
   CHATGPT_ASSISTANT_TURN_SELECTOR,
@@ -28,8 +28,6 @@ export function sanitizeChatGptBrowserDiagnosticState(value: unknown): unknown {
     return sanitized === undefined ? [] : [[key, sanitized]];
   }));
 }
-
-const CHATGPT_BROWSER_DIAGNOSTIC_TRACE_LIMIT = 10;
 
 export async function readChatGptUpstreamFailureUiState(
   page: Page,
@@ -77,36 +75,6 @@ function diagnosticScreenshotMask(page: Page) {
   ];
 }
 
-function privateDirectory(path: string): void {
-  mkdirSync(path, { recursive: true, mode: 0o700 });
-  try { chmodSync(path, 0o700); } catch { /* Windows ACLs are managed by the installer. */ }
-}
-
-function pruneBrowserDiagnostics(root: string, current: string): void {
-  const attempts = readdirSync(root, { withFileTypes: true })
-    .filter(entry => entry.isDirectory() && /^[A-Za-z0-9_-]{6,128}$/.test(entry.name))
-    .map(entry => {
-      const path = join(root, entry.name);
-      return { path, traceId: entry.name.replace(/-[a-f0-9]{8}$/, ""), modifiedAt: statSync(path).mtimeMs };
-    })
-    .sort((left, right) => Number(right.path === current) - Number(left.path === current)
-      || right.modifiedAt - left.modifiedAt);
-  const traces = new Map<string, typeof attempts>();
-  for (const attempt of attempts) {
-    const group = traces.get(attempt.traceId) ?? [];
-    group.push(attempt);
-    traces.set(attempt.traceId, group);
-  }
-  // ponytail: ten logical traces, first and latest attempt only; expand only for proven diagnostic needs.
-  let index = 0;
-  for (const group of traces.values()) {
-    const keep = index++ < CHATGPT_BROWSER_DIAGNOSTIC_TRACE_LIMIT ? new Set([group[0], group.at(-1)]) : new Set();
-    for (const attempt of group) {
-      if (!keep.has(attempt)) rmSync(attempt.path, { recursive: true, force: true });
-    }
-  }
-}
-
 function diagnosticError(error: unknown): string {
   return redactChatGptUiDiagnostic(error instanceof Error ? error.message : String(error));
 }
@@ -121,6 +89,7 @@ function verificationFailure(error: unknown): string {
 
 export class ChatGptBrowserDiagnostics {
   private readonly directory: string;
+  private readonly history: BrowserDiagnosticHistory;
   private sequence = 0;
   private initialized = false;
   private assistantTurnBinding?: ChatGptAssistantTurnBinding;
@@ -134,6 +103,12 @@ export class ChatGptBrowserDiagnostics {
       throw new Error("ChatGPT browser diagnostic trace id is invalid");
     }
     this.directory = join(this.root, `${traceId}-${randomUUID().slice(0, 8)}`);
+    this.history = new BrowserDiagnosticHistory(this.root, this.directory);
+  }
+
+  finish(status: "completed" | "failed"): void {
+    try { this.history.finish(status); }
+    catch { console.warn("[chatgpt-web] browser diagnostic retention failed"); }
   }
 
   bindAssistantTurn(binding: ChatGptAssistantTurnBinding): void {
@@ -174,16 +149,7 @@ export class ChatGptBrowserDiagnostics {
 
       if (responseStructure && /turn-failed|response-stalled/.test(checkpoint)) {
         // Preserve the bounded, content-free tree when the failing renderer is replaced.
-        console.info(`[chatgpt-web] response_structure ${JSON.stringify({
-          traceId: this.traceId, checkpoint: stem,
-          columns: ["parent", "tag", "rendered", "assistant", "user", "searchUnit", "markdown", "streamingStatus", "activityStart", "completionControl"],
-          turns: responseStructure.map(turn => ({ truncated: turn.truncated,
-            nodes: turn.nodes.map(node => [node.parent, node.tag, ...[
-              node.rendered, node.assistant, node.user, node.searchUnit, node.markdown,
-              node.streamingStatus, node.activityStart, node.completionControl,
-            ].map(Number)]),
-          })),
-        })}`);
+        for (const entry of chatGptResponseStructureLogEntries(this.traceId, stem, responseStructure)) console.info(entry);
       }
 
       if (!this.contentFree && browserDiagnosticIncludesScreenshot(checkpoint)) {
@@ -211,9 +177,7 @@ export class ChatGptBrowserDiagnostics {
 
   private initialize(): void {
     if (this.initialized) return;
-    privateDirectory(this.root);
-    privateDirectory(this.directory);
-    pruneBrowserDiagnostics(this.root, this.directory);
+    this.history.start();
     this.initialized = true;
   }
 

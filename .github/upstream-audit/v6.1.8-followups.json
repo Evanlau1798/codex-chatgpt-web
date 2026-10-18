@@ -22,5 +22,23 @@
     "baselineSha256": "7f87278e90a4fbad98df201e006abb1961f41a7168480fa1ce19869fa03b3fad",
     "currentSha256": "79cc9dfdf07b97eeb8368dd0039986007fed2e9d75fc239e9630df5a371a89af",
     "reason": "Supply normalized default Plus availability/preference in the state fixture; preserve exact rollback update counts and retained-history/permission assertions."
+  },
+  {
+    "path": "tests/browser-submission-recovery.test.ts",
+    "baselineSha256": "39294ba2ac4b7a698423e8c24bb3d43296e6839bf4b7dbd842817427b0ae930b",
+    "currentSha256": "6825fa235f85742db85e01fdc7e9435fd570ea4db538b88c8538662e0ad0982d",
+    "reason": "Extend the hidden locator fixture with locator chaining for the submission rejection observer; preserve all existing retry, accepted-message and cleanup assertions."
+  },
+  {
+    "path": "tests/browser-turn-binding.test.ts",
+    "baselineSha256": "c80a7cdc83b1959c732fc0bcab596c5a666246ac6124a4214ead5dae1f8ca78b",
+    "currentSha256": "ce44e3219893d9e7c464ed2b1e2512530d48fc9dd8445f85091488f585ddb752",
+    "reason": "Add an actual browser remount regression proving the bound connector prefix survives optimistic response replacement while foreign connectors, altered text and unbound prefixes remain rejected; retain all prior tests."
+  },
+  {
+    "path": "tests/browser-worker-contract.test.ts",
+    "baselineSha256": "37f6e578e9954da67947a22ab3f803231b4222fbef562d3dfd11a63fd76936bb",
+    "currentSha256": "12262d1be5beed3af85c83571c321419a3eb9b19f737dee158a347bca1f8fce8",
+    "reason": "Keep exact bounded diagnostic snapshot equality and assert the new content-free models field is empty when no request was observed; preserve prompt redaction and original failure propagation assertions."
   }
 ]

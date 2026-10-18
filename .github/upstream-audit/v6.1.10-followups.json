@@ -1,0 +1,484 @@
+[
+  {
+    "path": "src/adapters/chatgpt-web/browser-worker.ts",
+    "baseCommit": "8e2833d3b7ccbf42ba9cda6d8f71d8c173493d20", "baselineSha256": "4b81813ad11f845241b51456c9bbb1583dcb341f8b947b22de7261a68d3e8a83",
+    "currentSha256": "14da37a3ed4b7b5452f433274cfc447ef19deacef9bb83557e9963a4df41c5c1",
+    "reason": "Independent review P2: restore successful worker completion status and cover real-worker retention; fixtures now terminate captures and retain privacy assertions. Apply existing owned successful response-stream liveness to Native tunnel observation and all recovery guards; retain hard deadline, CAS, atomic final and bounded network diagnostics. Add bounded monotonic worker heartbeat timing and duration-only warnings without modifying output, deadlines or recovery. Support observed semantic add-context/plugin navigation UI without focus-dismissal; preserve exact connector identity, duplicates and mention keyboard behavior. After guarded recovery Send, reopen unfinished Native work through the existing exact-revision cancellation fence; do not force an early final. Bind non-authorizing per-submission identity only for ordinary browser-only turns so rich-text remounts cannot cause false foreign-turn rejection; Native and compaction transport remain unchanged. Keep assistant-only rekeys provisional until accepted-user ownership is proven, and exclude tokenless Native connector verification from the read-only suffix.",
+    "evidence": {"path":".github/upstream-audit/evidence/b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e.tar.gz","sha256":"b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e","bytes":112575}
+  },
+  {
+    "path": "tests/browser-diagnostics.test.ts",
+    "baseCommit": "8e2833d3b7ccbf42ba9cda6d8f71d8c173493d20", "baselineSha256": "dbff7394c8d0d04026bd98f2dd0caec95e7ecd861cf5736c6ee94c54e5f270e6",
+    "currentSha256": "12e277c06d9be62c25ea1985341daa03d4899b145a31f536db9d3502dc3450fa",
+    "reason": "Independent review P2: restore successful worker completion status and cover real-worker retention; fixtures now terminate captures and retain privacy assertions.",
+    "evidence": {"path":".github/upstream-audit/evidence/593166b24cba2455543dda4bc0574c9afaf6313acb2cdd04d5698251af971ebb.tar.gz","sha256":"593166b24cba2455543dda4bc0574c9afaf6313acb2cdd04d5698251af971ebb","bytes":56653}
+  },
+  {
+    "path": "tests/browser-tunneled-fallback.test.ts",
+    "baseCommit": "8e2833d3b7ccbf42ba9cda6d8f71d8c173493d20", "baselineSha256": "04a815cead07adad6b53943949e07920dc60ab7fc2e6a2b8de108984465e20da",
+    "currentSha256": "770df0ec77f2efdd5b33ef5ca08efc5977bf56899d9d5df42feee81673cc6732",
+    "reason": "Independent review P2: restore successful worker completion status and cover real-worker retention; fixtures now terminate captures and retain privacy assertions. Apply existing owned successful response-stream liveness to Native tunnel observation and all recovery guards; retain hard deadline, CAS, atomic final and bounded network diagnostics. Add bounded monotonic worker heartbeat timing and duration-only warnings without modifying output, deadlines or recovery. Exercise unfinished work after recovery and preserve late-final, steering, draft and completion-fence rejection coverage.",
+    "evidence": {"path":".github/upstream-audit/evidence/3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d.tar.gz","sha256":"3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d","bytes":113486}
+  },
+  {
+    "path": "src/adapters/chatgpt-web/compaction-continuation.ts",
+    "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1", "baselineSha256": "d942619470eba221f893e66591a60da90f33c415e8f500d5118fc2715a434e67",
+    "currentSha256": "708a9ae2a36715144f9f0b09849caf2d656539f734d711472c633a46000d6f59",
+    "reason": "Invalidate primary-aborted checkpoints across every retained representation, including restart, while retaining hash-only persistence and provable legacy-source compatibility; unknown ownership with abort history fails closed.",
+    "evidence": {"path":".github/upstream-audit/evidence/45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501.tar.gz","sha256":"45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501","bytes":83233}
+  },
+  {
+    "path": "src/config.ts",
+    "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1", "baselineSha256": "471c6af5356e1fdf97ae0b3802680e5f6607c261450a483dc3600164b821e7f3",
+    "currentSha256": "8cd6b4b54fcd33fdbe565fa9540c2af5be8eca1121c6a08541a31b7f7caf3dbe",
+    "reason": "Deduplicate optional Boolean checks into the existing feature validator; defaults and type errors preserved, without new modules or weakening the original 500-line contract. Subsequent authorized adaptation: Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "scripts/lifecycle-sim/manifest.ts",
+    "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1", "baselineSha256": "ebe6d90161e5bfad2afc0520ffe31a659eb179008d2996527579853094c72923",
+    "currentSha256": "cde043c38c7e3ca3b5e2055ff18b90d64909386905e59fa78c5ac4cd6fbd3706",
+    "reason": "Register real Responses HTTP compaction-continuation regressions in the canonical offline lifecycle gate. Preserve current Native work identity in correction/steering retries and exercise production factory/worker from offline lifecycle. Support observed semantic add-context/plugin navigation UI without focus-dismissal; preserve exact connector identity, duplicates and mention keyboard behavior. Include real production recovery-budget and bounded nonintrusive MCP diagnostic regressions in the offline lifecycle gate.",
+    "evidence": {"path":".github/upstream-audit/evidence/3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d.tar.gz","sha256":"3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d","bytes":113486}
+  },
+  {
+    "path": "tests/compaction-continuation-registry.test.ts",
+    "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1", "baselineSha256": "49353930c55aa3d2a3039da9bea23fcdab7f8d42f20157083744275c17baf504",
+    "currentSha256": "4996d2ca50838867cb18bc6bcde76552faeb9d369798364c21aac780743e06ab",
+    "reason": "Regression coverage for current delegated instruction, primary abort/restart/legacy safety, or semantic Think controls; preserve negative scope/model/context, no-send, connector rollback and privacy assertions.",
+    "evidence": {"path":".github/upstream-audit/evidence/45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501.tar.gz","sha256":"45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501","bytes":83233}
+  },
+  {
+    "path": "tests/local-french-controls.test.ts",
+    "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1", "baselineSha256": "f8e7b7ba3a91bee8ef97fc8d381af794f80e8c64b4aed84a38b0ca17b64fb118",
+    "currentSha256": "381ce90ed4faf1f29d65991f8789f204b986ab7adb530e2869deb5137f7b88d8",
+    "reason": "Regression coverage for current delegated instruction, primary abort/restart/legacy safety, or semantic Think controls; preserve negative scope/model/context, no-send, connector rollback and privacy assertions.",
+    "evidence": {"path":".github/upstream-audit/evidence/45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501.tar.gz","sha256":"45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501","bytes":83233}
+  },
+  {
+    "path": "tests/server-compaction-continuation.test.ts",
+    "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1", "baselineSha256": "4c7072521d23c171b5467fa76beb5a42c0b25e36f4f7a5982dd3373890200177",
+    "currentSha256": "a0e26a01ef9075648fd84b4291c0381ca2cbe2f97afbbdfe7078dac1f5d45a71",
+    "reason": "Regression coverage for current delegated instruction, primary abort/restart/legacy safety, or semantic Think controls; preserve negative scope/model/context, no-send, connector rollback and privacy assertions.",
+    "evidence": {"path":".github/upstream-audit/evidence/45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501.tar.gz","sha256":"45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501","bytes":83233}
+  },
+  {
+    "path": "tests/think-mode-v505.test.ts",
+    "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1", "baselineSha256": "9506aaf6f71645c55a7337be4cd259c7dffee70b5cf609242b0e3e1ce5e6773a",
+    "currentSha256": "b64e0dba6e03e574d9bfad6599cd8c9e99c8452c2487e4140d473c07e390d3e8",
+    "reason": "Regression coverage for current delegated instruction, primary abort/restart/legacy safety, or semantic Think controls; preserve negative scope/model/context, no-send, connector rollback and privacy assertions.",
+    "evidence": {"path":".github/upstream-audit/evidence/45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501.tar.gz","sha256":"45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501","bytes":83233}
+  },
+  {
+    "path": "tests/upstream-audit-v5-ledger.test.ts",
+    "baseCommit": "7f8880ef72f0b8c71dc18dbdb177f8ac61919306", "baselineSha256": "ac63684724fa9397cfb779ef461dbb921987a1affa1fe880b144efd85d34826b",
+    "currentSha256": "4d83c74c3b1a52b233e2fd261d6ad3373177ee2dd63e6bcf3b636041771f6515",
+    "reason": "Reuse the existing strictly byte-framed batch Git reader for historical source assertions, retaining every obligation and deadline while avoiding per-path process startup.",
+    "evidence": {"path":".github/upstream-audit/evidence/56b0bfdb109135aa919ad8047918b24efa431f7f68278a2ed69ad995ab9017eb.tar.gz","sha256":"56b0bfdb109135aa919ad8047918b24efa431f7f68278a2ed69ad995ab9017eb","bytes":8842}
+  },
+  {
+    "path": "tests/zero-risk-launcher-mcp-contract.test.ts",
+    "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1", "baselineSha256": "dc0bc54386bfa7dd7c0ac1ad2eca3a9a61759a05e5c68495411a765d9b61e5b8",
+    "currentSha256": "705ce7e774ed894828cadc82a7f1f56d7be909ed480fbe0b022d4c0eec4ce324",
+    "reason": "Supply DIRECT through the platform proxy boundary fixture while retaining real shared-stdio invocation and frozen Native2/ZeroRisk public ABI assertions.",
+    "evidence": {"path":".github/upstream-audit/evidence/45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501.tar.gz","sha256":"45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501","bytes":83233}
+  },
+  {
+    "path": "tests/lifecycle-profiles.test.ts",
+    "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1", "baselineSha256": "03983d5c46164055942045a206cfd2439e370b01021f9d0db7b012820ad7aa55",
+    "currentSha256": "8c952ed5e1d341bf525ce8cc873f8bec6247ca100de20b15a85c7b9977d26640",
+    "reason": "Regression coverage for current delegated instruction, primary abort/restart/legacy safety, or semantic Think controls; preserve negative scope/model/context, no-send, connector rollback and privacy assertions.",
+    "evidence": {"path":".github/upstream-audit/evidence/45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501.tar.gz","sha256":"45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501","bytes":83233}
+  },
+  {
+    "path": "launcher/electron/browser-host.cjs",
+    "baseCommit": "7d9a170950d2ffc85387f7129cb62fa694fc9884", "baselineSha256": "9b42cd827b21d898d55bcde539cb31c5057938164e1a990cabbf1fa4aaed7209",
+    "currentSha256": "3eef75cd26067d4b1e184437a7fc13cd8a62ddf10f476f214710b17cb5443229",
+    "reason": "Restore default/upstream-native UA without changing the profile, native Chromium Client Hints or browser ownership; real Electron fixtures cover all surfaces.",
+    "evidence": {"path":".github/upstream-audit/evidence/823b5f702b77175a77b340630ecd0ff42ce3ba6cac548accfeb55a09aa8f5674.tar.gz","sha256":"823b5f702b77175a77b340630ecd0ff42ce3ba6cac548accfeb55a09aa8f5674","bytes":61455}
+  },
+  {
+    "path": "launcher/tests/browser-host-startup.test.cjs",
+    "baseCommit": "c80838a67b06bcbdac1d13ba25f37231c36a8bc4", "baselineSha256": "4dc23794cccf8e483ff1efcba62d509b47cc37090aec5ad2f1a291966d26da6d",
+    "currentSha256": "853af2cc2061e8de4c60ccdbd3a9040eefef0c897d271b01e579250627c0be29",
+    "reason": "Production ownership regression for failed same-trace retry through a prepared page, successful heartbeat, and terminal retention; no allocation or old-document reuse.",
+    "evidence": {"path":".github/upstream-audit/evidence/b5024753f3cb7aa6c1fb8428706b5848677b37936634984b292a42def33ac57e.tar.gz","sha256":"b5024753f3cb7aa6c1fb8428706b5848677b37936634984b292a42def33ac57e","bytes":12115}
+  },
+  {
+    "path": "README.ja.md",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "68d52c949fadf6fad1e9a60976b0af23be082362675df0cbb9658f3bb59321e1",
+    "currentSha256": "e033772eeb5733b81e4e15a81850dab78cef50fdd7c6a7100a202427c64ca309",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Synchronize maintained README release headers and hotfix summaries for v6.1.10-Enhanced.2 while preserving upstream documentation and stable latest-release download links.",
+    "evidence": {"path":".github/upstream-audit/evidence/04859f04f6e9df2679231b9d05e72b3f65b94d9244bd40fc14fda2f8a7c8cf56.tar.gz","sha256":"04859f04f6e9df2679231b9d05e72b3f65b94d9244bd40fc14fda2f8a7c8cf56","bytes":88459}
+  },
+  {
+    "path": "README.ko.md",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "b12e7511cb7b78c0601bfa401075edaa94425b9d1b823b0bb8e2e6c550e8f776",
+    "currentSha256": "8e2156c4de3827947984d89a185abc9b2d1a2c28260c4f7b3f8d297410e22e28",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Synchronize maintained README release headers and hotfix summaries for v6.1.10-Enhanced.2 while preserving upstream documentation and stable latest-release download links.",
+    "evidence": {"path":".github/upstream-audit/evidence/04859f04f6e9df2679231b9d05e72b3f65b94d9244bd40fc14fda2f8a7c8cf56.tar.gz","sha256":"04859f04f6e9df2679231b9d05e72b3f65b94d9244bd40fc14fda2f8a7c8cf56","bytes":88459}
+  },
+  {
+    "path": "README.md",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "daa2ca9cf28c63b4c56e733cd75529aa9ed540599a71067625a19ba6b64e1fdc",
+    "currentSha256": "8ba9ba1318c4448837f4cc3b8f98ff94e569f64451e30d78f384544ce53c9ec4",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Synchronize maintained README release headers and hotfix summaries for v6.1.10-Enhanced.2 while preserving upstream documentation and stable latest-release download links.",
+    "evidence": {"path":".github/upstream-audit/evidence/04859f04f6e9df2679231b9d05e72b3f65b94d9244bd40fc14fda2f8a7c8cf56.tar.gz","sha256":"04859f04f6e9df2679231b9d05e72b3f65b94d9244bd40fc14fda2f8a7c8cf56","bytes":88459}
+  },
+  {
+    "path": "README.zh-CN.md",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "b503b0270e2523b3b40f00da6b76c53b36cdfe2f5f18e192ede1d537aab1a1c4",
+    "currentSha256": "83060b972b03f2143981db2daad4099cbdfaf19d5b45218489c33ede0013dd7d",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Synchronize maintained README release headers and hotfix summaries for v6.1.10-Enhanced.2 while preserving upstream documentation and stable latest-release download links.",
+    "evidence": {"path":".github/upstream-audit/evidence/04859f04f6e9df2679231b9d05e72b3f65b94d9244bd40fc14fda2f8a7c8cf56.tar.gz","sha256":"04859f04f6e9df2679231b9d05e72b3f65b94d9244bd40fc14fda2f8a7c8cf56","bytes":88459}
+  },
+  {
+    "path": "launcher/electron/main.cjs",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "ca1d56539aca8bc780ed96bfbc823122b9a8660d0cb5328b6d065cdff8cb6d29",
+    "currentSha256": "f617c7d1382d719ddf6324347b012f9bcece2c2446c9d2297fd35b86b5ee4f90",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Correct No Context Window IPC callback and serialize No Context Window/Plus preference updates after runtime startup/recovery; real production registration regression retains Bigger Context coverage.",
+    "evidence": {"path":".github/upstream-audit/evidence/4d68b8a3bba5654bae08148bf6d43b5c567f393ed3498a795eeae6ff7b2ab069.tar.gz","sha256":"4d68b8a3bba5654bae08148bf6d43b5c567f393ed3498a795eeae6ff7b2ab069","bytes":7119}
+  },
+  {
+    "path": "launcher/electron/state.cjs",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "2a019b043cde32ddf2aac4f3afa558be479fa8dd46b6a328d5214be97fb42869",
+    "currentSha256": "4b42a30026292166da9ddcf5b734452ab0e9402237a12235607150f3dec7f6a4",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "launcher/src/i18n-fr.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "93b3b8aae743f0e5d51f22306d55c51936579cde6ea2cfc5864d8efa091c903a",
+    "currentSha256": "cefbc57e93e1d8efb8c8cea73101a20938faf7e584d7fb4b743505b4127fa0d2",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "launcher/src/i18n-ja.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "9a941509a50b00851a7014e9cb2fecc0bf095b8eea0a59c1c62c6bb23c3ba115",
+    "currentSha256": "601c3a19513e00811a8dc2175c1355c552ab1f43a8af1fa415255ce2c713ae3c",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "launcher/src/i18n-ko.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "77c0793a9ac63d8a45c5820f157e248aef3167a1732d6ab035436ae497a3dcac",
+    "currentSha256": "38842f87ebade7af1b5a8315bd34891a18453d81dab4ccd1a43f2f9bcd884a16",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "launcher/src/i18n-zh-tw.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "e4a0720d815f7517deeb7012d6e50736ebd0e0d51edb55570f4abc0e2c16e0f2",
+    "currentSha256": "acc3c0827f8d24737a6f268f06e9080b33d35d4684ab3b6cae935a7587f19e78",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "launcher/src/i18n.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "2c38e163f99905d893510d49664b21adef2e86d648a7786d8c50f5f231de49d5",
+    "currentSha256": "88ffd3331b13674ba0d649d68f1fe60d00ec1b244f05e58dc9bef363dd1d0943",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "launcher/src/settings-surface.tsx",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "0c43740560127d8d67c30ea22d62335f0373107d3b99c9483c0b8bc4114abd1d",
+    "currentSha256": "3082daf416362d41bcedc9ab62ca5a4a38b3d7b4b78ae7aadb9e9bde678cc698",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "launcher/tests/state.test.cjs",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "279fb3481e900fe2e9fb5585a256f68203a451a66280a5f099794f38994f2584",
+    "currentSha256": "bff9f561f8f98660549f411a22debefe19e8315f64aae01770e97397e23dd310",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "src/adapters/chatgpt-web/adapter-error.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "69213367499a147773159c7b5aed0eb6ac8d3d15e1a5f23aa9e360c98ae331a5",
+    "currentSha256": "bb274692352c11fe9c13b40de9c81a4dc0df6b09cdfd6ec2ad77d9d82ac47f34",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "src/adapters/chatgpt-web/adapter-runtime-factory.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "d9ef72881e22ea13623080328f7bf1c225964e4c9c5cb84e8951c843c8b9e922",
+    "currentSha256": "035f8f375456101ddb250e021519d961fbddfbc9b005212ccffb70466654d234",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Preserve current Native work identity in correction/steering retries and exercise production factory/worker from offline lifecycle. Keep original successful completion timestamp across prediction replay so cache publication cannot extend absolute TTL.",
+    "evidence": {"path":".github/upstream-audit/evidence/27a073044579a79400ccf88de7674d1d274f8fadda20d5ed7701274dbd2d2f2f.tar.gz","sha256":"27a073044579a79400ccf88de7674d1d274f8fadda20d5ed7701274dbd2d2f2f","bytes":81338}
+  },
+  {
+    "path": "src/adapters/chatgpt-web/index.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "62e381ccdf9c06843d47b58033eba1b564c6e18dc21a4b730c8302180d6dc68d",
+    "currentSha256": "ad2f5e3b678585624b58592bd37cc9d7bd82726d327b0f4fa1eeb715a7b4de90",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Keep original successful completion timestamp across prediction replay so cache publication cannot extend absolute TTL.",
+    "evidence": {"path":".github/upstream-audit/evidence/27a073044579a79400ccf88de7674d1d274f8fadda20d5ed7701274dbd2d2f2f.tar.gz","sha256":"27a073044579a79400ccf88de7674d1d274f8fadda20d5ed7701274dbd2d2f2f","bytes":81338}
+  },
+  {
+    "path": "src/adapters/chatgpt-web/native-output-control.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "5b80e89ec22a2bece5b317606d19dc6a835a08cdd5e85de38b288a9ba90d3eba",
+    "currentSha256": "7ad7edb8ee003789c4c78ed7f24823bfb81664f287e33abfda5e2f4fb9dc5c3f",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "src/adapters/chatgpt-web/prompt.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "1eceb4b29ed22b2dded042b45805c41e125b124d2fd69994e976f537f38e4794",
+    "currentSha256": "9470f9feec9c8c059270a01333d33b198d047af562ecde74cb6db66437c82655",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "src/adapters/chatgpt-web/retry-policy.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "3d71f185f9d4bc51fa88558dc5f1e24bf831a1d1babe926743513f20c685711b",
+    "currentSha256": "1c1192d48ff37d00a81bf844385195c2a89b5b75009c1ce4f5f704b6b5b349fe",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "src/adapters/chatgpt-web/submitted-turn.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "0dfaf70a8ec4ec983463f73acbd03a629fcd8c4e070ab1b809d1478553591385",
+    "currentSha256": "73de9691d25a22eafd1b9ad6ce6e1b4f1851b2f90b841c430789b48080e7a5b0",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "src/adapters/chatgpt-web/turn-broker-dispatch.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "43a8ccc5a9d77dcf4a012f214c86a52174af356478a919944806aae5bccd3fc1",
+    "currentSha256": "fd9f93fee0715ce6a361c81d066dc18372e570e6aa9f587c33234f8a6d08dde2",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Bound reference digests and isolate diagnostic sink failures without changing claim, accepted final acknowledgement or original rejection.",
+    "evidence": {"path":".github/upstream-audit/evidence/3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d.tar.gz","sha256":"3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d","bytes":113486}
+  },
+  {
+    "path": "src/adapters/chatgpt-web/turn-broker-output.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "19768048909a09a304db6323cc93cd74f9f71b0758384bf1cc200e10f54a3e17",
+    "currentSha256": "9fde2b841e936f1b9353beb2c31d538a91678280553e2735b7153a1f35a6b344",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Apply the existing evidence policy before accepting or holding Native commentary/final, so corrections stay in the same Web response and accepted final remains atomic.",
+    "evidence": {"path":".github/upstream-audit/evidence/b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e.tar.gz","sha256":"b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e","bytes":112575}
+  },
+  {
+    "path": "src/adapters/chatgpt-web/turn-broker-owner.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "4b98c686d29a394c7d007e1cabe55c9baeca56afa90b1a6dd311f4fc078ede80",
+    "currentSha256": "a026f8ed76714c0101c003030d230a94ff7a02c30fb6fea4511794062e9b8ab4",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "src/adapters/chatgpt-web/turn-broker-protocol.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "133b7a928cd1135fb687b08e2ceeeb04bec49f69bdd6b70e65db64cfd44bed01",
+    "currentSha256": "68bbc8780f68b1e4a1fac29aee0be128b002d8060586153620d14e3c2eff237c",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "src/adapters/chatgpt-web/turn-broker-state.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "d19ec00aca8cf499e1b3352d7edb529728a415de904477fc21ae614bd32a6ff0",
+    "currentSha256": "c486f9a43af4aec805de821772c3b9f564709626a5d41f4b53a04c441de6736c",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Keep bounded Native output evidence local to each broker channel lifecycle.",
+    "evidence": {"path":".github/upstream-audit/evidence/b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e.tar.gz","sha256":"b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e","bytes":112575}
+  },
+  {
+    "path": "src/adapters/chatgpt-web/turn-broker.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "d1b59b6a5779130700438cd56a45617f54dc38ba803bdd96009eafaf7cf6a68e",
+    "currentSha256": "c42dec8f6e81304c2031b73ca7f6a8676f2ec7af1709f5140bcff416e52530dd",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Observe only actual isError=true Native work results in turn-local evidence before returning the unchanged result.",
+    "evidence": {"path":".github/upstream-audit/evidence/b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e.tar.gz","sha256":"b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e","bytes":112575}
+  },
+  {
+    "path": "src/cli-help.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "8e3788e416b94d0d3bf4c1716af4376a4a5be6e63b4ddfd1ae3ff137e4a691d3",
+    "currentSha256": "05cdf99297ee29a4e099e7b9f6b3e8fd1666d1b762adf27914fedfdaae910338",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "src/composer-predictions.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "ba5296037e09ee153fd272612cbf72110025d5000bdcb22e6121fc967fb859ac",
+    "currentSha256": "fd90e845b44cd5526e09ba160e5e22c76780f8fcf3768009e489b4b785e6ea8f",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Keep original successful completion timestamp across prediction replay so cache publication cannot extend absolute TTL.",
+    "evidence": {"path":".github/upstream-audit/evidence/27a073044579a79400ccf88de7674d1d274f8fadda20d5ed7701274dbd2d2f2f.tar.gz","sha256":"27a073044579a79400ccf88de7674d1d274f8fadda20d5ed7701274dbd2d2f2f","bytes":81338}
+  },
+  {
+    "path": "src/server.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "b9bac3901c0e18b109b82385b9c1719b70327a388cc2c970d1cf9890cc209d49",
+    "currentSha256": "1d59453fa5078e5e3723bb49b7a27ab679f27edc0b1420d4f0c09490192ea13f",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "src/types.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "2a306da8b9b4cacd46c8649979c1d5fa14b44db005846de6c78b1226c5f596cf",
+    "currentSha256": "0d09810176980d53faad5842ab35534da55c41747c022a8c3ea21800b0ca1f59",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Keep original successful completion timestamp across prediction replay so cache publication cannot extend absolute TTL.",
+    "evidence": {"path":".github/upstream-audit/evidence/27a073044579a79400ccf88de7674d1d274f8fadda20d5ed7701274dbd2d2f2f.tar.gz","sha256":"27a073044579a79400ccf88de7674d1d274f8fadda20d5ed7701274dbd2d2f2f","bytes":81338}
+  },
+  {
+    "path": "tests/enhanced-output-broker.test.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "c75e25cc6b1230bce719ce4c15a4e9941df5df920594e3dd469fe3361e8a6768",
+    "currentSha256": "26c7530dd362f1f313dcfd7584ff173ade4e553261493c93c97e6d102248abc7",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Cover delivered-work recovery epochs and diagnostic metadata while retaining exactly-once atomic final and revision-fence assertions. Drive real broker/control IPC to prove pre-ack rejection, unchanged revisions, continued tool use, exactly-once corrected final, real-error isolation, strict error flag and recovery final admission.",
+    "evidence": {"path":".github/upstream-audit/evidence/b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e.tar.gz","sha256":"b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e","bytes":112575}
+  },
+  {
+    "path": "tests/enhanced-output-tunnel.test.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "a1933eafba6d225dca184a4921aacbfc7b64b0acbdbf4481a5750cb6729a71be",
+    "currentSha256": "35c318b40559c18bf75a9281bf20181db6ca37d9d66b4bc46896ff0c78bd0200",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "tests/model-unavailable-replay.test.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "f34369ddcc593bfa85ea1dc5aa7a3f669b34f51ec44a301ad54c3ca8678470ce",
+    "currentSha256": "05acea6f9212a450bd12f582c1d58c381a89139457893f0f6f49a8baec809bb4",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "tests/native-output-control-mcp.test.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "d46d8c24b509d3d4fd1e6a83de323612be19027433192718cac3d376ee2abe82",
+    "currentSha256": "568040c8cc059e9592fbbf76b6cd7c8731128f689f0555a9eecba2844adf1ba4",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "tests/native-output-inventory.test.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "6f123cbad623cd3d000ada6034fc8c23155dac7b2413d48ce2ae1450b0660ced",
+    "currentSha256": "8592e88aebbec52064ab6721a572a347c889a1837f1c20e7019998431bd5b040",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "tests/runtime-layout.test.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "8c8bc6205789c90f71aa372675b5fdac727852274fae51c562f4ad386b28f6cd",
+    "currentSha256": "f09557faf513653d1fecfc7e8daa2f1cd6675e601ba3f363ddcb8460002f477c",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "tests/server-predictions.test.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "242801db76a870bf1fd8e35e2a690ae36ba77deef4343796139c908ed15d16fd",
+    "currentSha256": "2e60084225e538c39d98219b5a00a08cac8dd531f59ce7995f2afa6293cf2665",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Keep original successful completion timestamp across prediction replay so cache publication cannot extend absolute TTL.",
+    "evidence": {"path":".github/upstream-audit/evidence/27a073044579a79400ccf88de7674d1d274f8fadda20d5ed7701274dbd2d2f2f.tar.gz","sha256":"27a073044579a79400ccf88de7674d1d274f8fadda20d5ed7701274dbd2d2f2f","bytes":81338}
+  },
+  {
+    "path": "tests/upstream-v6110-adaptations.test.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "45510d5f4b932429aa1f80b89a90bb3f4c06144f7e29deb15d8f7a45cb84f92a",
+    "currentSha256": "82a17c9eb1e24b21b965bc2b3a37d30c911e75b03c3a6da8d1956c447d8dd276",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
+    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+  },
+  {
+    "path": "launcher/tests/renderer-wiring.test.cjs",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "7fa632d8774251c90ce7bc8c2743e76779152a1554d5d2bf6d49833b84d77def",
+    "currentSha256": "33178f07ede9b57a6a497e850b8d089c4dafe1a902feaefdf1da0a5635c062bb",
+    "reason": "Correct No Context Window IPC callback and serialize No Context Window/Plus preference updates after runtime startup/recovery; real production registration regression retains Bigger Context coverage.",
+    "evidence": {"path":".github/upstream-audit/evidence/4d68b8a3bba5654bae08148bf6d43b5c567f393ed3498a795eeae6ff7b2ab069.tar.gz","sha256":"4d68b8a3bba5654bae08148bf6d43b5c567f393ed3498a795eeae6ff7b2ab069","bytes":7119}
+  },
+  {
+    "path": "src/adapters/chatgpt-web/tunneled-output-turn.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "785a22d78fb15d9e0e557f8c2e4af2379e805224b3a9e920c81bed987f13496d",
+    "currentSha256": "8b2031aaf7ed5da0001af4f9cef64cc92e7093a7ab43a11dd5ed430fcfca495e",
+    "reason": "Apply existing owned successful response-stream liveness to Native tunnel observation and all recovery guards; retain hard deadline, CAS, atomic final and bounded network diagnostics.",
+    "evidence": {"path":".github/upstream-audit/evidence/77dfa0e0327cfe8e26d886e5c6a34729464ea9d283fba67036e258a4b7101cda.tar.gz","sha256":"77dfa0e0327cfe8e26d886e5c6a34729464ea9d283fba67036e258a4b7101cda","bytes":54627}
+  },
+  {
+    "path": "launcher/tests/browser-mode-ownership.test.cjs",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "e2471964c5a2703e6bc4d9abf3e57c4a03f5016faec210fc312c9bb00583e184",
+    "currentSha256": "c1e58929d4f8b6f1c744f1bf5247ac1c3f106f39779d51a52cfc3a73beef6127",
+    "reason": "Normalize ChatGPT partition UA before surface creation; retain native engine and browser state, and update renderer fixture to the bounded-script interface.",
+    "evidence": {"path":".github/upstream-audit/evidence/cb75dc2ce4236cdf76ef1efe488cd33b378c71669c899ff14b9738678a1f5216.tar.gz","sha256":"cb75dc2ce4236cdf76ef1efe488cd33b378c71669c899ff14b9738678a1f5216","bytes":26492}
+  },
+  {
+    "path": "src/adapters/chatgpt-web/connector-plus-menu.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "7444f58cef7ccbb739b9d536f09e185ad6ddb5432fb199a47a580111607500c7",
+    "currentSha256": "b5b31aa214d28e230a1fd3ad81ad6084c20ae45930cf0f4e06dabf34dcdb10ac",
+    "reason": "Support observed semantic add-context/plugin navigation UI without focus-dismissal; preserve exact connector identity, duplicates and mention keyboard behavior.",
+    "evidence": {"path":".github/upstream-audit/evidence/bb8dd4e45e144b76a530469e1c73c18cc1b39559f23777ef1df9c12ec62986f2.tar.gz","sha256":"bb8dd4e45e144b76a530469e1c73c18cc1b39559f23777ef1df9c12ec62986f2","bytes":127125}
+  },
+  {
+    "path": "tests/connector-plus-menu.test.ts",
+    "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "030c66fe54fa3583b96bf4bfb500012b364a2534017bf88bcea272c6012abca0",
+    "currentSha256": "7db5f4137fdf918e8bae9c63bbad80441559ee87391428debc0daffad9f8603e",
+    "reason": "Support observed semantic add-context/plugin navigation UI without focus-dismissal; preserve exact connector identity, duplicates and mention keyboard behavior.",
+    "evidence": {"path":".github/upstream-audit/evidence/bb8dd4e45e144b76a530469e1c73c18cc1b39559f23777ef1df9c12ec62986f2.tar.gz","sha256":"bb8dd4e45e144b76a530469e1c73c18cc1b39559f23777ef1df9c12ec62986f2","bytes":127125}
+  },
+  {
+    "path": "tests/compact-mode-routing.test.ts",
+    "baseCommit": "6c4d085a7128ecebaf489d810ec404c36a196e93", "baselineSha256": "90b83963e9124686cf68e7284e609881cf07e5aef8b5dae8ae9b95fbdaac0078",
+    "currentSha256": "5bc2eba59c81d0fe649fd01019c9ef5f1e2c7ddd818d32748a9878ed6569e46c",
+    "reason": "Await the declared asynchronous answer-retry contract in existing compact/Claude routing assertions without changing expected values or production behavior.",
+    "evidence": {"path":".github/upstream-audit/evidence/d9ac543142b866d9e659baa08aa3bd4604bdb93bceea7982f399916f38360b17.tar.gz","sha256":"d9ac543142b866d9e659baa08aa3bd4604bdb93bceea7982f399916f38360b17","bytes":15419}
+  },
+  {
+    "path": "launcher/electron/runtime-supervisor.cjs",
+    "baseCommit": "2347bfc49871ad2f84c1de07d41a8a032fa6c2ce", "baselineSha256": "b7b91e4342ae15e6a4913ec7865ecf3d869cadf32afc2a53e30de137e861761d",
+    "currentSha256": "98f6664e3f54189a5d953bd1fea9fdf7d75b0aabf663cd0f08e386cce76dade0",
+    "reason": "Apply the existing child trust/key/descriptor policy after merging resolved tunnel environment, preventing inherited daemon API-key leakage without losing proxy, handshake or TTL.",
+    "evidence": {"path":".github/upstream-audit/evidence/9a3c4f700c7d61067b1463696618025ed56921628930cff895f3510c9ad79ff3.tar.gz","sha256":"9a3c4f700c7d61067b1463696618025ed56921628930cff895f3510c9ad79ff3","bytes":84093}
+  },
+  {
+    "path": "launcher/tests/tunnel-runtime-ttl.test.cjs",
+    "baseCommit": "2347bfc49871ad2f84c1de07d41a8a032fa6c2ce", "baselineSha256": "b3fa34d5230157fcb22ce87505dff1069a205b65a0cd822afc2737d93a6ff282",
+    "currentSha256": "fa2ff51088d0619021c64ae5a1bcc1391faa422daba3c3cd791f87a6d6460e7d",
+    "reason": "Apply the existing child trust/key/descriptor policy after merging resolved tunnel environment, preventing inherited daemon API-key leakage without losing proxy, handshake or TTL.",
+    "evidence": {"path":".github/upstream-audit/evidence/9a3c4f700c7d61067b1463696618025ed56921628930cff895f3510c9ad79ff3.tar.gz","sha256":"9a3c4f700c7d61067b1463696618025ed56921628930cff895f3510c9ad79ff3","bytes":84093}
+  },
+  {
+    "path": "launcher/tests/tunnel-proxy.test.cjs",
+    "baseCommit": "2347bfc49871ad2f84c1de07d41a8a032fa6c2ce", "baselineSha256": "6747b4e0acb233aac738a2c3c559b33d7d53ca493d89bf29ef0544a007130075",
+    "currentSha256": "b79cb5ab670ede78923335fd1a2fa9e18785d661f4864f34f54b0409d956b839",
+    "reason": "Apply the existing child trust/key/descriptor policy after merging resolved tunnel environment, preventing inherited daemon API-key leakage without losing proxy, handshake or TTL.",
+    "evidence": {"path":".github/upstream-audit/evidence/9a3c4f700c7d61067b1463696618025ed56921628930cff895f3510c9ad79ff3.tar.gz","sha256":"9a3c4f700c7d61067b1463696618025ed56921628930cff895f3510c9ad79ff3","bytes":84093}
+  },
+  {
+    "path": "launcher/tests/browser-user-agent.test.cjs",
+    "baseCommit": "7d9a170950d2ffc85387f7129cb62fa694fc9884", "baselineSha256": "bccf97a6b2387ece2b2d8b70938a9aa55e4d8df76d81ffcc1f93fb89cda281cd",
+    "currentSha256": "e313e9b14cb1f30e0e8157eb162fde209f5bbdc540c83ac012f0663176094af1",
+    "reason": "Restore default/upstream-native UA without changing the profile, native Chromium Client Hints or browser ownership; real Electron fixtures cover all surfaces.",
+    "evidence": {"path":".github/upstream-audit/evidence/823b5f702b77175a77b340630ecd0ff42ce3ba6cac548accfeb55a09aa8f5674.tar.gz","sha256":"823b5f702b77175a77b340630ecd0ff42ce3ba6cac548accfeb55a09aa8f5674","bytes":61455}
+  },
+  {
+    "path": "launcher/tests/fixtures/browser-user-agent.cjs",
+    "baseCommit": "7d9a170950d2ffc85387f7129cb62fa694fc9884", "baselineSha256": "7f85bd609787e443a61b5145840baf6328252cf88530de9cea794f2b724e543b",
+    "currentSha256": "e3bc4687c781fd78c52df1b1588c75c4e3f455ec808f898bf40b58f3c4dea502",
+    "reason": "Restore default/upstream-native UA without changing the profile, native Chromium Client Hints or browser ownership; real Electron fixtures cover all surfaces.",
+    "evidence": {"path":".github/upstream-audit/evidence/823b5f702b77175a77b340630ecd0ff42ce3ba6cac548accfeb55a09aa8f5674.tar.gz","sha256":"823b5f702b77175a77b340630ecd0ff42ce3ba6cac548accfeb55a09aa8f5674","bytes":61455}
+  },
+  {
+    "path": "tests/upstream-audit-v501-ledger.test.ts",
+    "baseCommit": "7f8880ef72f0b8c71dc18dbdb177f8ac61919306", "baselineSha256": "43ffafdce8e960a098d802ab1c473d317d4c8a090d84fb2e238da2dfb0bfc1a6",
+    "currentSha256": "e7d8b9061a7f034c689ce452ec3b2b7caa655e773df350efdc7cd3e61721ff76",
+    "reason": "Reuse the existing strictly byte-framed batch Git reader for historical source assertions, retaining every obligation and deadline while avoiding per-path process startup.",
+    "evidence": {"path":".github/upstream-audit/evidence/56b0bfdb109135aa919ad8047918b24efa431f7f68278a2ed69ad995ab9017eb.tar.gz","sha256":"56b0bfdb109135aa919ad8047918b24efa431f7f68278a2ed69ad995ab9017eb","bytes":8842}
+  },
+  {
+    "path": "scripts/smoke-codex-subagents.ts",
+    "baseCommit": "cd48777b9482d73e10fc1ffe88604cbb514232c6", "baselineSha256": "396997f5b0cba189478f2a92e0c50a0f045e73917af0e7234bbb08f168a684bf",
+    "currentSha256": "4baab3a177c5eccf8969d78d9c1dbe45c9bc7584a6b8ab16db34c8b7eed28ba2",
+    "reason": "Require actual grandchild completion after controlled provider latency before child finalization, preserving pending-wait and exact lifecycle evidence under the unchanged overall deadline.",
+    "evidence": {"path":".github/upstream-audit/evidence/69ee77741dfe83f9c650041d19246d2f89ba0b2c684a785b3627eb9636d63a9e.tar.gz","sha256":"69ee77741dfe83f9c650041d19246d2f89ba0b2c684a785b3627eb9636d63a9e","bytes":11889}
+  },
+  {
+    "path": "tests/browser-turn-binding.test.ts",
+    "baseCommit": "1c96c3c9c7d70f7895632c841c45b6351248e468",
+    "baselineSha256": "8c116642011702acb563d16df9cf919cad7b6586bde1903f8ab6ec71bf187919",
+    "currentSha256": "d1ccd6ca46cb811eedc16f1eacb873d489c938dcf6f338eb6a77210933cbb3b9",
+    "reason": "Await the two rejected Promises before synchronous Error/message assertions to avoid Bun/Chromium async-matcher stalls; retain every scenario, timeout and rejection condition. Drive production reconciliation against rewritten rich-text read-only DOM; require one exact submission identity and reject foreign, missing, duplicate, extended or competing user turns. Cover assistant-only remounts before a matching or foreign user bubble appears, while preserving accepted-user rekeys. Allow literal non-authorizing identity examples in user context while requiring one complete current nonce; preserve duplicate-current, missing, foreign-only, prefix and Native token rejection.",
+    "evidence": {"path":".github/upstream-audit/evidence/56ae959fc90e09781e6ff86a3cfba0b255e09ef71f43b3e98e66f4011832a541.tar.gz","sha256":"56ae959fc90e09781e6ff86a3cfba0b255e09ef71f43b3e98e66f4011832a541","bytes":24372}
+  },
+  {
+    "path": "tests/multipart-history.test.ts",
+    "baseCommit": "4cba70533b07e99d91c4e81c522705dd564c415e",
+    "baselineSha256": "0d6d31b0e4e60b378d0e04e50c0063587138d6b95be37940c11e2eca9382c214",
+    "currentSha256": "d78f78e78fa2e33c2ddf3ba0b61597932eaf5e4e4a2dafa4f3fdce9a8ad03d65",
+    "reason": "Align the existing multipart remount expectation with the independently approved ownership boundary: an assistant-only replacement stays provisional until the accepted user returns; preserve all stage reconciliation and foreign-history rejection assertions.",
+    "evidence": {
+      "path": ".github/upstream-audit/evidence/fb519298c845f7bbe419457ba657edbc4dc539bd6cefae51e82ef8d0a2fef57a.tar.gz",
+      "sha256": "fb519298c845f7bbe419457ba657edbc4dc539bd6cefae51e82ef8d0a2fef57a",
+      "bytes": 16354
+    }
+  }
+]

@@ -358,6 +358,9 @@ export async function runDevCommand(args: string[]): Promise<void> {
     }
     const biggerContext = takeFlag(args, "--bigger-context");
     const standardContext = takeFlag(args, "--standard-context");
+    const predictions = takeFlag(args, "--composer-predictions");
+    const noPredictions = takeFlag(args, "--no-composer-predictions");
+    if (predictions && noPredictions) throw new Error("Choose --composer-predictions or --no-composer-predictions");
     const skillAttachments = takeFlag(args, "--skill-attachments");
     const inlineSkills = takeFlag(args, "--inline-skills");
     if (skillAttachments && inlineSkills) throw new Error("Choose --skill-attachments or --inline-skills");
@@ -402,6 +405,7 @@ export async function runDevCommand(args: string[]): Promise<void> {
         : {}),
       ...(enhancedSession || standardSession ? { useEnhancedWebSessionMode: enhancedSession } : {}),
       ...(biggerContext || standardContext ? { experimentalBiggerContext: biggerContext } : {}),
+      ...(predictions || noPredictions ? { composerPredictionsEnabled: predictions } : {}),
       ...(skillAttachments || inlineSkills ? { experimentalSkillAttachments: skillAttachments } : {}),
       ...(plusNativeContext || standardPlusContext ? { experimentalPlusNativeContext: plusNativeContext } : {}),
       ...(noAutoCompact || autoCompact ? { experimentalNoAutoCompact: noAutoCompact } : {}),

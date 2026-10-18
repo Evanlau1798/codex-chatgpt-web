@@ -40,12 +40,24 @@ export function isChatGptPromptIntegrityMismatch(error: unknown): error is ChatG
     && !error.retryable;
 }
 
+export function isChatGptTerminalCompletionFailure(error: unknown): boolean {
+  return error instanceof ChatGptWebAdapterError && error.code === "chatgpt_completion_evidence_missing"
+    && !error.retryable;
+}
+
 export const CHATGPT_RETAINED_SURFACE_UNAVAILABLE = "The retained ChatGPT conversation is no longer available";
 
 export function chatGptSessionExpiredError(): ChatGptWebAdapterError {
   return new ChatGptWebAdapterError("The ChatGPT session has expired. Sign in again in Codex Web GPT.", {
     status: 401, errorType: "authentication_error", code: "chatgpt_session_expired", retryable: false,
   });
+}
+
+export function chatGptModelUnavailableError(): ChatGptWebAdapterError {
+  return new ChatGptWebAdapterError(
+    "ChatGPT rejected the selected Web model: Model not found. Reload ChatGPT and verify that model is available before retrying. The message was not resent and the model was not changed.",
+    { status: 404, errorType: "invalid_request_error", code: "model_not_found", retryable: false, retireSession: true },
+  );
 }
 
 export function chatGptRetainedSurfaceUnavailableError(cause: unknown): ChatGptWebAdapterError {

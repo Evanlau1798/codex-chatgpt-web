@@ -229,6 +229,8 @@ export class ChatGptTurnSession {
 
   outstandingPublished(): boolean { return this.outstandingBatchPublished; }
 
+  completedToolResultCount(): number { return this.deliveredResultIds.size; }
+
   markResultDelivered(callId: string, result?: CodexToolResultMessage): void {
     if (!this.outstandingById.delete(callId)) throw new Error(`ChatGPT bridge tool result does not match an outstanding call: ${callId}`);
     this.outstandingGenerationById.delete(callId);

@@ -5,6 +5,8 @@ export interface CodexParsedRequest {
   stream: boolean;
   options: CodexRequestOptions;
   _rawBody?: unknown;
+  /** Same-final auxiliary result; never emitted as answer text or serialized into context. */
+  _composerPrediction?: { enabled: true; suggestion?: string | null; completedAt?: number };
   /** Set only by the trusted Web route, never parsed from caller-supplied model metadata. */
   _chatgptModelFamily?: "5.6" | "6";
   /** Internal-only fresh surface that may synthesize a final answer but cannot call tools. */

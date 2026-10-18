@@ -1,4 +1,6 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import { tmpdir } from "node:os";
+import { scopeHash } from "../src/adapters/chatgpt-web/mcp-request-diagnostics";
 import {
   consumeConnectorContractProbeEvidence,
   discardConnectorContractProbeEvidence,
@@ -8,6 +10,33 @@ import {
   recordConnectorContractProbeQuery,
   verifyCurrentConnectorContract,
 } from "../src/adapters/chatgpt-web/connector-contract";
+
+test("contract evidence correlates producer and consumer without revealing nonce or temp root", async () => {
+  const log = spyOn(console, "error").mockImplementation(() => {});
+  let nonce = "", query = "";
+  try {
+    await verifyCurrentConnectorContract("Codex Native2", "native", async probe => {
+      nonce = probe.nonce; query = probe.query;
+      expect(recordConnectorContractProbeQuery(query, "native")).toBeTrue();
+    });
+    const events = log.mock.calls.flat().filter(line => String(line).startsWith("[chatgpt-web] connector_probe="))
+      .map(line => JSON.parse(String(line).split("connector_probe=")[1]!));
+    expect(events.map(event => event.phase)).toEqual(["expected", "produced", "consumed"]);
+    for (const event of events) {
+      expect(event.nonce_hash).toBe(scopeHash(nonce));
+      expect(event.root_hash).toMatch(/^[a-f0-9]{12}$/);
+      expect(event.root_hash).toBe(events[0].root_hash);
+      expect(event.pid).toBe(process.pid);
+      expect(Number.isFinite(Date.parse(event.at))).toBeTrue();
+    }
+    expect(events.at(-1)).toMatchObject({ matched: true });
+    for (const secret of [nonce, query, tmpdir()]) expect(JSON.stringify(events)).not.toContain(secret);
+    log.mockImplementation(() => { throw new Error("diagnostic sink unavailable"); });
+    await verifyCurrentConnectorContract("Codex Native2", "native", async probe => {
+      recordConnectorContractProbeQuery(probe.query, "native");
+    });
+  } finally { log.mockRestore(); }
+});
 
 test("current connector verification uses reserved inventory semantics without a public tool", async () => {
   await expect(verifyCurrentConnectorContract("Codex Native2", "native", async () => {}))

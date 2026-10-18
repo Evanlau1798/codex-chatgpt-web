@@ -10,8 +10,11 @@ function fixture(visible: boolean, wait: Promise<void>) {
   let index = 0;
   const locator = () => {
     const id = index++;
-    const scope: any = { filter: () => scope, last: () => scope,
-      isVisible: async () => { reads.push(id); await wait; return visible; },
+    let modelAlert = false;
+    const scope: any = { filter: ({ hasText }: { hasText: RegExp }) => {
+      modelAlert = hasText.source.startsWith("^Model not found"); return scope;
+    }, last: () => scope,
+      isVisible: async () => { reads.push(id); await wait; return visible && !modelAlert; },
       getByRole: () => scope, press: async () => { mutations.push("press"); } };
     return scope;
   };
@@ -24,7 +27,7 @@ test.each(checks)("independent alert reads start together: %p", async check => {
   const pending = check(f.page);
   try {
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(f.reads).toEqual([0, 1]);
+    expect(f.reads).toEqual(check === throwIfChatGptTerminalErrorAlert ? [0, 1, 2] : [0, 1]);
     expect(f.mutations).toEqual([]);
   } finally { release(); await pending; }
 });

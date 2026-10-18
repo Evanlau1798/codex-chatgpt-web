@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, renameSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
-import { pathIdentity as environmentPathIdentity } from "./environment-paths";
+import { isCurrentOrParentThreadVisualizationRoot, pathIdentity as environmentPathIdentity } from "./environment-paths";
 import { atomicWriteFile, stripUtf8Bom } from "../../config";
 import { getCodexHome } from "../../codex-integration-shared";
 import { isReadableCompactionSummaryText } from "../../responses/compaction";
@@ -384,18 +384,25 @@ function authority(environment: ChatGptTurnEnvironment, updatedAt: number): Stor
   };
 }
 
-function sameAuthority(claim: ChatGptEnvironmentClaim, right: ChatGptTurnEnvironment, allowAdditionalWritableRoots = false): boolean {
+function sameAuthority(
+  claim: ChatGptEnvironmentClaim, right: ChatGptTurnEnvironment, allowAdditionalWritableRoots: boolean,
+  isVisualizationRoot: (path: string) => boolean,
+): boolean {
   const left = claim.environment;
   const samePaths = (a: string[], b: string[]): boolean => {
-    const expected = new Set(b.map(pathIdentity));
-    return a.length === expected.size && a.every(path => expected.has(pathIdentity(path)));
+    const expected = new Set(b.filter(path => !isVisualizationRoot(path)).map(pathIdentity));
+    const actual = a.filter(path => !isVisualizationRoot(path));
+    return actual.length === expected.size && actual.every(path => expected.has(pathIdentity(path)));
   };
   return pathIdentity(left.cwd) === pathIdentity(right.cwd)
-    && samePaths(left.roots, right.roots)
+    && right.roots.filter(path => !isVisualizationRoot(path)).every(path => left.roots.some(root => pathIdentity(root) === pathIdentity(path)))
+    && left.roots.filter(path => !isVisualizationRoot(path)).every(path =>
+      [...right.roots, ...right.writableRoots].some(root => pathIdentity(root) === pathIdentity(path)))
     // Filesystem envelopes can omit Codex's extra output directories. The current
     // native rollout remains the authority returned to the caller, never the claim.
-    && (allowAdditionalWritableRoots
-      ? left.writableRoots.every(path => right.writableRoots.some(root => pathIdentity(root) === pathIdentity(path)))
+    && (allowAdditionalWritableRoots || right.writableRoots.some(root => !right.roots.some(path => pathIdentity(path) === pathIdentity(root)))
+      ? left.writableRoots.filter(path => !isVisualizationRoot(path))
+        .every(path => right.writableRoots.some(root => pathIdentity(root) === pathIdentity(path)))
       : samePaths(left.writableRoots, right.writableRoots))
     && left.sandboxPolicy.type === right.sandboxPolicy.type
     // An envelope that does not state its network policy cannot contradict the rollout on it.
@@ -481,12 +488,19 @@ export class ChatGptThreadEnvironmentStore {
         tools: effectiveChatGptToolPolicy(parsed).tools,
       });
       if (rolloutEnvironment) {
+        const visualizationOwner = { thread_id: rolloutIdentity.threadId,
+          ...("parentThreadId" in rolloutIdentity ? { parent_thread_id: rolloutIdentity.parentThreadId } : {}),
+        };
+        // Full-access context may list Codex's auxiliary visualization root absent from turn_context.
+        const isVisualizationRoot = (path: string): boolean => rolloutEnvironment.sandboxPolicy.type === "dangerFullAccess"
+          && isCurrentOrParentThreadVisualizationRoot(path, visualizationOwner, this.codexHome);
         const calendarDelta = hasCurrentContext && !currentCompaction
           ? extractChatGptCalendarEnvironmentDelta(parsed) : undefined;
         if (calendarDelta && (rolloutEnvironment.sandboxPolicy.type !== "dangerFullAccess"
           || calendarDelta.workspaceRoots.some(roots => {
-            const authoritative = new Set(rolloutEnvironment.roots.map(environmentPathIdentity));
-            return roots.length !== authoritative.size || roots.some(root => !authoritative.has(root));
+            const authoritative = new Set(rolloutEnvironment.roots.filter(path => !isVisualizationRoot(path)).map(environmentPathIdentity));
+            const actual = roots.filter(path => !isVisualizationRoot(path));
+            return actual.length !== authoritative.size || actual.some(root => !authoritative.has(root));
           }))) {
           throw new Error("Calendar environment delta conflicts with its current Codex rollout");
         }
@@ -504,7 +518,7 @@ export class ChatGptThreadEnvironmentStore {
         const steering = !currentCompaction && !postCompactionContext && ordinaryContinuation
           && !!extractChatGptSteeringEnvironmentClaim(parsed);
         if (currentClaims.some(claim => !sameAuthority(claim, rolloutEnvironment,
-          steering || (initialClaim !== undefined && !initialClaim.statesNetworkAccess)))) {
+          steering || (initialClaim !== undefined && !initialClaim.statesNetworkAccess), isVisualizationRoot))) {
           throw new Error(`${steering ? "Steering" : "Compaction continuation"} environment conflicts with its current Codex rollout`);
         }
         if ((hasCurrentContext || crossesForeignCompaction)

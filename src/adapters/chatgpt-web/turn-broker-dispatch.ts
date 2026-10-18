@@ -8,6 +8,7 @@ import {
 import { dispatchExternalOwnerRequest, type TurnBrokerOwner } from "./turn-broker-owner";
 import { scheduleToolWaiters } from "./turn-broker-queue";
 import { subagentModelObservation } from "./mcp-observation";
+import { scopeHash } from "./mcp-request-diagnostics";
 import {
   assertSafeHarnessRunning,
   waitForSafeSent,
@@ -39,7 +40,7 @@ interface DispatchState {
   pending: Map<string, TurnChannel>;
   registerExternal: TurnBrokerOwner["register"];
   registerExternalSafe: TurnBrokerOwner["registerSafe"];
-  retiredBindings: Map<string, string>;
+  retiredBindings: Map<string, import("./turn-broker-protocol").BrokerRetirementDiagnostics>;
   retiredTokens: Map<string, string>;
   startSafeTurn(requestId: string): { started: true; duplicate: boolean };
   completeSafeTurn(requestId: string, finalAnswer: string): { completed: true; duplicate: boolean };
@@ -104,17 +105,22 @@ export async function dispatchTurnBrokerRequest(
       if (request.outputKind === "final" && state.contexts.hasIncomplete(request.token)) {
         throw new Error("Read and verify the complete Codex context archive before submitting final output");
       }
-      submitted = submitTurnOutput(channel, request.outputKind!, request.outputText);
+      submitted = submitTurnOutput(channel, request.outputKind!, request.outputText, request.nextMessagePrediction);
     } catch (error) {
       const kind = ["commentary", "reasoning", "final"].includes(request.outputKind!) ? request.outputKind : "invalid";
-      console.warn(`[chatgpt-web] broker trace=${channel.traceId} output rejected kind=${kind} chars=${request.outputText.length}`
+      try {
+        console.warn(`[chatgpt-web] broker trace=${channel.traceId} output rejected kind=${kind} chars=${request.outputText.length}`
         + ` activeActivities=${channel.activities.size} pendingTools=${channel.invocations.size} finalizationOnly=${channel.finalizationOnly}`
         + ` outputSealed=${channel.outputSealed} finalAccepted=${channel.outputFinalSequence !== undefined}`
-        + ` contextIncomplete=${state.contexts.hasIncomplete(request.token)}`);
+        + ` contextIncomplete=${state.contexts.hasIncomplete(request.token)} referenceHash=${scopeHash(request.token)}`);
+      } catch { /* Preserve the original validation failure. */ }
       throw error;
     }
-    console.info(`[chatgpt-web] broker trace=${channel.traceId} output accepted kind=${submitted.event.kind}`
-      + ` sequence=${submitted.event.sequence} chars=${submitted.event.text.length} duplicate=${submitted.duplicate}`);
+    try {
+      console.info(`[chatgpt-web] broker trace=${channel.traceId} output accepted kind=${submitted.event.kind}`
+      + ` sequence=${submitted.event.sequence} chars=${submitted.event.text.length} duplicate=${submitted.duplicate}`
+      + ` referenceHash=${scopeHash(request.token)}`);
+    } catch { /* An accepted output must keep its acknowledgement. */ }
     return { accepted: true, sequence: submitted.event.sequence, duplicate: submitted.duplicate };
   }
   if (request.method === "read_context") {
@@ -130,7 +136,8 @@ export async function dispatchTurnBrokerRequest(
     }
     // Schema discovery is not work: no activity, task data, work reopening,
     // or mutation of the finalization/completion revision.
-    return { outputEnabled: true, finalizationOnly: channel.finalizationOnly };
+    return { outputEnabled: true, finalizationOnly: channel.finalizationOnly,
+      ...(channel.predictionEnabled ? { predictionEnabled: true } : {}) };
   }
   if (request.method === "read_agent_wait") {
     const channel = request.token ? state.channels.get(request.token) : undefined;
@@ -158,10 +165,13 @@ async function claim(request: BrokerRequest, signal: AbortSignal, state: Dispatc
   const channel = state.channels.get(token);
   let activeChannel = channel && !channel.completionCommitted ? channel : undefined;
   const retiredTurn = channel?.completionCommitted ? channel.traceId : state.retiredTokens.get(token);
-  console.error(
+  try {
+    console.error(
     `[chatgpt-web] broker claim received (tokenChars=${token.length}, valid=${Boolean(activeChannel)}`
-    + `${activeChannel ? "" : `, retiredTurn=${retiredTurn ?? "unknown"}`})`,
+    + `${activeChannel ? "" : `, retiredTurn=${retiredTurn ?? "unknown"}`})`
+    + ` referenceHash=${token.length <= 256 ? scopeHash(token) : "oversized"}${activeChannel ? ` trace=${activeChannel.traceId}` : ""}`,
   );
+  } catch { /* Diagnostics cannot reject a valid claim. */ }
   if (!activeChannel) {
     throw new Error(retiredTurn !== undefined
       ? `This turn_token was issued for ${retiredTurnLabel(retiredTurn)}, which has already finished.`
@@ -213,10 +223,13 @@ function invoke(request: BrokerRequest, state: DispatchState): unknown {
   const binding = state.bindings.get(bindingId);
   if (!binding) {
     const retiredTurn = state.retiredBindings.get(bindingId);
-    if (request.method === "release" && retiredTurn !== undefined) return { released: true, duplicate: true };
+    if (request.method === "release" && retiredTurn !== undefined) {
+      if (request.failure !== undefined) assertRetirementFailure(request.failure);
+      return { released: true, duplicate: true, ...(request.failure === undefined ? {} : { diagnostics: retiredTurn }) };
+    }
     console.error(`[chatgpt-web] broker rejected ${request.method} (binding=${bindingId.slice(0, 17)}, retiredTurn=${retiredTurn ?? "unknown"})`);
     throw new Error(retiredTurn !== undefined
-      ? `${retiredTurnLabel(retiredTurn)} has already finished; this Codex Native action can no longer run.`
+      ? `${retiredTurnLabel(retiredTurn.traceId)} has already finished; this Codex Native action can no longer run.`
       : "internal Codex turn binding is invalid or expired");
   }
   if (request.method === "release") {
@@ -226,7 +239,7 @@ function invoke(request: BrokerRequest, state: DispatchState): unknown {
     } else {
       state.owner.revoke(binding.token);
     }
-    return { released: true };
+    return { released: true, ...(request.failure === undefined ? {} : { diagnostics: state.retiredBindings.get(bindingId)! }) };
   }
   if (request.method === "resolve") return { environment: binding.channel.environment };
   assertSafeHarnessRunning(binding.channel);
@@ -268,7 +281,7 @@ function invoke(request: BrokerRequest, state: DispatchState): unknown {
     ...(request.freeform === true ? { input: request.input ?? "" } : { arguments: request.arguments ?? {} }),
   };
   return new Promise<BrokerToolResult>((resolve, reject) => {
-    binding.channel.invocations.set(callId, { request: toolRequest, resolve, reject });
+    binding.channel.invocations.set(callId, { request: toolRequest, queuedAt: performance.now(), resolve, reject });
     binding.channel.queuedCallIds.push(callId);
     console.info(`[chatgpt-web] broker trace=${binding.channel.traceId} queued call=${callId.slice(0, 17)} tool=${wireName} waiters=${binding.channel.waiters.size}`);
     const modelObservation = !toolRequest.freeform && subagentModelObservation(wireName, toolRequest.arguments);

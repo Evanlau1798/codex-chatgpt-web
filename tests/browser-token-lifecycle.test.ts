@@ -54,6 +54,9 @@ test("a failed browser surface revokes an outstanding native tool invocation wit
   let failSurface!: (error: Error) => void;
   const surfaceFailure = new Promise<never>((_resolve, reject) => { failSurface = reject; });
   let invocationOutcome!: Promise<string>;
+  const invocationAbort = new AbortController();
+  let invocationSettled = false;
+  let revocationDeadline: ReturnType<typeof setTimeout> | undefined;
 
   (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
     const prepared = await turn.prepare();
@@ -70,8 +73,11 @@ test("a failed browser surface revokes an outstanding native tool invocation wit
         wireName: "exec_command",
         freeform: false,
         arguments: { cmd: "long-running-read" },
-      }, 2_000);
-      invocationOutcome = invocation.then(() => "completed", error => error instanceof Error ? error.message : String(error));
+      }, null, invocationAbort.signal);
+      invocationOutcome = invocation.then(
+        () => { invocationSettled = true; return "completed"; },
+        error => { invocationSettled = true; return error instanceof Error ? error.message : String(error); },
+      );
       let snapshot = progress.snapshot();
       while (snapshot.lastToolBatchRevision <= previousBatchRevision) {
         snapshot = await progress.waitForChange(snapshot.revision, turn.abortSignal);
@@ -88,10 +94,15 @@ test("a failed browser surface revokes an outstanding native tool invocation wit
     const events: AdapterEvent[] = [];
     await createChatGptWebAdapter(provider).runTurn!(request(), { headers: new Headers() }, event => events.push(event));
     expect(events.some(event => event.type === "tool_call_start")).toBe(true);
+    expect(invocationSettled).toBe(false);
 
+    // Bound revocation after the browser failure, not the preceding cold tool-handoff setup.
+    revocationDeadline = setTimeout(() => invocationAbort.abort(), 2_000);
     failSurface(new Error("browser surface closed"));
     expect(await invocationOutcome).toContain("revoked");
   } finally {
+    clearTimeout(revocationDeadline);
+    invocationAbort.abort();
     (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
     await broker.close();
   }
