@@ -161,7 +161,7 @@ test("final-answer recovery closes work tools and arms final output only after b
   }
 });
 
-test("an unsubmitted final-answer recovery can reopen work tools with the exact revision", async () => {
+test("a recovery submission fence reopens unfinished Native work with the exact revision", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-output-finalization-cancel-"));
   const socket = defaultBrokerEndpoint(root);
   const broker = TurnBroker.forSocket(socket);
@@ -173,6 +173,12 @@ test("an unsubmitted final-answer recovery can reopen work tools with the exact 
     assert.equal(await owner.beginFinalizationOnly(token, revision!), true);
     assert.equal(await owner.cancelFinalizationOnly(token, revision! + 1), true);
     assert.equal(await owner.cancelFinalizationOnly(token, revision! + 1), false);
+    const activityId = "activity_remaining_work_123456";
+    await callTurnBroker(socket, { method: "claim", token, activityId });
+    await assert.rejects(submitNativeOutputControl(
+      socket, token, { kind: "final", text: "Premature completion." }, undefined,
+    ), /work tools are still active/);
+    await callTurnBroker(socket, { method: "activity_complete", token, activityId });
     expect(await submitNativeOutputControl(
       socket, token, { kind: "final", text: "Late final remains admissible." }, undefined,
     )).toMatchObject({ accepted: true });

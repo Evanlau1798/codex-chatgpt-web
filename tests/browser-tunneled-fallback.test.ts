@@ -17,6 +17,8 @@ import { publishPendingFinalizationOutput, submitTurnOutput, waitForTurnOutput, 
 import type { TurnChannel } from "../src/adapters/chatgpt-web/turn-broker-state";
 import { chatGptSameSurfaceRecoveryDecision, CHATGPT_SAME_SURFACE_RECOVERY_PROMPT } from "../src/adapters/chatgpt-web/runtime-lifecycle";
 import { chatGptSameSurfaceRecoveryPrompt } from "../src/adapters/chatgpt-web/same-surface-recovery";
+import { createChatGptSameSurfaceRetry } from "../src/adapters/chatgpt-web/same-surface-recovery";
+import { ChatGptTurnSession, ChatGptTextFeed, ChatGptTraceFeed, chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import * as launcherControl from "../src/launcher-browser-host";
 const hostSource = createRequire(import.meta.url).resolve("../launcher/electron/browser-host.cjs");
 const hostRequire = createRequire(hostSource);
@@ -59,6 +61,10 @@ async function runFixture(options: {
   recoverySendActivationCallback?: boolean;
   finalDuringRecoverySubmission?: boolean;
   recoveryReceiptFails?: boolean;
+  remainingWorkAfterRecovery?: boolean;
+  pauseAfterRecoveryWork?: boolean;
+  errorRecovery?: BrowserTurn["retryPromptForError"];
+  onToolSettled?: () => void;
   steeringBeforeRecoverySend?: boolean;
   recentToolProgress?: boolean;
   delayedSecondBatch?: boolean;
@@ -137,7 +143,9 @@ async function runFixture(options: {
     progress.recordToolResult();
     lastToolResultAt = now;
     actions.push("tool-settled");
-    if (options.toolBatchAtRecoveryInsertion && actions.includes("recovery-tool-started")) {
+    options.onToolSettled?.();
+    if (options.toolBatchAtRecoveryInsertion && actions.includes("recovery-tool-started")
+      || options.remainingWorkAfterRecovery && actions.includes("remaining-work-started") && !options.pauseAfterRecoveryWork) {
       submitTurnOutput(channel, "final", FINAL);
     }
     if (options.finalAfterToolWithoutAssistantTurn) submitTurnOutput(channel, "final", FINAL);
@@ -468,6 +476,7 @@ async function runFixture(options: {
     onCommentary: text => { commentary.push(text); },
     onProgress: () => { progressTimes.push(now); },
     retryPromptForError: async (error, attempt) => {
+      if (options.errorRecovery) return options.errorRecovery(error, attempt);
       if (!recoverable) return undefined;
       if (pendingSecondBatch) actions.push("recovery-before-delayed-tool");
       if (options.emptyStopped) recoveryDecisionAgeMs = now - lastToolResultAt;
@@ -515,21 +524,27 @@ async function runFixture(options: {
         return false;
       }
       if (channel.outputFinalSequence !== undefined) return false;
-      if (!finalizationStarted && revision === 1) {
+      if (!finalizationStarted && revision === (channel.activityRevision || 1)) {
         finalizationStarted = true;
         channel.finalizationOnly = true;
-        channel.activityRevision = 2;
+        channel.activityRevision = revision + 1;
         return true;
       }
       return false;
     },
     cancelFinalizationOnly: async revision => {
       actions.push(`finalization-cancel:${revision}`);
-      if (!finalizationStarted || revision !== 2 || channel.finalizationOutputArmed) return false;
+      if (!finalizationStarted || revision !== channel.activityRevision || channel.finalizationOutputArmed) return false;
       finalizationStarted = false;
       channel.finalizationOnly = false;
-      channel.activityRevision = 3;
+      channel.activityRevision += 1;
       publishPendingFinalizationOutput(channel);
+      if (recoverable && submitted >= 2 && !options.recoveryFails) {
+        if (options.remainingWorkAfterRecovery && submitted === 2) {
+          progress.recordToolBatch(1);
+          actions.push("remaining-work-started");
+        } else submitTurnOutput(channel, "final", FINAL);
+      }
       return true;
     },
     armFinalizationOutput: async revision => {
@@ -538,7 +553,7 @@ async function runFixture(options: {
       channel.finalizationOutputArmed = true;
       channel.activityRevision = 3;
       publishPendingFinalizationOutput(channel);
-      if (recoverable && submitted === 2 && !options.recoveryFails) {
+      if (recoverable && submitted === 2 && !options.recoveryFails && !options.remainingWorkAfterRecovery) {
         submitTurnOutput(channel, "final", FINAL);
       }
       return true;
@@ -954,12 +969,12 @@ test("a late Native final cancels an attached recovery prompt before send and re
   expect(result.actions).toContain("clear");
 });
 
-test("a late Native final after finalization CAS is buffered until recovery submission is armed", async () => {
+test("a late Native final after finalization CAS is buffered until the submission fence reopens", async () => {
   const result = await runFixture({ emptyStopped: true, lateFinalAfterFinalizationCas: true });
   expect(result.error).toBeUndefined();
   expect(result.answer).toBe(FINAL);
   expect(result.actions).toContain("late-final-buffered");
-  expect(result.actions).toContain("finalization-output-arm:2");
+  expect(result.actions).toContain("finalization-cancel:2");
   expect(result.actions.filter(action => action === "send")).toHaveLength(2);
 });
 
@@ -1014,43 +1029,78 @@ test("a tool batch arriving at recovery insertion is still acknowledged and disp
   expect(result.actions.filter(action => action === "send")).toHaveLength(1);
 });
 
+test("recovery reopens unfinished work before accepting the final answer", async () => {
+  const result = await runFixture({ emptyStopped: true, remainingWorkAfterRecovery: true });
+  expect(result.error).toBeUndefined();
+  expect(result.answer).toBe(FINAL);
+  expect(result.actions).toContain("remaining-work-started");
+  expect(result.actions.filter(action => action === "tool-dispatched")).toHaveLength(2);
+  expect(result.actions).toContain("finalization-cancel:2");
+  expect(result.actions).not.toContain("finalization-output-arm:2");
+  expect(result.actions.filter(action => action === "send")).toHaveLength(2);
+});
+
+test("production recovery renews only after new work completes, then delivers one atomic final", async () => {
+  const session = new ChatGptTurnSession({ mode: "tools", token: Promise.resolve("turn_worker_budget"),
+    browser: new Promise<string>(() => {}), trace: new ChatGptTraceFeed(), text: new ChatGptTextFeed(), cancel: () => {} });
+  session.observeCanonicalRequest({ modelId: "chatgpt-web/high", stream: true,
+    context: { tools: [], messages: [] }, options: {}, _canonicalContextComplete: true });
+  const find = spyOn(chatGptTurnSessions, "find").mockImplementation(() => session);
+  let settled = 0;
+  try {
+    const errorRecovery = createChatGptSameSurfaceRetry({ traceId: "worker_budget", executionKey: "worker_budget",
+      enhancedMode: true, outputTunnel: true, turnToken: () => "turn_worker_budget", abortSignal: new AbortController().signal });
+    const result = await runFixture({ emptyStopped: true, remainingWorkAfterRecovery: true, pauseAfterRecoveryWork: true,
+      errorRecovery, onToolSettled: () => {
+        const callId = `call_worker_budget_${++settled}`;
+        session.setOutstanding([{ callId, wireName: "exec_command", freeform: false, arguments: {} }]);
+        session.markResultDelivered(callId);
+      } });
+    expect(result.error).toBeUndefined();
+    expect(result.answer).toBe(FINAL);
+    expect(result.deltas).toEqual([FINAL]);
+    expect(result.actions.filter(action => action === "send")).toHaveLength(3);
+    expect(result.actions.filter(action => action === "tool-dispatched")).toHaveLength(2);
+  } finally { find.mockRestore(); }
+});
+
 test("missing-final recovery has no separate send-activation callback after finalization CAS", async () => {
   const result = await runFixture({ emptyStopped: true, recoverySendActivationCallback: true });
   expect(result.error).toBeUndefined();
   expect(result.answer).toBe(FINAL);
   expect(result.actions).not.toContain("recovery-send-activated");
   const finalization = result.actions.indexOf("finalization-only:1");
-  const arm = result.actions.indexOf("finalization-output-arm:2");
+  const resumed = result.actions.indexOf("finalization-cancel:2");
   const recoverySeal = result.actions.findIndex((action, index) =>
     index > finalization && action === "final-answer-admission-sealed");
   const recoveryReopen = result.actions.findIndex((action, index) =>
-    index > arm && action === "final-answer-admission-reopened");
+    index > resumed && action === "final-answer-admission-reopened");
   expect(finalization).toBeLessThan(recoverySeal);
-  expect(recoverySeal).toBeLessThan(arm);
-  expect(arm).toBeLessThan(recoveryReopen);
+  expect(recoverySeal).toBeLessThan(resumed);
+  expect(resumed).toBeLessThan(recoveryReopen);
   expect(result.actions.filter(action => action === "send")).toHaveLength(2);
 });
 
-test("a final submitted while the recovery click is being acknowledged is delivered after arming", async () => {
+test("a final submitted while the recovery click is being acknowledged is delivered after reopening", async () => {
   const result = await runFixture({ emptyStopped: true, finalDuringRecoverySubmission: true });
   expect(result.error).toBeUndefined();
   expect(result.answer).toBe(FINAL);
   expect(result.deltas).toEqual([FINAL]);
-  expect(result.actions.indexOf("send")).toBeLessThan(result.actions.indexOf("finalization-output-arm:2"));
+  expect(result.actions.indexOf("send")).toBeLessThan(result.actions.indexOf("finalization-cancel:2"));
   expect(result.actions.filter(action => action === "send")).toHaveLength(2);
 });
 
-test("an unknown recovery click receipt keeps finalization closed through bounded submission confirmation", async () => {
+test("an unknown recovery click receipt reopens work before bounded submission confirmation", async () => {
   const result = await runFixture({ emptyStopped: true, recoveryReceiptFails: true });
   expect(result.error).toBeUndefined();
   expect(result.answer).toBe(FINAL);
   expect(result.actions.filter(action => action === "send")).toHaveLength(2);
-  expect(result.actions).not.toContain("finalization-cancel:2");
-  expect(result.actions).toContain("finalization-output-arm:2");
-  expect(result.actions.indexOf("finalization-output-arm:2")).toBeLessThan(result.actions.lastIndexOf("submission-confirmed"));
+  expect(result.actions).toContain("finalization-cancel:2");
+  expect(result.actions).not.toContain("finalization-output-arm:2");
+  expect(result.actions.indexOf("finalization-cancel:2")).toBeLessThan(result.actions.lastIndexOf("submission-confirmed"));
 });
 
-test("a final accepted before an unknown recovery receipt is published after arming", async () => {
+test("a final accepted before an unknown recovery receipt is published after reopening", async () => {
   const result = await runFixture({
     emptyStopped: true,
     finalDuringRecoverySubmission: true,
@@ -1059,8 +1109,8 @@ test("a final accepted before an unknown recovery receipt is published after arm
   expect(result.error).toBeUndefined();
   expect(result.answer).toBe(FINAL);
   expect(result.deltas).toEqual([FINAL]);
-  expect(result.actions).toContain("finalization-output-arm:2");
-  expect(result.actions).not.toContain("finalization-cancel:2");
+  expect(result.actions).not.toContain("finalization-output-arm:2");
+  expect(result.actions).toContain("finalization-cancel:2");
 });
 
 test("a user draft entered while finalization CAS is pending is preserved", async () => {

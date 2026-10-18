@@ -131,7 +131,9 @@ for (const compacting of [false, true]) test(`same-conversation recovery respect
       expect(retryText).toContain(JSON.stringify({turn_token:preparedToken,wire_name:"codex.control.output",arguments:{kind:"final",text:"<complete user-facing answer>"}}));
       expect(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT).toContain("codex.control.output");
       expect(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT).toContain("kind=final");
-      expect(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT).toContain("Do not call any work tool");
+      expect(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT).not.toContain("Do not call any work tool");
+      expect(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT).toContain("Continue the remaining work");
+      expect(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT).not.toContain("Produce the complete user-facing answer now");
       expect(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT).toContain("does not establish that the user's requested work is complete");
       expect(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT).not.toContain("All requested Codex Native2 work tools have completed");
       expect(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT).toContain("Do not write ordinary assistant prose");

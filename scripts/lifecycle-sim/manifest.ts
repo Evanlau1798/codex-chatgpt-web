@@ -76,6 +76,7 @@ export const sharedLifecycleTests = [
   "tests/startup-connection-transfer.test.ts",
   "tests/compaction-browser-recovery.test.ts",
   "tests/submitted-surface-recovery.test.ts",
+  "tests/same-surface-recovery-budget.test.ts",
   "tests/browser-helper-completion-fence.test.ts",
   "tests/browser-tunneled-fallback.test.ts",
   "tests/localized-stop-control.test.ts",

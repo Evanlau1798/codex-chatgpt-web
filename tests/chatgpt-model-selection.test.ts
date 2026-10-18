@@ -85,6 +85,22 @@ test("family confirmation verifies the exact Sol or Pro version, including the o
   expect(chatGptModelFamilyMatches(["6 Pro, 5 of 5."], "6", "xhigh")).toBe(false);
 });
 
+test("model headers may repeat the same version before their effort without hiding contradictions", async () => {
+  for (const [effort, label, index] of [["low", "Instant", 0], ["medium", "Medium", 1],
+    ["high", "High", 2], ["xhigh", "Extra High", 3], ["max", "Pro", 4]] as const) {
+    const descriptions = [`5.6 ${label}，第 ${index + 1} 項，共 5 項。`, `5.6 Sol 5.6 ${label}`];
+    expect(chatGptModelFamilyMatches(descriptions, "5.6", effort)).toBeTrue();
+    await assertChatGptModelFamily(confirmationFixture("GPT-5.6 Sol", descriptions, String(index)), "5.6", effort, index);
+  }
+  for (const header of ["5.6 Sol 6 Extra High", "6 Sol 5.6 Extra High", "5.6 Astra 5.6 Extra High",
+    "5.6 Sol 5.6 High", "5.6 Sol 5.6 Extra High, 3 of 5.", "5.6 Sol 5.6 Extra High for better answers"]) {
+    const descriptions = ["5.6 Extra High，第 4 項，共 5 項。", header];
+    expect(chatGptModelFamilyMatches(descriptions, "5.6", "xhigh")).toBeFalse();
+    await expect(assertChatGptModelFamily(confirmationFixture("GPT-5.6 Sol", descriptions, "3"), "5.6", "xhigh", 3))
+      .rejects.toThrow("could not be selected and verified");
+  }
+});
+
 test("explicit GPT-6 verifies every non-Pro effort without accepting the older 5.6 family", () => {
   for (const [index, [effort, label]] of ([["low", "Instant"], ["medium", "中"], ["high", "High"], ["xhigh", "極高"]] as const).entries()) {
     expect(chatGptModelFamilyMatches([`6 ${label}, ${index + 1} of 5.`], "6", effort)).toBe(true);

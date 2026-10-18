@@ -5164,15 +5164,16 @@ export class ChatGptBrowserWorker {
             resumeRecoveryObservation();
             return;
           }
-          let outputArmed = false;
+          let workResumed = false;
           try {
-            outputArmed = await turn.armFinalizationOutput?.(recoveryExpectedActivityRevision! + 1) === true;
+            // The CAS is a submission fence, not proof that the user's task is finished.
+            workResumed = await turn.cancelFinalizationOnly?.(recoveryExpectedActivityRevision! + 1) === true;
           } finally {
             turn.finalAnswerAdmission?.reopen();
             this.finalizingRuns.delete(turn.traceId);
           }
-          if (!outputArmed) {
-            throw chatGptWebSurfaceError("ChatGPT recovery final output could not be armed after submission", false);
+          if (!workResumed) {
+            throw chatGptWebSurfaceError("ChatGPT recovery work tools could not be reopened after submission", false);
           }
           recoveryExpectedActivityRevision = undefined;
         } else {
