@@ -33,12 +33,14 @@ export async function invokeChatGptMcpTool(
       ...request,
     }, timeoutMs, signal);
   } catch (error) {
+    let diagnostics: import("./turn-broker-protocol").BrokerRetirementDiagnostics | undefined;
     try {
-      await callTurnBroker(socketPath, { method: "release", bindingId,
+      const retired = await callTurnBroker<{ diagnostics?: import("./turn-broker-protocol").BrokerRetirementDiagnostics }>(socketPath, { method: "release", bindingId,
         ...(error instanceof TurnBrokerTimeoutError ? {
           failure: { code: "codex_tool_timeout" as const, tool: request.wireName, timeoutMs },
         } : {}),
       });
+      diagnostics = retired.diagnostics;
     } catch (releaseError) {
       throw new AggregateError([error, releaseError], "Codex Native invocation failed and its abandoned broker binding could not be retired");
     }
@@ -48,10 +50,11 @@ export async function invokeChatGptMcpTool(
         tool: request.wireName,
         timeout_ms: timeoutMs,
         retryable: false,
-        message: `Codex tool ${request.wireName} did not complete before the MCP transport deadline. The current turn binding was retired; do not retry it in this ChatGPT response.`,
+        ...(diagnostics === undefined ? {} : { broker_state_at_retirement: diagnostics }),
+        message: `Codex tool ${request.wireName} did not complete before the MCP transport deadline. The current turn binding was retired; do not retry it in this ChatGPT response. Delivery confirms handoff to Codex; execution and approval status are unknown.`,
       };
       console.error(
-        `[chatgpt-web-mcp] ${request.wireName} did not complete within ${timeoutMs}ms; retired its turn binding`,
+        `[chatgpt-web-mcp] ${request.wireName} did not complete within ${timeoutMs}ms; retired its turn binding broker_state_at_retirement=${JSON.stringify(diagnostics ?? null)}`,
       );
       return {
         content: [{ type: "text", text: JSON.stringify(detail) }],

@@ -1,8 +1,44 @@
-import { activateChatGptEffortMenu, parseChatGptEffortSliderState, parseChatGptModelAnnouncement, readChatGptModelAnnouncements } from "../../chatgpt-session";
+import { activateChatGptEffortMenu, normalizeChatGptModelAnnouncement, parseChatGptEffortSliderState, parseChatGptModelAnnouncement, readChatGptModelAnnouncements } from "../../chatgpt-session";
 import type { ChatGptWebAdapterEffort, ChatGptWebModelFamily } from "../../chatgpt-web-models";
 import { ChatGptWebAdapterError } from "./adapter-error";
 
 type EffortMenu = Awaited<ReturnType<typeof activateChatGptEffortMenu>>;
+
+const effortLabels: Record<ChatGptWebAdapterEffort, RegExp> = {
+  low: /^(?:Instant|Instantané|即時)$/i,
+  medium: /^(?:Medium|Moyen|中)$/i,
+  high: /^(?:High|Élevée?|Elevée?|高)$/i,
+  xhigh: /^(?:Extra High|Très élevé|極高)$/i,
+  max: /^Pro$/i,
+};
+
+function effortPosition(text: string): RegExpExecArray | null {
+  return /\p{P}\s*(\d+)\s+(?:of|sur)\s+(\d+)\p{P}*$/iu.exec(text.trim())
+    ?? /\p{P}\s*第\s*(\d+)\s*項\p{P}\s*共\s*(\d+)\s*項\p{P}*$/iu.exec(text.trim());
+}
+
+function matchesEffortPosition(position: RegExpExecArray, effort: ChatGptWebAdapterEffort): boolean {
+  const index = ["low", "medium", "high", "xhigh", "max"].indexOf(effort) + 1;
+  return Number(position[1]) === index && Number(position[2]) >= index && Number(position[2]) <= 5;
+}
+
+function effortEvidenceMatches(descriptions: readonly string[], effort: ChatGptWebAdapterEffort): boolean {
+  return descriptions.every(text => {
+    const normalized = normalizeChatGptModelAnnouncement(text);
+    const mode = parseChatGptModelAnnouncement(normalized)?.mode ?? normalized.split(/\p{P}/u)[0]!.trim();
+    const recognized = Object.values(effortLabels).some(label => label.test(mode));
+    const position = effortPosition(normalized);
+    return (!recognized || effortLabels[effort].test(mode))
+      && (!position || matchesEffortPosition(position, effort));
+  });
+}
+
+function modelVersionEvidenceMatches(descriptions: readonly string[], family: ChatGptWebModelFamily): boolean {
+  return descriptions.every(text => {
+    const version = /^(?:GPT[-\s]?)?(\d+(?:\.\d+)*)/i.exec(normalizeChatGptModelAnnouncement(text));
+    return !version || version[1] === family;
+  });
+}
 
 function familyError(family: ChatGptWebModelFamily, cause?: unknown): ChatGptWebAdapterError {
   return new ChatGptWebAdapterError(
@@ -77,9 +113,9 @@ export function chatGptModelFamilyMatches(
     const state = parseChatGptModelAnnouncement(text);
     return state ? [state] : [];
   });
-  return states.length > 0 && states.every(state => state.version === family
+  return modelVersionEvidenceMatches(descriptions, family) && states.length > 0 && states.every(state => state.version === family
     && (!state.name || state.name === expectedName)
-    && (effort === "max" ? /^Pro$/i.test(state.mode) : !/^Pro$/i.test(state.mode)));
+    && effortLabels[effort].test(state.mode)) && effortEvidenceMatches(descriptions, effort);
 }
 
 export async function assertChatGptModelFamily(
@@ -100,30 +136,28 @@ export async function assertChatGptModelFamily(
     const descriptions = await readChatGptModelAnnouncements(menu.slider);
     // The retired Latest picker used 5.6 below Pro. Only its actual radio label authorizes
     // that compatibility mapping; an explicit 6 picker must prove 6 at every effort.
-    const legacyLatest = family === "6" && checked && effort !== "max"
+    const legacyLatest = family === "6" && checked
       && /^(?:Latest|Le plus récent|最新(?:模型)?|최신)$/i.test((await option.innerText()).trim());
-    const expectedFamily = legacyLatest ? "5.6" : family;
-    if (checked && state && state.value === state.min + effortIndex && (chatGptModelFamilyMatches(descriptions, expectedFamily, effort)
-      || (family === "5.6" && chatGptUnversionedEffortMatches(descriptions, effort)))) return;
+    const expectedFamily = legacyLatest && effort !== "max" ? "5.6" : family;
+    if (checked && state && state.value === state.min + effortIndex && modelVersionEvidenceMatches(descriptions, expectedFamily)
+      && (chatGptModelFamilyMatches(descriptions, expectedFamily, effort)
+      || (!legacyLatest && chatGptUnversionedEffortMatches(descriptions, effort)))) return;
     if (Date.now() >= deadline) break;
     await new Promise(resolve => setTimeout(resolve, 50));
   } while (true);
   throw familyError(family);
 }
 
-/** Current pickers omit the version in their status. The caller must also verify the family radio
- * and slider position; an unscoped generic Pro label is never sufficient evidence. */
+/** Current pickers omit the version in their status. The caller must also verify the family radio,
+ * all version evidence and slider position; an unscoped generic Pro label is never sufficient evidence. */
 export function chatGptUnversionedEffortMatches(descriptions: readonly string[], effort: ChatGptWebAdapterEffort): boolean {
-  if (descriptions.some(text => /^(?:GPT[-\s]?)?\d+(?:\.\d+)?\s/i.test(text.trim()))) return false;
-  const labels: Record<ChatGptWebAdapterEffort, RegExp> = {
-    low: /^(?:Instant|Instantané)$/i,
-    medium: /^(?:Medium|Moyen)$/i,
-    high: /^(?:High|Élevée?|Elevée?)$/i,
-    xhigh: /^(?:Extra High|Très élevé)$/i,
-    max: /^Pro$/i,
-  };
-  const statuses = descriptions.map(text => /^(.*?),\s*([1-5])\s+(?:of|sur)\s+([1-5])\.$/i.exec(text.trim())).filter(Boolean);
-  const index = ["low", "medium", "high", "xhigh", "max"].indexOf(effort) + 1;
-  return statuses.length === 1 && labels[effort].test(statuses[0]![1]!)
-    && Number(statuses[0]![2]) === index && Number(statuses[0]![3]) >= index;
+  const normalized = descriptions.map(normalizeChatGptModelAnnouncement);
+  if (!effortEvidenceMatches(normalized, effort)) return false;
+  if (normalized.some(text => /^(?:GPT[-\s]?)?\d+(?:\.\d+)?\s/i.test(text))) return false;
+  const statuses = normalized.flatMap(text => {
+    const position = effortPosition(text);
+    return position ? [{ label: text.slice(0, position.index).trim(), position }] : [];
+  });
+  return statuses.length === 1 && effortLabels[effort].test(statuses[0]!.label)
+    && matchesEffortPosition(statuses[0]!.position, effort);
 }

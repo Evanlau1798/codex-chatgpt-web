@@ -28,7 +28,9 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("readiness diagnostics distin
     await page.locator('#prompt-textarea').evaluate(element => element.setAttribute("contenteditable", "false"));
     await diagnostics.capture(page, "open");
     const directory = join(root, readdirSync(root)[0]!);
-    const text = readdirSync(directory).sort().map(file => readFileSync(join(directory, file), "utf8"));
+    const text = readdirSync(directory).filter(file => file.endsWith(".json"))
+      .sort().map(file => readFileSync(join(directory, file), "utf8"));
+    expect(text).toHaveLength(2);
     const [ready, open] = text.map(value => JSON.parse(value).state);
     expect(ready).toMatchObject({ composerEditable: true, effortControlUnique: true, effortControlExpanded: false, effortControlClosed: true });
     expect(open).toMatchObject({ composerEditable: false, effortControlUnique: true, effortControlExpanded: true, effortControlClosed: false });

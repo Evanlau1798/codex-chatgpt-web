@@ -51,3 +51,26 @@ export function chatGptResponseStructures(roots: Element[]) {
     };
   });
 }
+
+export function chatGptResponseStructureLogEntries(
+  traceId: string,
+  checkpoint: string,
+  structures: ReturnType<typeof chatGptResponseStructures>,
+): string[] {
+  const turns = structures.map(turn => ({
+    truncated: turn.truncated,
+    nodes: turn.nodes.map(node => [node.parent, node.tag, ...[
+      node.rendered, node.assistant, node.user, node.searchUnit, node.markdown,
+      node.streamingStatus, node.activityStart, node.completionControl,
+    ].map(Number)]),
+  }));
+  // All three bounded trees together can exceed the launcher's 16 KiB string limit.
+  // Keep each tree intact, including its parent indices, in its own exportable record.
+  return (turns.length ? turns.map(turn => [turn]) : [[]]).map((part, turnIndex) => (
+    `[chatgpt-web] response_structure ${JSON.stringify({
+      traceId, checkpoint, turnIndex, turnCount: turns.length,
+      columns: ["parent", "tag", "rendered", "assistant", "user", "searchUnit", "markdown", "streamingStatus", "activityStart", "completionControl"],
+      turns: part,
+    })}`
+  ));
+}

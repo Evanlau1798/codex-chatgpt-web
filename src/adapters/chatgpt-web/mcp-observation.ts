@@ -1,4 +1,5 @@
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { scopeHash } from "./mcp-request-diagnostics";
 
 /** The model override only; prompts, names, items and other tool arguments stay private. */
 export function subagentModelObservation(wireName: string, args?: Record<string, unknown>) {
@@ -18,12 +19,15 @@ export function observeMcpToolCalls(
   write: (event: Record<string, unknown>) => void = event => console.error(`[chatgpt-web-mcp] transport=${JSON.stringify(event)}`),
 ): Transport {
   let sequence = 0;
+  let correlationSaturated = false;
   const pending = new Map<string | number, {
     call: number; tool: string; started: number; output_kind?: "commentary" | "reasoning" | "final";
-  } | null>();
+    request_hash?: string; reference_hash?: string;
+    ambiguousReplies?: number;
+  }>();
   const emit = (event: Record<string, unknown>) => {
     // Logging is observational: a broken sink cannot change the invocation or its result.
-    try { write({ pid: process.pid, ...event }); } catch { /* Preserve transport semantics. */ }
+    try { write({ at: new Date().toISOString(), pid: process.pid, ...event }); } catch { /* Preserve transport semantics. */ }
   };
   const receive = transport.onmessage;
   transport.onmessage = (message, extra) => {
@@ -32,9 +36,12 @@ export function observeMcpToolCalls(
       const tool = typeof name === "string" && knownTools.has(name) ? name : "unknown";
       if (pending.has(message.id)) {
         // An ambiguous protocol ID cannot safely correlate either reply.
-        pending.set(message.id, null);
+        const call = pending.get(message.id)!;
+        call.ambiguousReplies = (call.ambiguousReplies ?? 1) + 1;
         emit({ event: "uncorrelated_call", reason: "duplicate_id", tool });
-      } else if (pending.size >= 1_024) {
+      } else if (correlationSaturated || pending.size >= 1_024) {
+        // Untracked in-flight IDs cannot safely be reused on this transport.
+        correlationSaturated = true;
         emit({ event: "uncorrelated_call", reason: "tracking_limit", tool });
       } else {
         const args = message.params?.arguments;
@@ -43,9 +50,16 @@ export function observeMcpToolCalls(
         const kind = outputArgs && typeof outputArgs === "object" && "kind" in outputArgs ? outputArgs.kind : undefined;
         const output = tool === "codex_tool_call" && (kind === "commentary" || kind === "reasoning" || kind === "final")
           ? { output_kind: kind } as const : {};
-        const call = { call: ++sequence, tool, started: performance.now(), ...output };
+        const reference = args && typeof args === "object"
+          ? ("turn_token" in args ? args.turn_token : "request_id" in args ? args.request_id : undefined) : undefined;
+        const correlation = {
+          ...(String(message.id).length <= 256 ? { request_hash: scopeHash(`${typeof message.id}:${message.id}`) } : {}),
+          ...(typeof reference === "string" && reference.length > 0 && reference.length <= 256
+            ? { reference_hash: scopeHash(reference) } : {}),
+        };
+        const call = { call: ++sequence, tool, started: performance.now(), ...output, ...correlation };
         pending.set(message.id, call);
-        emit({ event: "call_received", call: call.call, tool, ...output });
+        emit({ event: "call_received", call: call.call, tool, ...output, ...correlation });
       }
     }
     receive?.(message, extra);
@@ -57,10 +71,11 @@ export function observeMcpToolCalls(
     const sendingAt = performance.now();
     try {
       await send(message, options);
-      if (call) {
+      if (call && call.ambiguousReplies === undefined) {
         const result = "result" in message ? message.result : undefined;
+        const { started: _, ambiguousReplies: __, ...receipt } = call;
         emit({
-          event: "reply_sent", call: call.call, tool: call.tool,
+          event: "reply_sent", ...receipt,
           elapsed_ms: Math.round(performance.now() - call.started),
           ...(call.output_kind ? {
             output_kind: call.output_kind,
@@ -72,10 +87,15 @@ export function observeMcpToolCalls(
         });
       }
     } catch (error) {
-      if (call) emit({ event: "reply_send_failed", call: call.call, tool: call.tool });
+      if (call && call.ambiguousReplies === undefined) {
+        const { started: _, ambiguousReplies: __, ...receipt } = call;
+        emit({ event: "reply_send_failed", ...receipt });
+      }
       throw error;
     } finally {
-      if (call && id !== undefined && id !== null) pending.delete(id);
+      if (call && id !== undefined && id !== null && pending.get(id) === call) {
+        if (call.ambiguousReplies === undefined || --call.ambiguousReplies === 0) pending.delete(id);
+      }
     }
   };
   const close = transport.onclose;

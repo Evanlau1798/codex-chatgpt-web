@@ -32,6 +32,16 @@ test("Native2 accepts bound output without per-turn inventory discovery", async 
     // Acceptance queues output; consumption remains a separate operation.
     expect(await new RemoteTurnBroker(socket).nextOutput(token, 0))
       .toEqual({ sequence: 1, kind: "final", text: "Review complete." });
+    const predicted = await broker.register({ cwd: root, roots: [root], writableRoots: [],
+      sandboxPolicy: { type: "readOnly", networkAccess: false }, tools: [] }, undefined,
+      "same-final-output-test", undefined, { predictions: true });
+    const withPrediction = await client.callTool({ name: "codex_tool_call", arguments: { turn_token: predicted,
+      wire_name: "codex.control.output", arguments: { kind: "final", text: "Private suggestion answer.",
+        next_message_prediction: "Show details." } } });
+    expect(withPrediction.isError).not.toBe(true);
+    expect(withPrediction.structuredContent).toEqual({ accepted: true, sequence: 1, duplicate: false });
+    expect(await new RemoteTurnBroker(socket).nextOutput(predicted, 0)).toEqual({ sequence: 1,
+      kind: "final", text: "Private suggestion answer.", nextMessagePrediction: "Show details." });
   } finally {
     await client.close().catch(() => {});
     await broker.close();

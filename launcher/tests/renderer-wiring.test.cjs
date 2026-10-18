@@ -12,9 +12,13 @@ const electronMain = fs.readFileSync(path.join(launcherRoot, "electron", "main.c
 const browserHostSource = fs.readFileSync(path.join(launcherRoot, "electron", "browser-host.cjs"), "utf8");
 const preloadSource = fs.readFileSync(path.join(launcherRoot, "electron", "preload.cjs"), "utf8");
 
-test("Bigger Context waits for startup and route recovery without invalidating healthy setup", async () => {
+test("runtime context settings wait for startup and route recovery without invalidating healthy setup", async () => {
   const vm = require("node:vm");
-  for (const fails of [false, true]) {
+  for (const [method, property, channel] of [
+    ["setBiggerContext", "experimentalBiggerContext", "launcher:bigger-context"],
+    ["setExperimentalNoAutoCompact", "experimentalNoAutoCompact", "launcher:no-auto-compact"],
+    ["setExperimentalPlusNativeContext", "experimentalPlusNativeContext", "launcher:plus-native-context"],
+  ]) for (const fails of [false, true]) {
     const startupAuthenticationRefresh = new Promise(() => {});
     let completeRuntime;
     const runtimeReady = new Promise(resolve => { completeRuntime = resolve; });
@@ -25,7 +29,7 @@ test("Bigger Context waits for startup and route recovery without invalidating h
     let startupSettled = false;
     const calls = [];
     const handlers = new Map();
-    const config = { mode: "full", experimentalBiggerContext: false };
+    const config = { mode: "full", experimentalBiggerContext: false, [property]: false };
     const state = { coreSetupComplete: true, codexCatalogVerified: true };
     const stateStore = { read: () => state, update: patch => Object.assign(state, patch) };
     const logger = { info() {}, error() {}, warn() {} };
@@ -53,10 +57,10 @@ test("Bigger Context waits for startup and route recovery without invalidating h
         runtimeConfigSnapshot: () => ({ configured: true, config }),
         bridgeStatus: async () => ({ installed: false }),
         connectBridgeRoute: async () => ({ changed: false }),
-        setBiggerContext: async enabled => {
+        [method]: async enabled => {
           assert.equal(startupSettled, true, "settings must wait through startup recovery too");
           calls.push("setting");
-          config.experimentalBiggerContext = enabled;
+          config[property] = enabled;
           return { enabled };
         },
       },
@@ -65,7 +69,8 @@ test("Bigger Context waits for startup and route recovery without invalidating h
       + "\nregisterIpc({ logger, stateStore });", context);
     const start = electronMain.indexOf("} else void (async () => {");
     vm.runInContext(electronMain.slice(start + "} else ".length, electronMain.indexOf('  app.on("before-quit"', start)), context);
-    const setting = handlers.get("launcher:bigger-context")({}, true);
+    const setting = handlers.get(channel)({}, true);
+    void setting.catch(() => {});
     // Runtime startup proceeds even if the browser session check never completes.
     // Settings still wait for runtime readiness, and read-only UI stays usable.
     assert.equal((await handlers.get("launcher:limits")()).enabled, false);
@@ -74,7 +79,7 @@ test("Bigger Context waits for startup and route recovery without invalidating h
     completeRuntime();
     await setting;
     assert.deepEqual(calls, fails ? ["startup", "recovery", "setting"] : ["startup", "setting"]);
-    assert.equal(state.experimentalBiggerContext, true);
+    assert.equal(state[property], true);
     assert.equal(state.coreSetupComplete, !fails, "only a real startup failure may invalidate setup");
   }
 });
@@ -421,6 +426,7 @@ test("catalog verification reports a failed request instead of requesting anothe
 test("browser preference IPC commits only after setup succeeds and refuses active browser work", async () => {
   const vm = require("node:vm");
   for (const [property, method, channel, nextChannel] of [
+    ["composerPredictionsEnabled", "setComposerPredictions", "launcher:composer-predictions", "launcher:fresh-conversation-per-turn"],
     ["experimentalFreshConversationPerTurn", "setFreshConversationPerTurn", "launcher:fresh-conversation-per-turn", "launcher:use-saved-chats"],
     ["useSavedChats", "setUseSavedChats", "launcher:use-saved-chats", "launcher:auto-approve-tool-calls"],
     ["autoApproveToolCalls", "setAutoApproveToolCalls", "launcher:auto-approve-tool-calls", "launcher:set-preference"],
@@ -429,8 +435,8 @@ test("browser preference IPC commits only after setup succeeds and refuses activ
       electronMain.indexOf(`handle("${channel}",`),
       electronMain.indexOf(`handle("${nextChannel}",`),
     );
-    const state = { experimentalFreshConversationPerTurn: false, useSavedChats: false, autoApproveToolCalls: false };
-    const config = { experimentalFreshConversationPerTurn: false, useSavedChats: false, autoApproveToolCalls: false };
+    const state = { composerPredictionsEnabled: false, experimentalFreshConversationPerTurn: false, useSavedChats: false, autoApproveToolCalls: false };
+    const config = { composerPredictionsEnabled: false, experimentalFreshConversationPerTurn: false, useSavedChats: false, autoApproveToolCalls: false };
     const events = [];
     let handler, finishSetup, setupFailure, calls = 0;
     const browserHost = { activeTraceId: "running-turn", currentOperation: () => null, turnTabs: new Map() };

@@ -4,7 +4,10 @@ import { clearAgentWait } from "./turn-broker-agent-wait";
 
 export function takeQueuedTools(channel: TurnChannel): BrokerToolRequest[] {
   const ids = channel.queuedCallIds.splice(0);
-  for (const id of ids) if (channel.invocations.has(id)) channel.deliveredCallIds.add(id);
+  for (const id of ids) {
+    const invocation = channel.invocations.get(id);
+    if (invocation) { invocation.deliveredAt = performance.now(); channel.deliveredCallIds.add(id); }
+  }
   return ids
     .map(id => channel.invocations.get(id)?.request)
     .filter((request): request is BrokerToolRequest => Boolean(request));

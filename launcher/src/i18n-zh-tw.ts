@@ -1,4 +1,6 @@
 export const zhTW = {
+  composerPredictions: "下一則訊息建議",
+  composerPredictionsBody: "預設關閉。啟用 Enhanced 自動模式與 Native 輸出後，在同一最終答覆中產生可選建議，並重用本機 5 分鐘 TTL 快取。未命中快取就不提供建議，不新增 Web 請求或頁面。",
   pluginName: "外掛程式名稱",
   pluginNameBody: "Codex 保持不變，可以修改後面的名稱。",
   pluginNameChange: "變更名稱",

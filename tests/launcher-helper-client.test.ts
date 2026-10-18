@@ -333,7 +333,7 @@ test("accepted compaction retires through the helper as completed without hiding
   }
 });
 
-test("launcher helper protocol preserves multipart context and the compaction flag", async () => {
+test("launcher helper protocol preserves multipart context, broker identity and the compaction flag", async () => {
   const sent: Record<string, unknown>[] = [];
   const client = new LauncherBrowserHelperClient({
     appName: "Codex Native2 DEV",
@@ -385,6 +385,7 @@ test("launcher helper protocol preserves multipart context and the compaction fl
     compaction: true,
     prepare: async () => ({
       text: "commit",
+      turnToken: "turn_0123456789abcdef0123456789abcdef",
       images: [],
       skillFiles: [selectedSkillFile({ role: "user", origin: "codex_skill", timestamp: 0,
         content: "<skill>\n<name>ipc</name>\n<path>/skills/ipc/SKILL.md</path>\ncheck IPC\n</skill>",
@@ -412,6 +413,7 @@ test("launcher helper protocol preserves multipart context and the compaction fl
       })],
       multipart: { parts: Array.from({ length: 6 }, (_, index) => JSON.stringify({ part: index + 1 })), commit: "commit" },
       trimmedCompactionMessages: 4,
+      turnToken: "turn_0123456789abcdef0123456789abcdef",
     },
   });
 });

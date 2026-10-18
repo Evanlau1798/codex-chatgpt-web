@@ -19,9 +19,13 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **バージョン：`6.1.8-Enhanced.1`。** ダウンロードボタンは常に最新の公開済み Enhanced リリースを開きます。
+> **バージョン：`6.1.10-Enhanced.2`。** ダウンロードボタンは常に最新の公開済み Enhanced リリースを開きます。
 
-上流 v6.1.8 を統合し、Enhanced セッション、Native2 ツール、Fast startup を維持しています。
+次のメッセージ候補は既定でオフで、Enhanced 設定にあります。自動 Native 出力の最終回答と同時に生成し、ローカルの 5 分間 TTL キャッシュを再利用します。キャッシュがなければ候補を返さず、追加の Web リクエストやページは作成しません。
+
+上流 v6.1.10 を統合し、Enhanced セッション、Native2 ツール、Fast startup を維持しています。
+
+Enhanced.2 は Native2 の復旧と最終回答の配信を改善し、未完了の作業と応答の所有関係を維持します。
 
 **Plus native context（実験的）** は Settings の既定で無効なオプションで、検証済み Plus と Enhanced 自動モードのみ有効です。
 GPT-6／GPT-5.6 Sol の推論ルートは 256,000-token ウィンドウ、230,400 tokens で自動 compaction を宣言します。

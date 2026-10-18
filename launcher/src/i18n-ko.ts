@@ -1,4 +1,6 @@
 export const ko = {
+  composerPredictions: "다음 메시지 제안",
+  composerPredictionsBody: "기본적으로 꺼져 있습니다. Enhanced 자동 모드와 Native 출력 사용 시 최종 답변과 함께 선택적 제안을 생성하고 로컬 5분 TTL 캐시를 재사용합니다. 캐시가 없으면 제안을 반환하지 않으며 추가 Web 요청이나 페이지를 만들지 않습니다.",
   pluginName: "플러그인 이름",
   pluginNameBody: "Codex는 고정입니다. 뒤에 오는 이름을 변경하세요.",
   pluginNameChange: "이름 변경",

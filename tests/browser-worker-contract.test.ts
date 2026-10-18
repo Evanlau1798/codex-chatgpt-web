@@ -1,3 +1,30 @@
+function thinkButtonFixture() {
+  const state = { pressed: false, controlCount: 1, draft: "", connectors: [] as string[],
+    commands: [] as string[], keys: [] as string[], clicks: 0 };
+  const control = { getAttribute: async (): Promise<string | null> => state.pressed ? "true" : "false",
+    click: async () => { state.clicks += 1; state.pressed = !state.pressed; },
+    waitFor: async () => { if (!state.controlCount) throw new Error("Think button is unavailable"); } };
+  const controls = { count: async () => state.controlCount, first: () => control,
+    or() { return this; }, filter() { return this; } };
+  const page = { keyboard: { press: async () => {} }, locator: (selector: string) => {
+    if (selector === '[role="dialog"]') return dialogPage("").page.locator(selector);
+    throw new Error(`Unexpected page locator: ${selector}`);
+  } };
+  const composer = {
+    filter: () => composer, first: () => composer, locator: () => composerForm,
+    evaluate: async () => ({ text: state.draft.trim(), connectors: [...state.connectors] }),
+    focus: async () => {},
+    fill: async (text: string) => { state.draft = text; state.connectors = []; },
+    pressSequentially: async (text: string) => { state.commands.push(text); state.draft += text; },
+    press: async (key: string) => { state.keys.push(key); },
+  };
+  const composerForm = {
+    locator: (selector: string) => selector === CHATGPT_THINK_BUTTON_SELECTOR ? controls : composer,
+    getByRole: () => controls,
+    page: () => page,
+  };
+  return { state, composer, composerForm, page, control };
+}
 import * as accountSession from "../src/chatgpt-session";
 import { recordConnectorContractProbeQuery } from "../src/adapters/chatgpt-web/connector-contract";
 import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
@@ -23,6 +50,7 @@ function personalizedTemporaryChatRole(
 import { ChatGptSubmissionRejectionObserver, CHATGPT_COMPLETION_SETTLE_MS } from "../src/adapters/chatgpt-web/browser-worker";
 import { chatGptSameSurfaceReadiness } from "../src/adapters/chatgpt-web/same-surface-readiness";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
+import { CHATGPT_THINK_BUTTON_SELECTOR } from "../src/chatgpt-session";
 import { expect, spyOn, test } from "bun:test";
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { EventEmitter } from "node:events";
@@ -1692,8 +1720,9 @@ test("Luna-only browser turns verify selector absence instead of opening an effo
     isVisible: async () => false,
   };
   const visibleControls = { count: async () => 0 };
+  const thinkControls = { or() { return this; }, filter: () => visibleControls };
   const composerForm = {
-    locator: () => ({ filter: () => visibleControls }),
+    locator: () => thinkControls,
     getByRole: () => ({ filter: () => ({ count: async () => 0 }) }),
   };
   const composer = { locator: () => composerForm };
@@ -2028,7 +2057,7 @@ test("browser failure path logs bounded upstream evidence and preserves the orig
     expect(line).not.toContain("private prompt");
     expect(JSON.parse(line!.split(" upstream_failure ")[1]!)).toEqual({
       submission: { ownedRequests: 0, statuses: [], requestFailures: 0, failureCodes: [], pendingRequests: 0,
-        networkObservationContinuous: true, rebinds: 0 },
+        networkObservationContinuous: true, rebinds: 0, models: [] },
       ui: { globalErrorActions: 1, assistantTurns: 0, stopButtons: 0, globalAlerts: 0 },
     });
     (page as any).locator = () => ({ filter: () => ({ count: () => new Promise(() => {}) }) });
@@ -3908,7 +3937,7 @@ function thinkSlashFixture() {
 }
 
 test("Think toggle preserves connectors and normal Luna clears it", async () => {
-  const { state, composer } = thinkSlashFixture();
+  const { state, composer } = thinkButtonFixture();
   state.connectors = ["Codex Native2"];
   const checkpoints: string[] = [];
 
@@ -3922,28 +3951,15 @@ test("Think toggle preserves connectors and normal Luna clears it", async () => 
   expect(state.pressed).toBeFalse();
   expect(state.commands).toEqual([]);
   expect(state.draft).toBe("");
-  expect(checkpoints.filter(checkpoint => !checkpoint.startsWith("think-slash-"))).toEqual(["think-enabled", "think-disabled"]);
+  expect(checkpoints).toEqual(["think-enabled", "think-disabled"]);
+  expect(state.clicks).toBe(2);
+  expect(state.keys).toEqual([]);
 });
 
-test("Think slash requires one command and verifies a newly exposed control", async () => {
-  const ui = thinkSlashFixture();
-  ui.state.controlPresent = false;
-  await setChatGptThinkMode(ui.composer as never, true);
-  expect(ui.state.pressed).toBeTrue();
-  const ambiguous = thinkSlashFixture();
-  ambiguous.state.controlPresent = false;
-  ambiguous.state.optionCount = 2;
-  await expect(setChatGptThinkMode(ambiguous.composer as never, true)).rejects.toThrow("exactly one command option");
-  expect(ambiguous.state.enters).toBe(0);
-  const unavailable = thinkSlashFixture();
-  unavailable.state.controlPresent = false;
-  unavailable.state.optionCount = 0;
-  await expect(setChatGptThinkMode(unavailable.composer as never, true)).rejects.toThrow("Think command is unavailable");
-  expect(unavailable.state.enters).toBe(0);
-});
+
 
 test("a failed Think toggle does not attempt a second action or alter the draft", async () => {
-  const ui = thinkSlashFixture();
+  const ui = thinkButtonFixture();
   ui.state.connectors = ["Codex Native2"];
   ui.control.click = async () => { throw new Error("Toggle failed"); };
   await expect(setChatGptThinkMode(ui.composer as never, true)).rejects.toThrow("Toggle failed");
@@ -3952,42 +3968,9 @@ test("a failed Think toggle does not attempt a second action or alter the draft"
   expect(ui.state.draft).toBe("");
 });
 
-test("Think attachment works when the slash command removes plugin mentions", async () => {
-  const ui = thinkSlashFixture();
-  ui.state.controlPresent = false;
-  ui.state.loseConnector = true;
-  let insertions = 0;
-  const worker = {
-    activeComposer: async () => ui.composer,
-    selectConnector: async () => { ui.state.connectors = ["Codex Native2"]; return ui.composer; },
-    insertPromptText: async () => { insertions += 1; },
-    assertPromptAttached: async () => {},
-    clearChatGptComposerState: async () => { ui.state.draft = ""; ui.state.connectors = []; },
-  };
-  const attach = (ChatGptBrowserWorker.prototype as unknown as { attachPrompt: (...args: unknown[]) => Promise<void> }).attachPrompt;
-  await attach.call(worker, ui.page, "task", true, undefined, undefined, false, undefined, true);
-  expect(ui.state.pressed).toBeTrue();
-  expect(ui.state.connectors).toEqual(["Codex Native2"]);
-  expect(insertions).toBe(1);
-});
 
-test("Think attachment rolls back when connector selection disables Think", async () => {
-  const ui = thinkSlashFixture();
-  ui.state.loseConnector = true;
-  let insertions = 0;
-  let cleanup = 0;
-  const worker = {
-    activeComposer: async () => ui.composer,
-    selectConnector: async () => { ui.state.pressed = false; ui.state.connectors = ["Codex Native2"]; return ui.composer; },
-    insertPromptText: async () => { insertions += 1; },
-    clearChatGptComposerState: async () => { cleanup += 1; ui.state.draft = ""; ui.state.connectors = []; },
-  };
-  const attach = (ChatGptBrowserWorker.prototype as unknown as { attachPrompt: (...args: unknown[]) => Promise<void> }).attachPrompt;
-  await expect(attach.call(worker, ui.page, "must not be inserted", true, undefined, undefined, false, undefined, true))
-    .rejects.toThrow("did not preserve Think mode");
-  expect(insertions).toBe(0);
-  expect(cleanup).toBe(1);
-});
+
+
 
 test("completed SSE size errors reject only their current submission, not model text or stale streams", async () => {
   const frame = {};
@@ -4093,4 +4076,190 @@ test.each(["low", "high"] as const)("GPT-6 Plus stages High but keeps the Instan
     expect(browserStages).toBe(reasoning === "low" ? 0 : 1);
     expect(released).toBeTrue();
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+for (const captureScreenshots of [false, true]) test(`connector failure persists safe checkpoints with opt-in screenshots (${captureScreenshots})`, async () => {
+  const diagnosticsRoot = mkdtempSync(join(tmpdir(), "cgw-connector-verification-"));
+  const previousCapture = process.env.CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS;
+  if (captureScreenshots) process.env.CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS = "1";
+  else delete process.env.CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS;
+  let screenshots = 0;
+  const page = {
+    screenshot: async () => { screenshots += 1; return Buffer.from("diagnostic screenshot fixture"); },
+    evaluate: async () => ({
+      url: "https://chatgpt.com/c/private-conversation",
+      title: "private task title",
+      viewport: { width: 800, height: 600 },
+      surfaceId: null,
+      bodyTextChars: 0,
+      composer: { visibleCount: 1, textChars: [6], selectedConnectors: [] },
+      effortControls: [],
+      effortItems: [],
+      menus: [],
+      connectorRows: [],
+      overlays: [],
+      turns: { user: 0, assistant: [] },
+    }),
+  };
+  const failure = new Error("connector proof failed");
+  const verifyConnectorExclusive = (ChatGptBrowserWorker.prototype as unknown as {
+    verifyConnectorExclusive(traceId: string): Promise<string>;
+  }).verifyConnectorExclusive;
+
+  try {
+    await expect(verifyConnectorExclusive.call({
+      config: { appName: "Codex Native2", browserDiagnosticsPath: diagnosticsRoot },
+      ensurePage: async () => page,
+      prepareChatSurface: async (_page: unknown, capture: (checkpoint: string) => Promise<void>) => {
+        await capture("composer-ready");
+      },
+      selectConnector: async (_page: unknown, capture: (checkpoint: string) => Promise<void>) => {
+        await capture("connector-mention-triggered");
+        throw failure;
+      },
+    }, "verify_contract_trace")).rejects.toBe(failure);
+
+    const [traceDirectory] = readdirSync(diagnosticsRoot);
+    expect(traceDirectory).toStartWith("verify_contract_trace-");
+    const files = readdirSync(join(diagnosticsRoot, traceDirectory!));
+    expect(JSON.parse(readFileSync(join(diagnosticsRoot, traceDirectory!, ".trace-state"), "utf8")).status).toBe("failed");
+    // Verification and Native2 diagnostics intentionally never capture task pixels.
+    expect(screenshots).toBe(0);
+    expect(files.filter(name => name.endsWith(".png"))).toHaveLength(screenshots);
+    const checkpoints = files
+      .filter(name => name.endsWith(".json"))
+      .sort()
+      .map(name => JSON.parse(readFileSync(join(diagnosticsRoot, traceDirectory!, name), "utf8")));
+    expect(checkpoints.map(checkpoint => checkpoint.checkpoint)).toEqual([
+      "connector-verification-started",
+      "composer-ready",
+      "connector-mention-triggered",
+      "connector-verification-failed",
+    ]);
+    expect(checkpoints.at(-1)).toMatchObject({
+      traceId: "verify_contract_trace",
+      version: 2, error: "verification_failed",
+      state: { composer: { visibleCount: 1, textChars: [6] } },
+    });
+    expect(JSON.stringify(checkpoints)).not.toContain("private");
+  } finally {
+    if (previousCapture === undefined) delete process.env.CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS;
+    else process.env.CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS = previousCapture;
+    rmSync(diagnosticsRoot, { recursive: true, force: true });
+  }
+});
+
+test("missing, ambiguous or unverified Think buttons never type or submit a command", async () => {
+  for (const scenario of ["missing", "ambiguous", "invalid-state", "draft"] as const) {
+    const ui = thinkButtonFixture();
+    ui.state.connectors = ["Codex Native2"];
+    if (scenario === "missing") ui.state.controlCount = 0;
+    if (scenario === "ambiguous") ui.state.controlCount = 2;
+    if (scenario === "invalid-state") ui.control.getAttribute = async () => null;
+    if (scenario === "draft") ui.state.draft = "Keep this draft";
+    const before = { ...ui.state };
+    await expect(setChatGptThinkMode(ui.composer as never, true)).rejects.toThrow({
+      missing: "Think button is unavailable", ambiguous: "2 visible Think controls",
+      "invalid-state": "no semantic pressed state", draft: "requires an empty prompt draft",
+    }[scenario]);
+    expect(ui.state).toEqual(before);
+  }
+});
+
+test("Think waits for its button to mount without typing a command", async () => {
+  const ui = thinkButtonFixture();
+  ui.state.controlCount = 0;
+  ui.control.waitFor = async () => { ui.state.controlCount = 1; };
+  await setChatGptThinkMode(ui.composer as never, true);
+  expect(ui.state.pressed).toBeTrue();
+  expect(ui.state.clicks).toBe(1);
+  expect(ui.state.commands).toEqual([]);
+  expect(ui.state.keys).toEqual([]);
+});
+
+test("Think attachment preserves the plugin on first and follow-up messages and supports Browser-only turns", async () => {
+  const attach = (ChatGptBrowserWorker.prototype as unknown as { attachPrompt: (...args: unknown[]) => Promise<void> }).attachPrompt;
+  for (const localTools of [true, false]) {
+    const ui = thinkButtonFixture();
+    let connectorSelections = 0;
+    const submitted: boolean[] = [];
+    const worker = {
+      activeComposer: async () => ui.composer,
+      selectConnector: async () => { connectorSelections += 1; ui.state.connectors = ["Codex Native2"]; return ui.composer; },
+      insertPromptText: async () => { submitted.push(ui.state.pressed); },
+      assertPromptAttached: async () => {}, clearChatGptComposerState: async () => { ui.state.draft = ""; ui.state.connectors = []; },
+    };
+    await attach.call(worker, ui.page, "requested task", localTools, undefined, undefined, false, undefined, true);
+    expect(submitted).toEqual([true]);
+    expect(connectorSelections).toBe(localTools ? 1 : 0);
+    if (localTools) expect(ui.state.connectors).toEqual(["Codex Native2"]);
+    ui.state.pressed = false;
+    ui.state.connectors = [];
+    await attach.call(worker, ui.page, "follow-up task", localTools, undefined, undefined, false, undefined, true);
+    expect(submitted).toEqual([true, true]);
+    expect(ui.state.commands).toEqual([]);
+    expect(connectorSelections).toBe(localTools ? 2 : 0);
+  }
+});
+
+test("Think attachment clears the selected plugin without inserting a prompt when its button is unavailable", async () => {
+  const ui = thinkButtonFixture();
+  ui.state.controlCount = 0;
+  let insertions = 0;
+  let selections = 0;
+  const worker = {
+    activeComposer: async () => ui.composer,
+    selectConnector: async () => { selections += 1; ui.state.connectors = ["Codex Native2"]; return ui.composer; },
+    insertPromptText: async () => { insertions += 1; },
+    assertPromptAttached: async () => {},
+    clearChatGptComposerState: async () => { ui.state.draft = ""; ui.state.connectors = []; },
+  };
+  const attach = (ChatGptBrowserWorker.prototype as unknown as { attachPrompt: (...args: unknown[]) => Promise<void> }).attachPrompt;
+  await expect(attach.call(worker, ui.page, "task", true, undefined, undefined, false, undefined, true))
+    .rejects.toThrow("Think button is unavailable");
+  expect(ui.state.pressed).toBeFalse();
+  expect(ui.state.commands).toEqual([]);
+  expect(ui.state.keys).toEqual([]);
+  expect(selections).toBe(1);
+  expect(ui.state.connectors).toEqual([]);
+  expect(insertions).toBe(0);
+});
+
+test("Think attachment enables Think after plugin selection resets it, on every message", async () => {
+  const ui = thinkButtonFixture();
+  const insertions: { pressed: boolean; connectors: string[] }[] = [];
+  let cleanup = 0;
+  const worker = {
+    activeComposer: async () => ui.composer,
+    selectConnector: async () => { ui.state.pressed = false; ui.state.connectors = ["Codex Native2"]; return ui.composer; },
+    insertPromptText: async () => { insertions.push({ pressed: ui.state.pressed, connectors: [...ui.state.connectors] }); },
+    assertPromptAttached: async () => {},
+    clearChatGptComposerState: async () => { cleanup += 1; ui.state.draft = ""; ui.state.connectors = []; },
+  };
+  const attach = (ChatGptBrowserWorker.prototype as unknown as { attachPrompt: (...args: unknown[]) => Promise<void> }).attachPrompt;
+  await attach.call(worker, ui.page, "first task", true, undefined, undefined, false, undefined, true);
+  await attach.call(worker, ui.page, "follow-up", true, undefined, undefined, false, undefined, true);
+  expect(insertions).toEqual([
+    { pressed: true, connectors: ["Codex Native2"] },
+    { pressed: true, connectors: ["Codex Native2"] },
+  ]);
+  expect(ui.state.clicks).toBe(2);
+  expect(cleanup).toBe(0);
+});
+
+test("Think attachment rolls back if enabling Think removes the selected plugin", async () => {
+  const ui = thinkButtonFixture();
+  let insertions = 0;
+  let cleanup = 0;
+  ui.control.click = async () => { ui.state.pressed = true; ui.state.connectors = []; };
+  const worker = {
+    selectConnector: async () => { ui.state.connectors = ["Codex Native2"]; return ui.composer; },
+    insertPromptText: async () => { insertions += 1; },
+    clearChatGptComposerState: async () => { cleanup += 1; ui.state.draft = ""; ui.state.connectors = []; },
+  };
+  const attach = (ChatGptBrowserWorker.prototype as unknown as { attachPrompt: (...args: unknown[]) => Promise<void> }).attachPrompt;
+  await expect(attach.call(worker, ui.page, "must not be inserted", true, undefined, undefined, false, undefined, true))
+    .rejects.toThrow("did not preserve the empty draft and selected connectors");
+  expect(insertions).toBe(0);
+  expect(cleanup).toBe(1);
 });

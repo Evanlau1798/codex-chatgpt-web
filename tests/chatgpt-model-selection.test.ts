@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createDocument } from "@mixmark-io/domino";
-import { chatGptModelFamilyMatches, selectChatGptModelFamily } from "../src/adapters/chatgpt-web/model-selection";
+import { assertChatGptModelFamily, chatGptModelFamilyMatches, chatGptUnversionedEffortMatches, selectChatGptModelFamily } from "../src/adapters/chatgpt-web/model-selection";
 
 // The 2026-10-06 live picker omits aria-hidden on its visible model-view toggle.
 function pickerFixture(visibility: "missing" | "false" | "true" | "hidden" | "duplicate") {
@@ -85,11 +85,118 @@ test("family confirmation verifies the exact Sol or Pro version, including the o
   expect(chatGptModelFamilyMatches(["6 Pro, 5 of 5."], "6", "xhigh")).toBe(false);
 });
 
-test("explicit GPT-6 verifies every non-Pro effort without accepting the older 5.6 family", () => {
-  for (const [effort, label] of [["low", "Instant"], ["medium", "中"], ["high", "High"], ["xhigh", "極高"]] as const) {
-    expect(chatGptModelFamilyMatches([`6 ${label}, 3 of 5.`], "6", effort)).toBe(true);
-    expect(chatGptModelFamilyMatches([`5.6 ${label}, 3 of 5.`], "6", effort)).toBe(false);
+test("model headers may repeat the same version before their effort without hiding contradictions", async () => {
+  for (const [effort, label, index] of [["low", "Instant", 0], ["medium", "Medium", 1],
+    ["high", "High", 2], ["xhigh", "Extra High", 3], ["max", "Pro", 4]] as const) {
+    const descriptions = [`5.6 ${label}，第 ${index + 1} 項，共 5 項。`, `5.6 Sol 5.6 ${label}`];
+    expect(chatGptModelFamilyMatches(descriptions, "5.6", effort)).toBeTrue();
+    await assertChatGptModelFamily(confirmationFixture("GPT-5.6 Sol", descriptions, String(index)), "5.6", effort, index);
   }
+  for (const header of ["5.6 Sol 6 Extra High", "6 Sol 5.6 Extra High", "5.6 Astra 5.6 Extra High",
+    "5.6 Sol 5.6 High", "5.6 Sol 5.6 Extra High, 3 of 5.", "5.6 Sol 5.6 Extra High for better answers"]) {
+    const descriptions = ["5.6 Extra High，第 4 項，共 5 項。", header];
+    expect(chatGptModelFamilyMatches(descriptions, "5.6", "xhigh")).toBeFalse();
+    await expect(assertChatGptModelFamily(confirmationFixture("GPT-5.6 Sol", descriptions, "3"), "5.6", "xhigh", 3))
+      .rejects.toThrow("could not be selected and verified");
+  }
+});
+
+test("explicit GPT-6 verifies every non-Pro effort without accepting the older 5.6 family", () => {
+  for (const [index, [effort, label]] of ([["low", "Instant"], ["medium", "中"], ["high", "High"], ["xhigh", "極高"]] as const).entries()) {
+    expect(chatGptModelFamilyMatches([`6 ${label}, ${index + 1} of 5.`], "6", effort)).toBe(true);
+    expect(chatGptModelFamilyMatches([`5.6 ${label}, ${index + 1} of 5.`], "6", effort)).toBe(false);
+  }
+});
+
+function confirmationFixture(label: string, descriptions: string[], value = "2") {
+  return ({
+    menu: { getByRole: (_role: string, options: { name: RegExp }) => ({
+      count: async () => options.name.test(label) ? 1 : 0,
+      getAttribute: async () => "true", innerText: async () => label,
+    }) },
+    slider: { getAttribute: async (name: string) => name === "aria-valuemin" ? "0" : name === "aria-valuemax" ? "4" : value,
+      evaluate: async () => descriptions },
+  }) as unknown as Parameters<typeof assertChatGptModelFamily>[0];
+}
+
+test("the current explicit GPT-6 radio binds an unversioned effort announcement", async () => {
+  const fixture = confirmationFixture;
+  await assertChatGptModelFamily(fixture("GPT-6", ["High, 3 of 5.", "High"]), "6", "high", 2);
+  await assertChatGptModelFamily(fixture("GPT-6", ["High，第 3 項，共 5 項。", "High"]), "6", "high", 2);
+  await assertChatGptModelFamily(fixture("GPT-6", ["高，第 3 項，共 5 項。", "高"]), "6", "high", 2);
+  for (const menu of [fixture("Latest", ["High, 3 of 5."]), fixture("GPT-5.6 Sol", ["High, 3 of 5."]),
+    fixture("GPT-6", ["5.6 High, 3 of 5."]), fixture("GPT-6", ["High, 3 of 5."], "1"),
+    fixture("GPT-6", ["Pro, 5 of 5."]), fixture("GPT-6", ["High，第 2 項，共 5 項。"]),
+    fixture("GPT-6", ["High，第 3 項，共 2 項。"])]) {
+    await expect(assertChatGptModelFamily(menu, "6", "high", 2)).rejects.toThrow("could not be selected and verified");
+  }
+});
+
+test("legacy Latest Pro requires versioned evidence, never generic Pro alone", async () => {
+  for (const label of ["Latest", "Le plus récent", "最新", "最新模型", "최신"]) {
+    await expect(assertChatGptModelFamily(confirmationFixture(label, ["Pro, 5 of 5."], "4"), "6", "max", 4))
+      .rejects.toThrow("could not be selected and verified");
+    await assertChatGptModelFamily(confirmationFixture(label, ["6 Pro, 5 of 5."], "4"), "6", "max", 4);
+  }
+  await assertChatGptModelFamily(confirmationFixture("GPT-6", ["Pro, 5 of 5."], "4"), "6", "max", 4);
+});
+
+test("versioned announcements must agree with the requested effort and announced position", async () => {
+  for (const description of ["6 Medium, 2 of 5.", "6 High, 2 of 5.", "6 High，第 2 項，共 5 項。",
+    "6 High, 3 of 2.", "6 Extra High, 4 of 5."]) {
+    expect(chatGptModelFamilyMatches([description], "6", "high")).toBe(false);
+    await expect(assertChatGptModelFamily(confirmationFixture("GPT-6", [description]), "6", "high", 2))
+      .rejects.toThrow("could not be selected and verified");
+  }
+});
+
+test("all recognizable effort evidence must agree across headers and status descriptions", async () => {
+  for (const descriptions of [["6 High", "Medium, 2 of 5."], ["6 High", "Medium"],
+    ["6 High", "High, 2 of 5."], ["6 High", "中，第 2 項，共 5 項。"],
+    ["High, 3 of 5.", "Medium"], ["6 High", "High, 3 of 6."], ["6 High", "High, 3 of 0."],
+    ["6 High", "Extra    High"], ["6 High", "High, 2 of 5"], ["6 High", "High、2 of 5。"],
+    ["6 High", "Medium、3 of 5"]]) {
+    expect(chatGptModelFamilyMatches(descriptions, "6", "high")).toBe(false);
+    await expect(assertChatGptModelFamily(confirmationFixture("GPT-6", descriptions), "6", "high", 2))
+      .rejects.toThrow("could not be selected and verified");
+  }
+  for (const descriptions of [["6 High", "High, 3 of 5."], ["6 High", "高，第 3 項，共 5 項。"],
+    ["6 Élevé", "Élevé, 3 sur 5."], ["6 High", "High, 3 of 5"], ["6 High", "High、3 of 5。"]]) {
+    expect(chatGptModelFamilyMatches(descriptions, "6", "high")).toBe(true);
+    await assertChatGptModelFamily(confirmationFixture("GPT-6", descriptions), "6", "high", 2);
+  }
+});
+
+test("unversioned fallback shares canonical Unicode normalization and rejects foreign versions", async () => {
+  for (const header of ["５.６ High", "\u20685.6 High\u2069", "ＧＰＴ－５．６ Sol High", "5.\u200e6 High"]) {
+    const descriptions = [header, "High, 3 of 5."];
+    expect(chatGptModelFamilyMatches(descriptions, "6", "high")).toBe(false);
+    expect(chatGptUnversionedEffortMatches(descriptions, "high")).toBe(false);
+    await expect(assertChatGptModelFamily(confirmationFixture("GPT-6", descriptions), "6", "high", 2))
+      .rejects.toThrow("could not be selected and verified");
+  }
+  for (const status of ["\u2068Ｈｉｇｈ，３ of ５．\u2069", "High, 3 of 5", "High、3 of 5。"])
+    await assertChatGptModelFamily(confirmationFixture("GPT-6", [status, "High"]), "6", "high", 2);
+});
+
+test("a bare model header must agree with the selected family even beside a valid effort status", async () => {
+  for (const header of ["5.6", "５．６", "\u20685.6\u2069", "GPT-5.6"]) {
+    expect(chatGptModelFamilyMatches(["6 High", header], "6", "high")).toBe(false);
+    await expect(assertChatGptModelFamily(confirmationFixture("GPT-6", [header, "High, 3 of 5."]), "6", "high", 2))
+      .rejects.toThrow("could not be selected and verified");
+  }
+  for (const header of ["6", "６", "\u2068GPT-6\u2069"])
+    await assertChatGptModelFamily(confirmationFixture("GPT-6", [header, "High, 3 of 5."]), "6", "high", 2);
+});
+
+test("foreign version prefixes remain contradictory before punctuation or adjacent text", async () => {
+  for (const header of ["５．６：", "5.6,", "GPT-5.6—", "5.6、", "5.6.High", "5.6High", "6.1High"]) {
+    expect(chatGptModelFamilyMatches(["6 High", header], "6", "high")).toBe(false);
+    await expect(assertChatGptModelFamily(confirmationFixture("GPT-6", [header, "High, 3 of 5."]), "6", "high", 2))
+      .rejects.toThrow("could not be selected and verified");
+  }
+  for (const header of ["６：", "GPT-6—", "6、"])
+    await assertChatGptModelFamily(confirmationFixture("GPT-6", [header, "High, 3 of 5."]), "6", "high", 2);
 });
 
 test("model verification accepts Unicode announcement punctuation without weakening identity", () => {

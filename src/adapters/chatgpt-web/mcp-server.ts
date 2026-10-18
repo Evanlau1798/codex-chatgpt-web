@@ -361,7 +361,7 @@ export async function runChatGptMcpServer(options: {
       // Contract probes are reserved protocol evidence. Resolve them before the
       // finalization-only output-control shortcut so a completed Native2 turn
       // cannot return an empty inventory without recording the probe.
-      if (query && isConnectorContractProbeQuery(query, contract)) {
+      if (query && isConnectorContractProbeQuery(query, contract, requestId)) {
         const recordProbe = () => {
           if (!recordConnectorContractProbeQuery(query, contract)) {
             throw new Error("Connector contract probe changed during validation");

@@ -301,6 +301,33 @@ module.exports = {
     return { ...result, mode, enabled: enabled === true };
   },
 
+  async setComposerPredictions(enabled) {
+    if (typeof enabled !== "boolean") throw new Error("Next-message predictions preference must be a boolean");
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured) throw new Error("Initialize the runtime before changing next-message predictions");
+    const development = this.launcherProfile === "development";
+    const args = [
+      ...(development ? ["dev", "setup"] : ["setup"]),
+      current.mode === "full" ? "--full" : "--browser-only",
+      "--browser-host-descriptor", this.browserDescriptorPath,
+      ...this.browserInteractionArgs(),
+      "--acknowledge-unofficial",
+      ...(development ? [] : ["--replace-codex-route", "--restart-service"]),
+      enabled ? "--composer-predictions" : "--no-composer-predictions",
+    ];
+    // DEV setup preserves approvals directly; only production setup parses this flag.
+    if (!development && current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
+    const options = {
+      message: enabled ? "Enabling next-message predictions" : "Disabling next-message predictions",
+      successMessage: enabled ? "Next-message predictions enabled" : "Next-message predictions disabled",
+      timeoutMs: CORE_SETUP_TIMEOUT_MS,
+    };
+    const result = development
+      ? await this.runDevSetup("composer-predictions", args, options)
+      : await this.runSetup("composer-predictions", args, options);
+    return { ...result, enabled };
+  },
+
   async setSkillAttachments(enabled) {
     const current = this.runtimeConfigSnapshot();
     if (!current.configured) throw new Error("Initialize the runtime before changing Skills as files");

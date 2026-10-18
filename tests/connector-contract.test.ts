@@ -1,4 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
+import { tmpdir } from "node:os";
+import { scopeHash } from "../src/adapters/chatgpt-web/mcp-request-diagnostics";
 import {
   consumeConnectorContractProbeEvidence,
   discardConnectorContractProbeEvidence,
@@ -13,6 +15,33 @@ import {
   verifyCurrentConnectorContract,
 } from "../src/adapters/chatgpt-web/connector-contract";
 
+test("contract evidence correlates producer and consumer without revealing nonce or temp root", async () => {
+  const log = spyOn(console, "error").mockImplementation(() => {});
+  let nonce = "", query = "";
+  try {
+    await verifyCurrentConnectorContract("Codex Native2", "native", async probe => {
+      nonce = probe.nonce; query = probe.query;
+      expect(recordConnectorContractProbeQuery(query, "native")).toBeTrue();
+    });
+    const events = log.mock.calls.flat().filter(line => String(line).startsWith("[chatgpt-web] connector_probe="))
+      .map(line => JSON.parse(String(line).split("connector_probe=")[1]!));
+    expect(events.map(event => event.phase)).toEqual(["expected", "produced", "consumed"]);
+    for (const event of events) {
+      expect(event.nonce_hash).toBe(scopeHash(nonce));
+      expect(event.root_hash).toMatch(/^[a-f0-9]{12}$/);
+      expect(event.root_hash).toBe(events[0].root_hash);
+      expect(event.pid).toBe(process.pid);
+      expect(Number.isFinite(Date.parse(event.at))).toBeTrue();
+    }
+    expect(events.at(-1)).toMatchObject({ matched: true });
+    for (const secret of [nonce, query, tmpdir()]) expect(JSON.stringify(events)).not.toContain(secret);
+    log.mockImplementation(() => { throw new Error("diagnostic sink unavailable"); });
+    await verifyCurrentConnectorContract("Codex Native2", "native", async probe => {
+      recordConnectorContractProbeQuery(probe.query, "native");
+    });
+  } finally { log.mockRestore(); }
+});
+
 test("current connector verification uses reserved inventory semantics without a public tool", async () => {
   let missingEvidenceAttempts = 0;
   await expect(verifyCurrentConnectorContract("Codex Native2", "native", async probe => {
@@ -26,6 +55,7 @@ test("current connector verification uses reserved inventory semantics without a
     expect(probe.prompt).toContain("codex_tool_inventory");
     expect(probe.prompt).toContain(probe.query);
     expect(probe.prompt).toContain("current turn_token");
+    expect(probe.prompt).toContain('"include_schema":false');
     expect(probe.prompt).toContain("Do not send progress updates");
     expect(probe.prompt).toContain("Do not call any other work tool");
     expect(probe.prompt).not.toContain("Do not call any other tool.");
@@ -119,10 +149,13 @@ test("a failed browser turn cannot leave its fallback armed", async () => {
 test("retry uses the fresh reference supplied for each attempt", async () => {
   const references = ["turn_first_probe", "turn_second_probe"];
   await expect(verifyCurrentConnectorContract("Codex Native2", "native", async probe => {
-    expect(probe.prompt).toContain(references[probe.attempt - 1]!);
-    expect(probe.prompt).not.toContain(references[2 - probe.attempt]!);
-    if (probe.attempt === 2) recordConnectorContractProbeQuery(probe.query, "native");
+    for (const reference of references) expect(probe.prompt).not.toContain(reference);
+    if (probe.attempt === 2) {
+      expect(recordConnectorContractProbeFallback(references[0]!, "native")).toBeFalse();
+      expect(recordConnectorContractProbeFallback(references[1]!, "native")).toBeTrue();
+    }
   }, async attempt => references[attempt - 1]!, { retryMissingEvidence: true })).resolves.toBeUndefined();
+  for (const reference of references) expect(recordConnectorContractProbeFallback(reference, "native")).toBeFalse();
 });
 
 test("a browser failure is propagated without retrying or retaining probe evidence", async () => {

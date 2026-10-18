@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { TurnBroker, callTurnBroker } from '../src/adapters/chatgpt-web/turn-broker';
 import {
@@ -23,7 +23,7 @@ test('real MCP recovery inventory describes final output without reopening work 
   const client = new Client({ name: 'output-inventory-integration', version: '1' });
   try {
     await client.connect(new StdioClientTransport({ command: process.execPath,
-      args: ['src/cli.ts','mcp','--broker-socket',socket], cwd: process.cwd(), stderr: 'pipe' }));
+      args: ['src/cli.ts','mcp','--broker-socket',socket], cwd: resolve(import.meta.dir, '..'), stderr: 'pipe' }));
     const gateway = await client.callTool({ name: 'codex_tool_inventory', arguments: { turn_token: token, query: 'codex_tool_call' } });
     expect(gateway.structuredContent).toMatchObject({ total: 1,
       tools: [{ name: 'codex_tool_call', kind: 'connector', invocation: 'attached_direct',

@@ -249,63 +249,49 @@ test("French status controls do not leak into the answer or swallow ordinary pro
 });
 
 function fixture(label = "Think") {
-  const state = { pressed: false, controlPresent: true, highlighted: true, popupCount: 1,
-    optionCount: 1, draft: "", connectors: [] as string[], loseConnector: false,
-    commands: [] as string[], enters: 0, clicks: 0, pollsBeforeToggle: 0, pendingToggle: false };
-  const control = { getAttribute: async () => {
-    if (state.pendingToggle && state.pollsBeforeToggle-- <= 0) {
-      state.pressed = !state.pressed;
-      state.pendingToggle = false;
-    }
-    return state.pressed ? "true" : "false";
-  }, click: async () => { state.pressed = !state.pressed; state.clicks += 1; } };
-  const controls = { count: async () => state.controlPresent ? 1 : 0, first: () => control };
-  const row = { getAttribute: async () => state.highlighted ? "" : null,
-    waitFor: async () => { if (!state.optionCount) throw new Error("Think command is unavailable"); } };
-  const rows = { filter: () => rows, first: () => row, count: async () => state.optionCount };
-  const popup = { filter: () => popup, locator: () => rows, count: async () => state.popupCount };
+  const state = { pressed: false, controlPresent: true, draft: "", connectors: [] as string[],
+    commands: [] as string[], enters: 0, clicks: 0, waits: 0 };
+  const control = {
+    getAttribute: async () => state.pressed ? "true" : "false",
+    click: async () => { state.pressed = !state.pressed; state.clicks++; },
+    waitFor: async () => { state.waits++; state.controlPresent = true; },
+  };
+  // The captured glyph and localized label describe one button, not two controls.
+  const controls = { count: async () => state.controlPresent ? 1 : 0, first: () => control,
+    or() { return this; }, filter() { return this; } };
   const absentDialog = { filter: () => absentDialog, last: () => absentDialog, isVisible: async () => false };
-  const page = { locator: (selector: string) => selector === '[role="dialog"]' ? absentDialog : popup,
-    keyboard: { press: async () => {} } };
+  const page = { locator: () => absentDialog, keyboard: { press: async (key: string) => { if (key === "Enter") state.enters++; } } };
   const composer = {
-    filter: () => composer, first: () => composer, locator: () => composerForm, page: () => page,
+    locator: () => composerForm, page: () => page,
     evaluate: async () => ({ text: state.draft.trim(), connectors: [...state.connectors] }),
     focus: async () => {},
     fill: async (text: string) => { state.draft = text; state.connectors = []; },
     pressSequentially: async (text: string) => { state.commands.push(text); state.draft += text; },
-    press: async (key: string) => {
-      if (key === "ArrowDown") state.highlighted = true;
-      if (key === "Enter") {
-        if (state.draft !== "/think" || !state.highlighted) throw new Error("Unexpected composer submission");
-        state.enters += 1;
-        if (state.pollsBeforeToggle > 0) state.pendingToggle = true;
-        else state.pressed = !state.pressed;
-        state.controlPresent = true;
-        state.draft = "";
-        if (state.loseConnector) state.connectors = [];
-      }
-    },
+    press: async (key: string) => { if (key === "Enter") state.enters++; },
   };
-  const composerForm = { getByRole: (_role: string, options: { name: string | RegExp }) => ({ filter: () => ({ ...controls,
-    count: async () => (typeof options.name === "string" ? options.name === label : options.name.test(label)) ? controls.count() : 0,
-  }) }), locator: (selector: string) => selector === CHATGPT_THINK_BUTTON_SELECTOR ? { filter: () => controls } : composer, page: () => page };
+  const composerForm = {
+    locator: (selector: string) => { expect(selector).toBe(CHATGPT_THINK_BUTTON_SELECTOR); return controls; },
+    getByRole: (_role: string, options: { name: string }) => ({ count: async () => options.name === label ? controls.count() : 0 }),
+  };
   return { state, composer, composerForm, page };
 }
 
-test.each(["Think", "Analyser"])("%s slash toggles only when needed and preserves selected connectors", async label => {
+test.each(["Think", "Analyser"])("%s waits for its localized control without typing or submitting a command", async label => {
   const ui = fixture(label);
   ui.state.controlPresent = false;
   ui.state.connectors = ["Codex Native2"];
   await setChatGptThinkMode(ui.composer as never, true);
   expect(ui.state.pressed).toBeTrue();
-  expect(ui.state.commands).toEqual(["/think"]);
+  expect(ui.state.commands).toEqual([]);
+  expect(ui.state.waits).toBe(1);
   expect(ui.state.connectors).toEqual(["Codex Native2"]);
   await setChatGptThinkMode(ui.composer as never, true);
   await setChatGptThinkMode(ui.composer as never, false);
   expect(ui.state.pressed).toBeFalse();
-  expect(ui.state.commands).toEqual(["/think"]);
-  expect(ui.state.enters).toBe(1);
-  expect(ui.state.clicks).toBe(1);
+  expect(ui.state.commands).toEqual([]);
+  expect(ui.state.enters).toBe(0);
+  expect(ui.state.clicks).toBe(2);
+  expect(ui.state.draft).toBe("");
 });
 
 test.each(["Think", "Analyser"])("%s uses its visible semantic control without inserting a slash command", async label => {

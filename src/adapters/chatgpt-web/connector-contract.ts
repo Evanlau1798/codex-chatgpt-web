@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChatGptMcpContract } from "./mcp-zero-risk";
+import { scopeHash } from "./mcp-request-diagnostics";
 
 export const NATIVE2_CONTRACT_REVISION = "native2-enhanced-2026-09-17-1";
 export const ZERO_RISK_CONTRACT_REVISION = "zero-risk-2026-09-17-1";
@@ -17,6 +18,17 @@ const PROBE_QUERY_PATTERN = /^(?:\\?_){2}codex\\?_contract\\?_probe(?:\\?_){2}:(
 const PROBE_DIR = join(tmpdir(), "codex-chatgpt-web-contract-probes");
 const PROBE_FALLBACK_DIR = join(PROBE_DIR, "fallback");
 const PROBE_FALLBACK_TTL_MS = 120_000;
+
+function observeProbe(nonce: string | undefined, phase: "expected" | "produced" | "consumed" | "query_rejected",
+  detail: { matched?: boolean; reason?: "pattern" | "revision"; reference?: string } = {}): void {
+  try {
+    console.error(`[chatgpt-web] connector_probe=${JSON.stringify({ at: new Date().toISOString(), pid: process.pid,
+      ...(nonce ? { nonce_hash: scopeHash(nonce) } : {}), root_hash: scopeHash(PROBE_DIR), phase,
+      ...(detail.matched !== undefined ? { matched: detail.matched } : {}),
+      ...(detail.reason ? { reason: detail.reason } : {}),
+      ...(detail.reference && detail.reference.length <= 256 ? { reference_hash: scopeHash(detail.reference) } : {}) })}`);
+  } catch { /* Diagnostics cannot change contract verification. */ }
+}
 
 function assertNonce(nonce: string): void {
   if (!NONCE_PATTERN.test(nonce)) throw new Error("Connector contract probe nonce is invalid");
@@ -45,6 +57,7 @@ export function connectorContractProbeQuery(contractRevision: string, nonce: str
 export function recordConnectorContractProbeEvidence(nonce: string, contractRevision: string): void {
   mkdirSync(PROBE_DIR, { recursive: true });
   writeFileSync(evidencePath(nonce), `${JSON.stringify({ contractRevision })}\n`, { encoding: "utf8", flag: "wx" });
+  observeProbe(nonce, "produced");
 }
 
 export function discardConnectorContractProbeEvidence(nonce: string): void {
@@ -53,13 +66,16 @@ export function discardConnectorContractProbeEvidence(nonce: string): void {
 
 export function consumeConnectorContractProbeEvidence(nonce: string, expectedRevision: string): boolean {
   const path = evidencePath(nonce);
+  let matched = false;
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as { contractRevision?: unknown };
-    return parsed.contractRevision === expectedRevision;
+    matched = parsed.contractRevision === expectedRevision;
+    return matched;
   } catch {
     return false;
   } finally {
     rmSync(path, { force: true });
+    observeProbe(nonce, "consumed", { matched });
   }
 }
 
@@ -70,9 +86,14 @@ export function recordConnectorContractProbeQuery(query: string, contract: ChatG
   return true;
 }
 
-export function isConnectorContractProbeQuery(query: string, contract: ChatGptMcpContract): boolean {
+export function isConnectorContractProbeQuery(query: string, contract: ChatGptMcpContract, reference?: string): boolean {
   const match = PROBE_QUERY_PATTERN.exec(query.trim());
-  return !!match && match[1] === connectorContractRevision(contract);
+  const valid = !!match && match[1] === connectorContractRevision(contract);
+  // Classify the failed probe without changing ordinary inventory routing.
+  if (!valid && query.trim().startsWith("__codex_contract_probe__:")) {
+    observeProbe(match?.[2], "query_rejected", { reason: match ? "revision" : "pattern", reference });
+  }
+  return valid;
 }
 
 /**
@@ -176,24 +197,15 @@ export async function verifyCurrentConnectorContract(
           JSON.stringify({ request_id: currentReference, query }),
           "Do not claim either call in prose and do not answer before the inventory tool result is returned. Do not call any other tool. After the inventory call succeeds, reply briefly.",
         ].join(" ")
-      : currentReference
-        ? [
-            "Do not send progress updates for this connector verification.",
-            "Protocol verification: you must make a real function call to the connected MCP tool codex_tool_inventory now. Do not write a prose claim that you called it.",
-            retryInstruction,
-            "Use exactly these arguments:",
-            JSON.stringify({ turn_token: currentReference, query }),
-            "Wait for the tool result before answering. Do not call any other work tool. After the inventory call succeeds, complete the brief final response through the bound output control if the transport requires it; otherwise reply briefly.",
-          ].filter(Boolean).join(" ")
-        : [
-            "Do not send progress updates for this connector verification.",
-            "Protocol verification: you must make a real function call to the connected MCP tool codex_tool_inventory now. Do not write a prose claim that you called it.",
-            retryInstruction,
-            "Use the current turn_token from codex_native_turn_binding and exactly these arguments:",
-            JSON.stringify({ query }),
-            "Wait for the tool result before answering. Do not call any other work tool. After the inventory call succeeds, complete the brief final response through the bound output control if the transport requires it; otherwise reply briefly.",
-          ].filter(Boolean).join(" ");
+      : [
+          "Do not send progress updates for this connector verification.",
+          "Call codex_tool_inventory exactly once using the current turn_token from codex_native_turn_binding, with",
+          JSON.stringify({ query, include_schema: false }),
+          retryInstruction,
+          "Do not call any other work tool. After the inventory call succeeds, complete the brief final response through the bound output control if the transport requires it; otherwise reply briefly.",
+        ].filter(Boolean).join(" ");
     discardConnectorContractProbeEvidence(nonce);
+    observeProbe(nonce, "expected");
     const fallbackArmed = contract === "native" && !!currentReference;
     if (fallbackArmed) armConnectorContractProbeFallback(currentReference!, nonce, contractRevision);
     try {

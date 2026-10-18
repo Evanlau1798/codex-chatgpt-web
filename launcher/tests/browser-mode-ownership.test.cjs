@@ -119,10 +119,11 @@ test("switching from Zero Risk to Automatic marks the already-loaded primary sur
     turnTabs: new Map(),
     selectedTabId: "home",
     surfaceId: "automatic-primary-surface",
-    view: { webContents: {
+    view: { webContents: Object.assign(new (require("node:events").EventEmitter)(), {
       isDestroyed: () => false,
+      isCrashed: () => false,
       executeJavaScript: async script => { scripts.push(script); },
-    } },
+    }) },
     writeDescriptor() {},
     snapshot: () => ({ activeTabId: "home" }),
   });

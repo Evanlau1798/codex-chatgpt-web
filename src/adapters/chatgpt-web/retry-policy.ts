@@ -1,4 +1,4 @@
-import { ChatGptWebAdapterError, isChatGptPromptIntegrityMismatch } from "./adapter-error";
+import { ChatGptWebAdapterError, isChatGptPromptIntegrityMismatch, isChatGptTerminalCompletionFailure } from "./adapter-error";
 
 /** Maximum number of automatic browser-turn retries after the initial send. */
 export const MAX_CHATGPT_WEB_TURN_RETRIES = 3;
@@ -37,15 +37,17 @@ export class ChatGptWebTurnRetryPolicy {
 
   constructor(private readonly ttlMs = RETRY_BUDGET_TTL_MS, private readonly maxTerminalEntries = 256) {}
 
-  recordPromptIntegrityFailure(key: string, error: ChatGptWebAdapterError, now = Date.now()): void {
+  recordTerminalFailure(key: string, error: ChatGptWebAdapterError, now = Date.now()): void {
     this.prune(now);
-    if (!isChatGptPromptIntegrityMismatch(error) || this.terminal.has(key)) return;
+    if ((!(error.code === "model_not_found" && !error.retryable) && !isChatGptPromptIntegrityMismatch(error)
+      && !isChatGptTerminalCompletionFailure(error))
+      || this.terminal.has(key)) return;
     // Bounded process-local receipt, not persistent exactly-once storage. Do not extend TTL on replay.
     if (this.terminal.size >= this.maxTerminalEntries) this.terminal.delete(this.terminal.keys().next().value!);
     this.terminal.set(key, { error, recordedAt: now });
   }
 
-  promptIntegrityFailure(key: string, now = Date.now()): ChatGptWebAdapterError | undefined {
+  terminalFailure(key: string, now = Date.now()): ChatGptWebAdapterError | undefined {
     this.prune(now);
     return this.terminal.get(key)?.error;
   }

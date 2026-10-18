@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page } from "playwright-core";
@@ -85,32 +85,41 @@ const diagnosticState = {
   },
 };
 
-test("repeated attempts retain the first failure and latest attempt without evicting unrelated traces", async () => {
+test("completed retries remain bounded without evicting failed captures from unrelated traces", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-retry-diagnostics-"));
   const page = { evaluate: async () => ({ composerVisible: false }) } as unknown as Page;
   const firstTrace = "original_stall";
+  const capture = async (trace: string, checkpoint: string, status: "failed" | "completed", error?: Error) => {
+    const diagnostics = new ChatGptBrowserDiagnostics(trace, root, true);
+    await diagnostics.capture(page, checkpoint, error);
+    diagnostics.finish(status);
+  };
   try {
-    await new ChatGptBrowserDiagnostics(firstTrace, root, true).capture(page, "initial-failure", new Error("private"));
+    await capture(firstTrace, "initial-failure", "failed", new Error("private"));
     const first = readdirSync(root)[0]!;
     utimesSync(join(root, first), 1, 1);
     for (let i = 0; i < 8; i++) {
-      await new ChatGptBrowserDiagnostics(`unrelated_${i}`, root, true).capture(page, "initial");
+      await capture(`unrelated_${i}`, "initial", "failed");
     }
     for (let i = 0; i < 12; i++) {
-      await new ChatGptBrowserDiagnostics(firstTrace, root, true).capture(page, `retry-${i}`, new Error("private"));
+      await capture(firstTrace, `retry-${i}`, "completed");
     }
     const dirs = readdirSync(root);
     expect(dirs).toContain(first);
-    expect(dirs.filter(name => name.startsWith(firstTrace))).toHaveLength(2);
+    expect(dirs.filter(name => name.startsWith(firstTrace))).toHaveLength(11);
     expect(dirs.filter(name => name.startsWith("unrelated_"))).toHaveLength(8);
-    const latest = dirs.find(name => name.startsWith(firstTrace) && name !== first)!;
-    expect(readdirSync(join(root, latest))).toEqual(["01-retry-11.json"]);
+    const latest = dirs.find(name => existsSync(join(root, name, "01-retry-11.json")))!;
+    expect(readdirSync(join(root, latest)).sort()).toEqual([".trace-state", "01-retry-11.json"]);
+    expect(JSON.parse(readFileSync(join(root, latest, ".trace-state"), "utf8")).status).toBe("completed");
     expect(readFileSync(join(root, first, "01-initial-failure.json"), "utf8")).not.toContain("private");
     for (let i = 8; i < 18; i++) {
-      await new ChatGptBrowserDiagnostics(`unrelated_${i}`, root, true).capture(page, "initial");
+      await capture(`unrelated_${i}`, "initial", "completed");
     }
     expect(readdirSync(root).length).toBeLessThanOrEqual(20);
-    expect(new Set(readdirSync(root).map(name => name.replace(/-[a-f0-9]{8}$/, ""))).size).toBe(10);
+    expect(readdirSync(root).filter(name => name.startsWith(firstTrace))).toEqual([first]);
+    for (let i = 0; i < 18; i++) {
+      expect(readdirSync(root).some(name => name.startsWith(`unrelated_${i}-`))).toBeTrue();
+    }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -136,8 +145,10 @@ test("connector verification records only capabilities even when screenshots are
     const capture = new ChatGptBrowserDiagnostics("verify_private_trace", root, true);
     await capture.capture(page, "connector-verification-started");
     await capture.capture(page, "connector-verification-failed", new Error("private-error"));
+    capture.finish("failed");
     const directory = join(root, readdirSync(root)[0]!);
-    const files = readdirSync(directory).sort();
+    expect(JSON.parse(readFileSync(join(directory, ".trace-state"), "utf8")).status).toBe("failed");
+    const files = readdirSync(directory).filter(name => name !== ".trace-state").sort();
     expect(files.length).toBe(2);
     expect(screenshots).toBe(0);
     expect(verificationEvaluator).not.toMatch(/location\.href|document\.title|innerText|textContent/);

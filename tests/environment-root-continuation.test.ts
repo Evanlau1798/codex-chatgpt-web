@@ -1,3 +1,4 @@
+import { extractChatGptTurnUserRevision } from "../src/adapters/chatgpt-web/environment";
 import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -441,4 +442,154 @@ test.each(["remote", "local"])("%s compaction authenticates the latest native tu
   ].join("\n") + "\n");
   expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request))
     .toThrow("current turn");
+
+
+
+
+
+
 });
+
+for (const format of ["v1", "v2"]) for (const groupedPreamble of [false, true]) for (const newInstruction of [false, true]) test(`${format} ${groupedPreamble ? "grouped preamble" : "context-only"} continuation ${newInstruction ? "with a new instruction" : "of the previous instruction"} requires a matching current rollout, not just a checkpoint`, () => {
+    const { codexHome, request, rolloutPath } = resumedRootFixture();
+    const body = request._rawBody as { input: Array<Record<string, unknown>> };
+    const oldTurnId = "01a06c66-0000-75c6-a0df-318f890ef6de";
+    body.input[0]!.internal_chat_message_metadata_passthrough = { turn_id: oldTurnId };
+    const summary = `Confirmed ${format} checkpoint`;
+    rememberCompactionContinuation({ ...request, _compactionRequest: true }, extractChatGptTurnIdentity(request), [
+      { turnId: oldTurnId, content: body.input[0]!.content },
+    ], summary);
+    const environmentPart = { type: "input_text", text: environmentXml };
+    const current = {
+      type: "message", role: "user", id: "msg_current_environment",
+      content: groupedPreamble ? [
+        { type: "input_text", text: "<recommended_plugins>Example plugin</recommended_plugins>" },
+        { type: "input_text", text: "# AGENTS.md instructions\n<INSTRUCTIONS>Keep existing changes.</INSTRUCTIONS>" },
+        environmentPart,
+      ] : [environmentPart],
+      internal_chat_message_metadata_passthrough: { turn_id: rolloutTurnId },
+    };
+    const checkpoint = format === "v2"
+      ? { type: "compaction", encrypted_content: encodeCompactionSummary(summary) }
+      : { type: "message", role: "user", content: [{ type: "input_text", text: `${SUMMARY_PREFIX}\n${summary}` }] };
+    // Native compaction rebuilds the current preamble before the earlier user instruction.
+    body.input.unshift(current);
+    const checkpointIndex = body.input.length;
+    body.input.push(checkpoint);
+    const nextContent = [{ type: "input_text", text: "Continue with the next requested change" }];
+    if (newInstruction) body.input.push({
+      type: "message", role: "user", id: "msg_after_compaction", content: nextContent,
+      internal_chat_message_metadata_passthrough: { turn_id: rolloutTurnId, content_item_kinds: ["user.text"] },
+    });
+    const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome);
+    expect(store.resolve(request).cwd).toBe(root);
+    if (newInstruction) expect(extractChatGptTurnUserRevision(request)).toEqual(nextContent);
+    for (const text of [
+      environmentXml.replaceAll(root, resolve(root, "another-workspace")),
+      environmentXml.replace('<permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile>',
+        '<sandbox_mode>read-only</sandbox_mode>'),
+      "<environment_context><cwd/></environment_context>",
+    ]) {
+      environmentPart.text = text;
+      expect(() => store.resolve(request)).toThrow();
+    }
+    environmentPart.text = environmentXml;
+    body.input.splice(checkpointIndex, 1);
+    expect(() => store.resolve(request)).toThrow("missing cwd");
+    body.input.splice(checkpointIndex, 0, checkpoint);
+    writeFileSync(rolloutPath, [
+      JSON.stringify({ type: "session_meta", payload: { id: rolloutThreadId, source: "vscode" } }),
+      JSON.stringify(childTurnContext(oldTurnId)),
+    ].join("\n") + "\n");
+    // A valid cached environment and matching wire claim cannot overrule a different native turn.
+    expect(() => store.resolve(request)).toThrow("current turn");
+  });
+test.each(["v1", "v2"])("%s recovered delegation still requires current rollout environment proof", format => {
+    const { codexHome, request, rolloutPath } = resumedRootFixture();
+    const body = request._rawBody as { input: Array<Record<string, unknown>> };
+    const previous = body.input[0]!;
+    previous.internal_chat_message_metadata_passthrough = { turn_id: "turn_old_human" };
+    const output = "<codex_delegation><source_thread_id>source_thread</source_thread_id><input>Continue the requested audit.</input></codex_delegation>";
+    const source = { content: output, itemId: "fco_environment_delegation", turnId: rolloutTurnId };
+    body.input.push({ type: "function_call_output", id: source.itemId, name: "send_message_to_thread", namespace: "codex_app",
+      output, internal_chat_message_metadata_passthrough: { turn_id: rolloutTurnId } });
+    const summary = `Delegation environment checkpoint ${format}`;
+    rememberCompactionContinuation({ ...request, _compactionRequest: true }, extractChatGptTurnIdentity(request), [
+      source, { content: previous.content, itemId: String(previous.id), turnId: "turn_old_human" },
+    ], summary);
+    const environmentPart = { type: "input_text", text: environmentXml };
+    body.input = [
+      { type: "message", role: "user", id: "msg_current_context", content: [environmentPart],
+        internal_chat_message_metadata_passthrough: { turn_id: rolloutTurnId } },
+      previous,
+      format === "v1"
+        ? { type: "message", role: "user", content: [{ type: "input_text", text: `${SUMMARY_PREFIX}\n${summary}` }] }
+        : { type: "compaction", encrypted_content: encodeCompactionSummary(summary) },
+    ];
+    expect(extractChatGptTurnUserRevision(request)).toBe(output);
+    const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome);
+    expect(store.resolve(request).cwd).toBe(root);
+    environmentPart.text = environmentXml.replaceAll(root, resolve(root, "unproven-workspace"));
+    expect(() => store.resolve(request)).toThrow();
+    environmentPart.text = environmentXml;
+    rmSync(rolloutPath);
+    expect(() => store.resolve(request)).toThrow("Codex has no canonical rollout for the requested root thread");
+  });
+test("compaction keeps current native output-directory grants omitted from workspace roots", () => {
+    const { codexHome, request, rolloutPath } = resumedRootFixture();
+    const body = request._rawBody as { input: Array<Record<string, unknown>>; client_metadata: Record<string, string> };
+    const oldTurnId = "01a06c66-0000-75c6-a0df-318f890ef6de";
+    body.input[0]!.internal_chat_message_metadata_passthrough = { turn_id: oldTurnId };
+    const summary = "Confirmed output-directory checkpoint";
+    rememberCompactionContinuation({ ...request, _compactionRequest: true }, extractChatGptTurnIdentity(request), [
+      { turnId: oldTurnId, content: body.input[0]!.content },
+    ], summary);
+    const environmentPart = { type: "input_text", text: filesystemEnvironmentXml(workspaceWriteProfileXml) };
+    body.input.unshift({
+      type: "message", role: "user", id: "msg_current_environment", content: [environmentPart],
+      internal_chat_message_metadata_passthrough: { turn_id: rolloutTurnId },
+    });
+    body.input.push({ type: "compaction", encrypted_content: encodeCompactionSummary(summary) });
+    const metadata = JSON.parse(body.client_metadata["x-codex-turn-metadata"]!);
+    metadata.sandbox_mode = "workspace-write";
+    body.client_metadata["x-codex-turn-metadata"] = JSON.stringify(metadata);
+    const output = join(codexHome, "native-output");
+    const entries = [
+      { path: { type: "special", value: { kind: "root" } }, access: "read" },
+      ...[root, output].map(path => ({ path: { type: "path", path }, access: "write" })),
+      { path: { type: "special", value: { kind: "slash_tmp" } }, access: "write" },
+      { path: { type: "special", value: { kind: "tmpdir" } }, access: "write" },
+    ];
+    writeFileSync(rolloutPath, [
+      { type: "session_meta", payload: { id: rolloutThreadId, source: "vscode" } },
+      childTurnContext(rolloutTurnId, {
+        sandbox_policy: { type: "workspace-write", writable_roots: [output], network_access: true },
+        permission_profile: { type: "managed", file_system: { type: "restricted", entries }, network: "enabled" },
+        file_system_sandbox_policy: { kind: "restricted", entries },
+      }),
+    ].map(value => JSON.stringify(value)).join("\n") + "\n");
+    const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome);
+    expect(store.resolve(request)).toMatchObject({
+      cwd: root, roots: [root], writableRoots: [root, output],
+      sandboxPolicy: { type: "workspaceWrite", writableRoots: [root, output], networkAccess: true },
+    });
+    const original = environmentPart.text;
+    for (const conflicting of [
+      original.replaceAll(root, join(codexHome, "unproven-project")),
+      original.replace("<filesystem>", "<network_access>restricted</network_access><filesystem>"),
+      filesystemEnvironmentXml(readOnlyProfileXml),
+    ]) {
+      environmentPart.text = conflicting;
+      expect(() => store.resolve(request)).toThrow("environment conflicts");
+    }
+  });
+
+function filesystemEnvironmentXml(permissionProfileXml: string): string {
+  return `<environment_context>
+  <cwd>${root}</cwd>
+  <filesystem><workspace_roots><root>${root}</root></workspace_roots>${permissionProfileXml}</filesystem>
+</environment_context>`;
+}
+
+const workspaceWriteProfileXml = `<permission_profile type="managed"><file_system type="restricted"><entry access="read"><special>:root</special></entry><entry access="write"><path>${root}</path></entry><entry access="write"><special>:slash_tmp</special></entry><entry access="write"><special>:tmpdir</special></entry><entry access="read"><path>${root}/.git</path></entry></file_system></permission_profile>`;
+const readOnlyProfileXml = `<permission_profile type="managed"><file_system type="restricted"><entry access="read"><special>:root</special></entry></file_system></permission_profile>`;

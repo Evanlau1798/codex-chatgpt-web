@@ -4,7 +4,7 @@ import { expandUserPath } from "../../config";
 import { withStallTimeout } from "../../stall-timeout";
 import { type AdapterEvent, type CodexParsedRequest, type CodexProviderConfig } from "../../types";
 import type { ProviderAdapter } from "../base";
-import { ChatGptWebAdapterError, chatGptSessionFailureDisposition, isChatGptPromptIntegrityMismatch } from "./adapter-error";
+import { ChatGptWebAdapterError, chatGptSessionFailureDisposition, isChatGptPromptIntegrityMismatch, isChatGptTerminalCompletionFailure } from "./adapter-error";
 import { chatGptAdapterRuntimeConfig, chatGptAutomaticUsagePromptOptions } from "./adapter-runtime-config";
 import { createChatGptRuntimeStarter, type ChatGptRuntimeWorker } from "./adapter-runtime-factory";
 import { ChatGptBrowserWorker, discardChatGptStartupPages } from "./browser-worker";
@@ -20,7 +20,7 @@ import { chatGptWebTurnRetryPolicy } from "./retry-policy";
 import { brokerSocketPath, ChatGptSurfaceRecoveryTracker, withAbort } from "./runtime-lifecycle";
 import { TurnBroker, type TurnBrokerOwner } from "./turn-broker";
 import { chatGptCompactionSourceExecutionKey, chatGptConversationKey, chatGptTurnExecutionKey, chatGptTurnRoundKey, chatGptTurnSessions, chatGptTurnTraceId, type ChatGptTraceEvent } from "./turn-execution";
-import { chatGptTurnRetryKey, chatGptPromptFailureKey } from "./turn-retry-identity";
+import { chatGptTurnRetryKey, chatGptPromptFailureKey, chatGptModelFailureKey } from "./turn-retry-identity";
 import { appendCompactionUserPrompt, emitBrowserCompletion, emitProContextWarning, emitTextDeltas, emitToolBatch, emitTraceEvents, replayEvents, runtimeUsageInput } from "./turn-events";
 import { estimateChatGptWebInputTokens, estimateChatGptWebUsage } from "./usage";
 import { ChatGptThreadEnvironmentStore } from "./thread-environment";
@@ -243,6 +243,7 @@ export function createChatGptWebAdapter(
       emit({ type: "heartbeat" });
       let retainedSafetyTraceId: string | undefined;
       let promptFailureKey: string | undefined;
+      let modelFailureKey: string | undefined;
       try {
       const manualRequest = isChatGptWebZeroRiskBackendModel(parsed.modelId);
       if (manualRequest !== manualInteraction) {
@@ -290,7 +291,9 @@ export function createChatGptWebAdapter(
       } catch (error) {
         throw reportChatGptPreparationFailure(traceId, "full", parsed, error);
       }
-      const exhaustedRetry = chatGptWebTurnRetryPolicy.promptIntegrityFailure(promptFailureKey)
+      modelFailureKey = `${executionNamespace}:model:${chatGptModelFailureKey(parsed)}`;
+      const exhaustedRetry = chatGptWebTurnRetryPolicy.terminalFailure(modelFailureKey)
+        ?? chatGptWebTurnRetryPolicy.terminalFailure(promptFailureKey)
         ?? chatGptWebTurnRetryPolicy.exhaustedError(retryKey);
       if (exhaustedRetry) {
         emit({
@@ -392,6 +395,10 @@ export function createChatGptWebAdapter(
         for (;;) {
           let recoveryPlan: ReturnType<ChatGptSurfaceRecoveryTracker["recoveryPlan"]>;
           await session.runExclusive(async () => {
+          const settled = session.settledOutcome();
+          if (settled?.type === "final" && parsed._composerPrediction?.enabled) {
+            Object.assign(parsed._composerPrediction, session.runtime.usageInput?._composerPrediction);
+          }
           const replayed = session.roundEvents(roundKey);
           replayEvents(replayed, emit);
           if (session.roundCompleted(roundKey)) {
@@ -400,7 +407,6 @@ export function createChatGptWebAdapter(
             if (session.outstanding().length > 0) session.markOutstandingPublished();
             return;
           }
-          const settled = session.settledOutcome();
           if (settled) {
             if (settled.type === "error") {
               recoveryPlan = surfaceRecovery.recoveryPlan(
@@ -638,6 +644,9 @@ export function createChatGptWebAdapter(
                   throw new Error("ChatGPT browser Markdown stream did not reproduce the completed answer");
                 }
                 structuredOutputValidator?.(next.outcome.answer);
+                if (parsed._composerPrediction?.enabled) {
+                  Object.assign(parsed._composerPrediction, session.runtime.usageInput?._composerPrediction);
+                }
                 if (bufferStructuredOutput) emitTextDeltas([next.outcome.answer], emitRound);
                 const answer = appendCompactionUserPrompt(
                   parsed,
@@ -708,7 +717,12 @@ export function createChatGptWebAdapter(
           : error;
         if (handledError instanceof ChatGptWebAdapterError) {
           applyAutomaticSafetyFailure(handledError);
-          if (promptFailureKey) chatGptWebTurnRetryPolicy.recordPromptIntegrityFailure(promptFailureKey, handledError);
+          if (promptFailureKey && isChatGptPromptIntegrityMismatch(handledError)) {
+            chatGptWebTurnRetryPolicy.recordTerminalFailure(promptFailureKey, handledError);
+          }
+          if (modelFailureKey && (handledError.code === "model_not_found" || isChatGptTerminalCompletionFailure(handledError))) {
+            chatGptWebTurnRetryPolicy.recordTerminalFailure(modelFailureKey, handledError);
+          }
         }
         if (!(error instanceof ChatGptWebAdapterError && error.retryable)) {
           chatGptWebTurnRetryPolicy.clear(retryKey);
@@ -742,8 +756,12 @@ export function createChatGptWebAdapter(
       }
       } catch (error) {
         if (error instanceof ChatGptWebAdapterError) applyAutomaticSafetyFailure(error);
+        if (modelFailureKey && error instanceof ChatGptWebAdapterError
+          && (error.code === "model_not_found" || isChatGptTerminalCompletionFailure(error))) {
+          chatGptWebTurnRetryPolicy.recordTerminalFailure(modelFailureKey, error);
+        }
         if (promptFailureKey && isChatGptPromptIntegrityMismatch(error)) {
-          chatGptWebTurnRetryPolicy.recordPromptIntegrityFailure(promptFailureKey, error);
+          chatGptWebTurnRetryPolicy.recordTerminalFailure(promptFailureKey, error);
         }
         if (isChatGptPromptIntegrityMismatch(error) || error instanceof ChatGptAccountSafetyAdmissionError
           || (error instanceof ChatGptWebAdapterError

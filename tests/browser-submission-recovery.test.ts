@@ -58,6 +58,7 @@ function surface(
   options: { url?: () => string; composerText?: () => string } = {},
 ) {
   const hidden = {
+    locator() { return this; },
     filter() { return this; }, last() { return this; }, getByText() { return this; }, getByTestId() { return this; },
     isVisible: async () => false, count: async () => 0,
   };
@@ -564,7 +565,10 @@ test("production send and multipart observation wire same-page recovery for laun
   const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
   expect(source.includes("const toolTurnObservationRecovery = launcherSurfaceId !== undefined")).toBeTrue();
   expect(source.includes("callerSignal")).toBeTrue();
-  expect((source.match(/toolTurnObservationRecovery,/g) ?? []).length).toBe(3);
+  expect((source.match(/toolTurnObservationRecovery,|toolTurnObservationRecovery \? async/g) ?? []).length).toBe(3);
+  const observe = source.indexOf("const observeSubmission =");
+  expect(source.indexOf("await retireActivation?.();", observe))
+    .toBeLessThan(source.indexOf("return toolTurnObservationRecovery(...args);", observe));
   expect(source.includes("responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR)")).toBeTrue();
 });
 
@@ -779,4 +783,34 @@ test.each(["accepted", "late-accepted", "cancelled", "press-failed"] as const)(
     controller.abort();
     await send.catch(() => {});
   }
+});
+
+test.each(["accepted", "recovery-failed", "cancelled"] as const)("same-page recovery owns a disconnected pending Enter: %s", async outcome => {
+  const first = surface(timeout);
+  const next = surface(async () => ({ count: 1, lastId: "conversation-turn-new" }));
+  const instance = worker();
+  const controller = new AbortController();
+  let presses = 0;
+  let submitted = false;
+  let recovered = false;
+  let disconnect!: (reason: Error) => void;
+  instance.activeComposer = async () => ({ locator: () => ({ locator: () => ({
+    waitFor: async () => {}, isEnabled: async () => true,
+    press: async () => { presses++; await new Promise<void>((_resolve, reject) => { disconnect = reject; }); },
+  }) }) });
+  const result = await instance.sendAttachedPrompt(first.page, first.baseline, initial, undefined,
+    controller.signal, undefined, undefined, async (_attempt, _cause, signal) => {
+      disconnect(new Error("locator.press: Target page, context or browser has been closed"));
+      await new Promise(resolve => setTimeout(resolve, 15));
+      if (outcome === "cancelled") controller.abort();
+      signal?.throwIfAborted();
+      if (outcome === "recovery-failed") throw new Error("same-page recovery failed");
+      recovered = true;
+      return next.page;
+    }).then(value => { submitted = true; return { value }; }, error => ({ error }));
+  expect(presses).toBe(1);
+  expect(submitted).toBe(outcome === "accepted");
+  if (outcome === "accepted") { expect(result).toEqual({ value: "assistant_turn" }); expect(recovered).toBeTrue(); }
+  else if (outcome === "recovery-failed") expect(result).toMatchObject({ error: { message: "same-page recovery failed" } });
+  else expect(result).toMatchObject({ error: { name: "AbortError" } });
 });

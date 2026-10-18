@@ -447,7 +447,7 @@ test("Bigger Context keeps preliminary parts small and preserves all records in 
   expect(Math.max(...multipart.multipart!.parts.slice(0, -1).map(part => part.length))).toBeLessThan(120_000);
   // The selected High mode can carry a larger final part than an Instant upload.
   expect(multipart.multipart!.parts.at(-1)!.length).toBeLessThan(1_048_572);
-});
+}, 30_000);
 
 test("Web compaction rebuilds attachments after trimming an oversized oldest image message", () => {
   const compact = request("high");

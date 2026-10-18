@@ -43,7 +43,7 @@ const ledger = JSON.parse(readFileSync(
 };
 
 function git(args: string[], cwd = root): string {
-  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  const result = spawnSync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
   return result.stdout.trim();
 }
@@ -188,7 +188,7 @@ test("v6.1.3 evidence is content-addressed, references v6.1.2, and reconstructs 
   }
 }, 30_000);
 
-test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8"])("continuing %s evidence closes source anchors and reconstructs the original merge from retained prerequisites", release => {
+test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8", "v6.1.10"])("continuing %s evidence closes source anchors and reconstructs the original merge from retained prerequisites", release => {
   const next = JSON.parse(readFileSync(resolve(root, `.github/upstream-audit/${release}.json`), "utf8"));
   if (release === "v6.1.5") {
     expect(next.coverage).toEqual({paths: 54, hunks: 202, testPaths: 21, testCaseDeltas: 61, pending: 0, missing: 0});
@@ -207,8 +207,15 @@ test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8"])("continuing %s evidence clos
     expect(next.tag.object).toBe("09af1a06b2bde862ec41d3ca01b0a7577a14fa56");
     expect(next.evidence.path).toBe(`.github/upstream-audit/evidence/${next.evidence.sha256}.tar.gz`);
   }
+  if (release === "v6.1.10") {
+    expect(next.coverage).toEqual({paths: 75, hunks: 235, testPaths: 30, testCaseDeltas: 120, pending: 0, missing: 0});
+    expect(next.baseline).toBe("943d772df3281bec54fc9cffc7c1af36a9cec3f7");
+    expect(next.upstream).toBe("8645a89e6a5fbe011e1bfbb0821a386ca7477ad5");
+    expect(next.tag).toEqual({type: "lightweight", refTarget: next.upstream, object: null, commit: next.upstream, signed: false});
+    expect(next.evidence.path).toBe(`.github/upstream-audit/evidence/${next.evidence.sha256}.tar.gz`);
+  }
   const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
-  const publishedObjects = release === "v6.1.7" || release === "v6.1.8"
+  const publishedObjects = release === "v6.1.7" || release === "v6.1.8" || release === "v6.1.10"
     ? new Set(git(["rev-list", "--objects", "HEAD"]).split(/\r?\n/).map(line => line.split(" ")[0])) : undefined;
   const retainedTargets = new Map<string, Buffer>();
   if (next.evidence.targetBlobs) {
@@ -224,17 +231,21 @@ test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8"])("continuing %s evidence clos
     }
     expect([...retainedTargets.keys()].sort()).toEqual([...retained.objects].sort());
   }
+  const verifiedBlobs = new Map<string, Buffer>();
   const blob = (oid: string) => {
     const retained = retainedTargets.get(oid);
     if (retained) return retained;
+    const cached = verifiedBlobs.get(oid);
+    if (cached) return cached;
     const result = spawnSync("git", ["cat-file", "blob", oid], { cwd: root });
     expect(result.status, result.stderr.toString("utf8")).toBe(0);
+    verifiedBlobs.set(oid, result.stdout);
     return result.stdout;
   };
   const textDigest = (text: string) => digest(Buffer.from(text.replaceAll("\r\n", "\n")));
   expect(next.tag.signed).toBeFalse();
   expect(git(["merge-base", next.semanticBaseline, next.upstream])).toBe(next.semanticBaseline);
-  expect(git(["rev-list", "--count", `${next.semanticBaseline}..${next.upstream}`])).toBe(release === "v6.1.7" ? "4" : release === "v6.1.8" ? "3" : "1");
+  expect(git(["rev-list", "--count", `${next.semanticBaseline}..${next.upstream}`])).toBe(release === "v6.1.10" ? "14" : release === "v6.1.7" ? "4" : release === "v6.1.8" ? "3" : "1");
   const expectedPaths = git(["diff", "--name-only", next.semanticBaseline, next.upstream]).split(/\r?\n/).sort();
   expect(next.paths.map((item: any) => item.path).sort()).toEqual(expectedPaths);
   expect(new Set(next.paths.map((item: any) => item.path)).size).toBe(expectedPaths.length);
@@ -327,7 +338,7 @@ test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8"])("continuing %s evidence clos
     writeFileSync(packPath, entries.get("objects/auto-merge-objects.pack")!);
     git(["--git-dir", scratch, "index-pack", packPath]);
     expect(git(["--git-dir", scratch, "cat-file", "-t", next.automaticMergeTree])).toBe("tree");
-    expect(git(["--git-dir", scratch, "rev-parse", `${next.tag.object}^{commit}`])).toBe(next.upstream);
+    expect(git(["--git-dir", scratch, "rev-parse", `${next.tag.object ?? next.tag.refTarget}^{commit}`])).toBe(next.upstream);
     expect(git(["--git-dir", scratch, "rev-parse", `${next.semanticTag.object}^{commit}`])).toBe(next.semanticBaseline);
     const trees = git(["--git-dir", scratch, "rev-list", "--objects", next.automaticMergeTree]).split(/\r?\n/);
     const check = spawnSync("git", ["--git-dir", scratch, "cat-file", "--batch-check"], {

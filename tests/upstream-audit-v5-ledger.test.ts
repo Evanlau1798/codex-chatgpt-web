@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
+import { historicalSources } from "./audit-historical-sources";
 
 type Classification = "exact" | "adapted" | "superseded" | "rejected" | "missing";
 type Ledger = {
@@ -48,10 +49,9 @@ const publication = JSON.parse(readFileSync(resolve(repositoryRoot, ".github/ups
 const publishedCommit = publication.ledger.commit as string;
 const publishedSources = new Map<string, string>();
 function publishedSource(path: string): string {
-  if (!publishedSources.has(path)) {
-    const result = spawnSync("git", ["show", `${publishedCommit}:${path}`], { cwd: repositoryRoot, encoding: "utf8" });
-    expect(result.status, result.stderr).toBe(0);
-    publishedSources.set(path, result.stdout.replace(/\r\n/g, "\n"));
+  if (publishedSources.size === 0) {
+    const paths = ledger.semanticReview.obligations.flatMap(item => [item.implementation, ...item.tests.map(test => test.path)]);
+    for (const [path, source] of historicalSources(publishedCommit, paths)) publishedSources.set(path, source);
   }
   return publishedSources.get(path)!;
 }
@@ -150,19 +150,12 @@ describe("upstream v5.0.0 audit ledger", () => {
       "renderer-manual-guidance", "renderer-manual-settings", "renderer-mode-provisioning", "renderer-onboarding-validation",
       "setup-managed-reentry", "setup-preflight", "setup-profile-checkpoint", "setup-profile-migration", "setup-runtime-change", "supervisor-boot-ownership", "tunnel-command-contract", "tunnel-key-isolation",
     ]);
-    const sources = new Map<string, string>();
+    const sources = historicalSources(ledger.upstream.commit, review.obligations.map(item => item.source.path));
     for (const item of review.obligations) {
       expect(item.classification).toBe("adapted");
       expect(item.behavior.length).toBeGreaterThan(0);
       expect(item.interface.length).toBeGreaterThan(0);
       expect(ledger.entries.some(entry => entry.path === item.source.path)).toBeTrue();
-      if (!sources.has(item.source.path)) {
-        const source = spawnSync("git", ["show", `${ledger.upstream.commit}:${item.source.path}`], {
-          cwd: repositoryRoot, encoding: "utf8",
-        });
-        expect(source.status).toBe(0);
-        sources.set(item.source.path, source.stdout);
-      }
       expect(item.source.anchor.length).toBeGreaterThan(0);
       expect(sources.get(item.source.path)).toContain(`${item.source.symbol}(`);
       expect(sources.get(item.source.path)).toContain(item.source.anchor);
