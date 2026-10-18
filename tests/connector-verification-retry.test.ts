@@ -18,7 +18,7 @@ test.each([true, false])("launcher retry renews and revokes both broker leases (
   const tokens: string[] = [];
   const registered: string[] = [];
   const register = RemoteTurnBroker.prototype.register;
-  const registration = spyOn(RemoteTurnBroker.prototype, "register").mockImplementation(async function (...args) {
+  const registration = spyOn(RemoteTurnBroker.prototype, "register").mockImplementation(async function (this: RemoteTurnBroker, ...args) {
     const token = await register.apply(this, args);
     registered.push(token);
     return token;
