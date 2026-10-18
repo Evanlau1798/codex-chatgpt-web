@@ -6,7 +6,7 @@ import * as accountSession from "../src/chatgpt-session";
 import { defaultBrokerEndpoint } from "../src/config";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import { recordConnectorContractProbeQuery } from "../src/adapters/chatgpt-web/connector-contract";
-import { callTurnBroker, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
+import { callTurnBroker, RemoteTurnBroker, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 
 test.each([true, false])("launcher retry renews and revokes both broker leases (success=%s)", async success => {
   const root = mkdtempSync(join(tmpdir(), "cgw-connector-retry-"));
@@ -16,6 +16,13 @@ test.each([true, false])("launcher retry renews and revokes both broker leases (
   const account = spyOn(accountSession, "detectChatGptAccountCapabilities")
     .mockResolvedValue({ solAvailable: true, proAvailable: true, extraHighAvailable: true });
   const tokens: string[] = [];
+  const registered: string[] = [];
+  const register = RemoteTurnBroker.prototype.register;
+  const registration = spyOn(RemoteTurnBroker.prototype, "register").mockImplementation(async function (...args) {
+    const token = await register.apply(this, args);
+    registered.push(token);
+    return token;
+  });
   const traces: string[] = [];
   let cleared = false;
   const page = { evaluate: async () => ({
@@ -33,8 +40,12 @@ test.each([true, false])("launcher retry renews and revokes both broker leases (
       selectConnector: async () => {},
       runBrowserTurn: async (turn: any) => {
         const prompt = (await turn.prepare()).text;
-        const args = JSON.parse(/\{"turn_token"[^}]+\}/.exec(prompt)![0]);
-        tokens.push(args.turn_token);
+        const args = JSON.parse(/\{"query"[^}]+\}/.exec(prompt)![0]);
+        const token = registered.at(-1)!;
+        expect(token).toBeDefined();
+        expect(prompt).toContain("current turn_token from codex_native_turn_binding");
+        expect(prompt).not.toContain(token);
+        tokens.push(token);
         traces.push(turn.traceId);
         if (tokens.length === 2) {
           expect(tokens[1]).not.toBe(tokens[0]);
@@ -43,7 +54,7 @@ test.each([true, false])("launcher retry renews and revokes both broker leases (
           if (success) recordConnectorContractProbeQuery(args.query, "native");
         }
         const claimed = await callTurnBroker<{ environment: { tools: unknown[]; writableRoots: string[] } }>(
-          socket, { method: "claim", token: args.turn_token, contract: "native" },
+          socket, { method: "claim", token, contract: "native" },
         );
         expect(claimed.environment.tools).toEqual([]);
         expect(claimed.environment.writableRoots).toEqual([]);
@@ -63,6 +74,7 @@ test.each([true, false])("launcher retry renews and revokes both broker leases (
     expect(checkpoints.map(value => value.checkpoint)).toContain("connector-contract-retry");
     for (const token of tokens) expect(JSON.stringify(checkpoints)).not.toContain(token);
   } finally {
+    registration.mockRestore();
     account.mockRestore();
     await broker.close();
     rmSync(root, { recursive: true, force: true });
