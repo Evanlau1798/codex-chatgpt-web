@@ -70,7 +70,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("acknowledged multipart histo
           if (when === "during-rebind") {
             await render(history(true) + group("fallback", undefined, "Answer", false));
             binding = await worker.reconcileAssistantTurnBinding(page, baseline, binding);
-            expect(binding.identity).toBe("group:assistant:fallback");
+            expect(binding.identity).toBe("group:assistant:final"); // Assistant-only rekeys stay provisional until the accepted user returns.
             await render(history(true) + group("final", prompt, "Answer"));
             binding = await worker.reconcileAssistantTurnBinding(page, baseline, binding);
             expect(binding.identity).toBe("group:assistant:final");

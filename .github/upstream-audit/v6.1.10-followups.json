@@ -468,5 +468,17 @@
     "currentSha256": "d1ccd6ca46cb811eedc16f1eacb873d489c938dcf6f338eb6a77210933cbb3b9",
     "reason": "Await the two rejected Promises before synchronous Error/message assertions to avoid Bun/Chromium async-matcher stalls; retain every scenario, timeout and rejection condition. Drive production reconciliation against rewritten rich-text read-only DOM; require one exact submission identity and reject foreign, missing, duplicate, extended or competing user turns. Cover assistant-only remounts before a matching or foreign user bubble appears, while preserving accepted-user rekeys. Allow literal non-authorizing identity examples in user context while requiring one complete current nonce; preserve duplicate-current, missing, foreign-only, prefix and Native token rejection.",
     "evidence": {"path":".github/upstream-audit/evidence/56ae959fc90e09781e6ff86a3cfba0b255e09ef71f43b3e98e66f4011832a541.tar.gz","sha256":"56ae959fc90e09781e6ff86a3cfba0b255e09ef71f43b3e98e66f4011832a541","bytes":24372}
+  },
+  {
+    "path": "tests/multipart-history.test.ts",
+    "baseCommit": "4cba70533b07e99d91c4e81c522705dd564c415e",
+    "baselineSha256": "0d6d31b0e4e60b378d0e04e50c0063587138d6b95be37940c11e2eca9382c214",
+    "currentSha256": "d78f78e78fa2e33c2ddf3ba0b61597932eaf5e4e4a2dafa4f3fdce9a8ad03d65",
+    "reason": "Align the existing multipart remount expectation with the independently approved ownership boundary: an assistant-only replacement stays provisional until the accepted user returns; preserve all stage reconciliation and foreign-history rejection assertions.",
+    "evidence": {
+      "path": ".github/upstream-audit/evidence/fb519298c845f7bbe419457ba657edbc4dc539bd6cefae51e82ef8d0a2fef57a.tar.gz",
+      "sha256": "fb519298c845f7bbe419457ba657edbc4dc539bd6cefae51e82ef8d0a2fef57a",
+      "bytes": 16354
+    }
   }
 ]
