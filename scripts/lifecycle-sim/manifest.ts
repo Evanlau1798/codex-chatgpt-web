@@ -53,6 +53,7 @@ export const sharedLifecycleTests = [
   "tests/prompt-preflight-reuse.test.ts",
   "tests/prompt-readback-latency.test.ts",
   "tests/mcp-observation.test.ts",
+  "tests/native-correlation-errors.test.ts",
   "tests/bridge-platform.test.ts",
   "tests/enhanced-compaction-settlement.test.ts",
   "tests/browser-worker-retained-connector.test.ts",

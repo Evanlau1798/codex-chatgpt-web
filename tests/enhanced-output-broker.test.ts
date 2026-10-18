@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { callTurnBroker, RemoteTurnBroker, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
 import { submitNativeOutputControl } from "../src/adapters/chatgpt-web/native-output-control";
+import { scopeHash } from "../src/adapters/chatgpt-web/mcp-request-diagnostics";
 
 const environment = (root: string) => ({
   cwd: root, roots: [root], writableRoots: [root],
@@ -70,8 +71,8 @@ test("turn output is ordered and final delivery is fail closed", async () => {
     assert.deepEqual(await nextAttempt, { sequence: 4, kind: "final", text: "Retried final." });
     const receipts = log.mock.calls.flat().filter(line => String(line).includes("output accepted"));
     expect(receipts).toHaveLength(5);
-    expect(receipts).toContain("[chatgpt-web] broker trace=output-test output accepted kind=final sequence=3 chars=5 duplicate=false");
-    expect(receipts).toContain("[chatgpt-web] broker trace=output-test output accepted kind=final sequence=3 chars=5 duplicate=true");
+    expect(receipts).toContain("[chatgpt-web] broker trace=output-test output accepted kind=final sequence=3 chars=5 duplicate=false referenceHash=" + scopeHash(token));
+    expect(receipts).toContain("[chatgpt-web] broker trace=output-test output accepted kind=final sequence=3 chars=5 duplicate=true referenceHash=" + scopeHash(token));
     expect(String(receipts)).toContain("kind=commentary sequence=1");
     expect(String(receipts)).toContain("kind=reasoning sequence=2");
     for (const privateValue of [token, "Checking the repository.", "The shared boundary is the smallest fix.", "Done.", "Retried final."]) {

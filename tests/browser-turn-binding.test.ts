@@ -155,7 +155,9 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("an exchange rekeys only with
         expect(rebound.identity).toBe(`group:assistant:${scenario === "same-key" ? "optimistic" : "persisted"}`);
         expect(await rebound.locator.count()).toBe(1);
       } else {
-        await expect(result).rejects.toThrow();
+        // Await Playwright I/O before Bun assertions to avoid Windows event-loop re-entry.
+        const error = await result.then(() => undefined, (error: Error) => error);
+        expect(error).toBeInstanceOf(Error);
       }
       await page.close();
     }
@@ -334,6 +336,8 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("CodeMirror language invalida
       gap.style.height = "200px";
       editor.appendChild(gap);
     });
-    await expect(observe()).rejects.toThrow("one complete set of code lines");
+    const error = await observe().then(() => undefined, (error: Error) => error);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain("one complete set of code lines");
   } finally { await browser.close(); }
 });

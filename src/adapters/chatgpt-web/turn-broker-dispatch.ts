@@ -8,6 +8,7 @@ import {
 import { dispatchExternalOwnerRequest, type TurnBrokerOwner } from "./turn-broker-owner";
 import { scheduleToolWaiters } from "./turn-broker-queue";
 import { subagentModelObservation } from "./mcp-observation";
+import { scopeHash } from "./mcp-request-diagnostics";
 import {
   assertSafeHarnessRunning,
   waitForSafeSent,
@@ -107,14 +108,19 @@ export async function dispatchTurnBrokerRequest(
       submitted = submitTurnOutput(channel, request.outputKind!, request.outputText, request.nextMessagePrediction);
     } catch (error) {
       const kind = ["commentary", "reasoning", "final"].includes(request.outputKind!) ? request.outputKind : "invalid";
-      console.warn(`[chatgpt-web] broker trace=${channel.traceId} output rejected kind=${kind} chars=${request.outputText.length}`
+      try {
+        console.warn(`[chatgpt-web] broker trace=${channel.traceId} output rejected kind=${kind} chars=${request.outputText.length}`
         + ` activeActivities=${channel.activities.size} pendingTools=${channel.invocations.size} finalizationOnly=${channel.finalizationOnly}`
         + ` outputSealed=${channel.outputSealed} finalAccepted=${channel.outputFinalSequence !== undefined}`
-        + ` contextIncomplete=${state.contexts.hasIncomplete(request.token)}`);
+        + ` contextIncomplete=${state.contexts.hasIncomplete(request.token)} referenceHash=${scopeHash(request.token)}`);
+      } catch { /* Preserve the original validation failure. */ }
       throw error;
     }
-    console.info(`[chatgpt-web] broker trace=${channel.traceId} output accepted kind=${submitted.event.kind}`
-      + ` sequence=${submitted.event.sequence} chars=${submitted.event.text.length} duplicate=${submitted.duplicate}`);
+    try {
+      console.info(`[chatgpt-web] broker trace=${channel.traceId} output accepted kind=${submitted.event.kind}`
+      + ` sequence=${submitted.event.sequence} chars=${submitted.event.text.length} duplicate=${submitted.duplicate}`
+      + ` referenceHash=${scopeHash(request.token)}`);
+    } catch { /* An accepted output must keep its acknowledgement. */ }
     return { accepted: true, sequence: submitted.event.sequence, duplicate: submitted.duplicate };
   }
   if (request.method === "read_context") {
@@ -159,10 +165,13 @@ async function claim(request: BrokerRequest, signal: AbortSignal, state: Dispatc
   const channel = state.channels.get(token);
   let activeChannel = channel && !channel.completionCommitted ? channel : undefined;
   const retiredTurn = channel?.completionCommitted ? channel.traceId : state.retiredTokens.get(token);
-  console.error(
+  try {
+    console.error(
     `[chatgpt-web] broker claim received (tokenChars=${token.length}, valid=${Boolean(activeChannel)}`
-    + `${activeChannel ? "" : `, retiredTurn=${retiredTurn ?? "unknown"}`})`,
+    + `${activeChannel ? "" : `, retiredTurn=${retiredTurn ?? "unknown"}`})`
+    + ` referenceHash=${token.length <= 256 ? scopeHash(token) : "oversized"}${activeChannel ? ` trace=${activeChannel.traceId}` : ""}`,
   );
+  } catch { /* Diagnostics cannot reject a valid claim. */ }
   if (!activeChannel) {
     throw new Error(retiredTurn !== undefined
       ? `This turn_token was issued for ${retiredTurnLabel(retiredTurn)}, which has already finished.`
