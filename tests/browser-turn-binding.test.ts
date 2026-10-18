@@ -259,6 +259,74 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("rich-text rebind requires th
   } finally { await browser.close(); }
 }, 20_000);
 
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("read-only remounts require their non-authorizing submission identity after renderer rewriting", async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const identity = "codexsubmission:0123456789abcdef0123456789abcdef";
+  const foreign = "codexsubmission:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+  worker.config = { appName: "Codex Native2" };
+  try {
+    for (const scenario of ["matching", "literal-other", "foreign", "missing", "duplicate", "prefix", "competing"] as const) {
+      const page = await browser.newPage();
+      const prompt = 'Literal `code` <context> C:\\repo\\file\n' + (scenario === "literal-other" ? `Example: ${foreign}\n` : "") + identity;
+      await page.setContent('<main></main>');
+      let baseline = await worker.captureSubmissionBaseline(page, prompt);
+      baseline.submissionIdentity = identity;
+      baseline = await worker.captureSubmissionBaseline(page, prompt, baseline);
+      expect(baseline.submissionIdentity).toBe(identity);
+      await page.locator('main').evaluate(e => { e.innerHTML = '<div data-turn-key="pending"><span hidden data-chatgpt-agent-turn-start></span></div>'; });
+      const binding = await worker.waitForNewAssistantTurn(page, baseline, Date.now() + 2_000);
+      const displayed = scenario === "foreign" ? foreign : scenario === "missing" ? ""
+        : scenario === "duplicate" ? identity + " " + identity : scenario === "prefix" ? identity + "extra"
+        : scenario === "literal-other" ? foreign + " " + identity : identity;
+      await page.locator('main').evaluate((e, { displayed, competing }) => {
+        e.innerHTML = '<div data-turn-key="persisted"><div data-user-message-bubble><div data-search-result-target>'
+          + '<div data-markdown-text-tone="user-message" class="rich-text-user-turn"><p>'
+          + '<span>Literal \\`code\\` \\&lt;context&gt; C:\\\\repo\\\\file</span><br><span>' + displayed + '</span></p></div>'
+          + '</div></div><span hidden data-chatgpt-agent-turn-start></span></div>'
+          + (competing ? '<div data-turn-key="other"><div data-user-message-bubble>Another task</div></div>' : '');
+      }, { displayed, competing: scenario === "competing" });
+      const result = await worker.reconcileAssistantTurnBinding(page, baseline, binding)
+        .then((value: unknown) => ({ value }), (error: Error) => ({ error }));
+      if (scenario === "matching" || scenario === "literal-other") expect(result.value).toMatchObject({ identity: "group:assistant:persisted" });
+      else expect(result.error).toBeInstanceOf(Error);
+      await page.close();
+    }
+  } finally { await browser.close(); }
+}, 20_000);
+
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("assistant-only rekeys remain provisional until submission ownership is proven", async () => {
+  const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+  const identity = "codexsubmission:0123456789abcdef0123456789abcdef";
+  for (const scenario of ["matching", "foreign", "accepted-user"] as const) {
+    const page = await browser.newPage();
+    try {
+      await page.setContent('<main></main>');
+      const baseline = await worker.captureSubmissionBaseline(page, "Exact prompt\n" + identity);
+      baseline.submissionIdentity = identity;
+      if (scenario === "accepted-user") baseline.acceptedUserIdentity = "group:user:owned";
+      await page.locator("main").evaluate(e => { e.innerHTML = '<div data-turn-key="pending"><span hidden data-chatgpt-agent-turn-start></span></div>'; });
+      const binding = await worker.waitForNewAssistantTurn(page, baseline, Date.now() + 2_000);
+      await page.locator("main").evaluate(e => { e.innerHTML = '<div data-turn-key="owned"><span hidden data-chatgpt-agent-turn-start></span></div>'; });
+      const provisional = await worker.reconcileAssistantTurnBinding(page, baseline, binding);
+      if (scenario === "accepted-user") {
+        expect(provisional.identity).toBe("group:assistant:owned");
+        continue;
+      }
+      expect(provisional).toBe(binding);
+      const token = scenario === "matching" ? identity : "codexsubmission:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+      await page.locator("main").evaluate((e, value) => {
+        e.innerHTML = '<div data-turn-key="owned"><div data-user-message-bubble><div data-search-result-target style="white-space:pre-wrap">'
+          + value + '</div></div><span hidden data-chatgpt-agent-turn-start></span></div>';
+      }, token);
+      const result = await worker.reconcileAssistantTurnBinding(page, baseline, provisional)
+        .then((value: unknown) => ({ value }), (error: Error) => ({ error }));
+      if (scenario === "matching") expect(result.value).toMatchObject({ identity: "group:assistant:owned" });
+      else expect(result.error).toBeInstanceOf(Error);
+    } finally { await page.close(); }
+  }
+}, 20_000);
+
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("binds captured Activity before an answer exists and recognizes uploaded native-button tiles", async () => {
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: request =>
     request.method === "POST" ? new Response('{"event":"file.processing.completed","file_id":"fixture-file"}\n',

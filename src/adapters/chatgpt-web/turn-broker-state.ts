@@ -1,4 +1,5 @@
 import type { ChatGptTurnEnvironment } from "./environment";
+import type { ChatGptToolEvidenceGuard } from "./tool-evidence-guard";
 import { estimateTokens } from "../../lib/token-estimate";
 import type { AgentWait } from "./turn-broker-agent-wait";
 import type { BrokerRetirementFailure } from "./turn-broker-protocol";
@@ -53,6 +54,7 @@ export interface SafeTurnControl {
 
 export interface TurnChannel {
   traceId: string;
+  toolEvidence?: ChatGptToolEvidenceGuard;
   externalOwner: boolean;
   readonly outputEnabled: boolean;
   readonly predictionEnabled?: boolean;

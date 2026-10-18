@@ -2,9 +2,9 @@
   {
     "path": "src/adapters/chatgpt-web/browser-worker.ts",
     "baseCommit": "8e2833d3b7ccbf42ba9cda6d8f71d8c173493d20", "baselineSha256": "4b81813ad11f845241b51456c9bbb1583dcb341f8b947b22de7261a68d3e8a83",
-    "currentSha256": "65190cce0886b9ddd686f4d2b9d457f05d5754f6c9e22256f69b8d462a2f3423",
-    "reason": "Independent review P2: restore successful worker completion status and cover real-worker retention; fixtures now terminate captures and retain privacy assertions. Apply existing owned successful response-stream liveness to Native tunnel observation and all recovery guards; retain hard deadline, CAS, atomic final and bounded network diagnostics. Add bounded monotonic worker heartbeat timing and duration-only warnings without modifying output, deadlines or recovery. Support observed semantic add-context/plugin navigation UI without focus-dismissal; preserve exact connector identity, duplicates and mention keyboard behavior. After guarded recovery Send, reopen unfinished Native work through the existing exact-revision cancellation fence; do not force an early final.",
-    "evidence": {"path":".github/upstream-audit/evidence/3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d.tar.gz","sha256":"3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d","bytes":113486}
+    "currentSha256": "14da37a3ed4b7b5452f433274cfc447ef19deacef9bb83557e9963a4df41c5c1",
+    "reason": "Independent review P2: restore successful worker completion status and cover real-worker retention; fixtures now terminate captures and retain privacy assertions. Apply existing owned successful response-stream liveness to Native tunnel observation and all recovery guards; retain hard deadline, CAS, atomic final and bounded network diagnostics. Add bounded monotonic worker heartbeat timing and duration-only warnings without modifying output, deadlines or recovery. Support observed semantic add-context/plugin navigation UI without focus-dismissal; preserve exact connector identity, duplicates and mention keyboard behavior. After guarded recovery Send, reopen unfinished Native work through the existing exact-revision cancellation fence; do not force an early final. Bind non-authorizing per-submission identity only for ordinary browser-only turns so rich-text remounts cannot cause false foreign-turn rejection; Native and compaction transport remain unchanged. Keep assistant-only rekeys provisional until accepted-user ownership is proven, and exclude tokenless Native connector verification from the read-only suffix.",
+    "evidence": {"path":".github/upstream-audit/evidence/b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e.tar.gz","sha256":"b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e","bytes":112575}
   },
   {
     "path": "tests/browser-diagnostics.test.ts",
@@ -254,9 +254,9 @@
   {
     "path": "src/adapters/chatgpt-web/turn-broker-output.ts",
     "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "19768048909a09a304db6323cc93cd74f9f71b0758384bf1cc200e10f54a3e17",
-    "currentSha256": "14a2ab8684e5e63f89c7a965fb12454b885700c527e9a105477e0cd325a0ea94",
-    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
-    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+    "currentSha256": "9fde2b841e936f1b9353beb2c31d538a91678280553e2735b7153a1f35a6b344",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Apply the existing evidence policy before accepting or holding Native commentary/final, so corrections stay in the same Web response and accepted final remains atomic.",
+    "evidence": {"path":".github/upstream-audit/evidence/b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e.tar.gz","sha256":"b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e","bytes":112575}
   },
   {
     "path": "src/adapters/chatgpt-web/turn-broker-owner.ts",
@@ -275,16 +275,16 @@
   {
     "path": "src/adapters/chatgpt-web/turn-broker-state.ts",
     "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "d19ec00aca8cf499e1b3352d7edb529728a415de904477fc21ae614bd32a6ff0",
-    "currentSha256": "e873805abab100b2dd471f5ef2449080ce394b6bdab661f5841560c841fb5034",
-    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
-    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+    "currentSha256": "c486f9a43af4aec805de821772c3b9f564709626a5d41f4b53a04c441de6736c",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Keep bounded Native output evidence local to each broker channel lifecycle.",
+    "evidence": {"path":".github/upstream-audit/evidence/b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e.tar.gz","sha256":"b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e","bytes":112575}
   },
   {
     "path": "src/adapters/chatgpt-web/turn-broker.ts",
     "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "d1b59b6a5779130700438cd56a45617f54dc38ba803bdd96009eafaf7cf6a68e",
-    "currentSha256": "9d9c472027058adde480646d087519f362318853ae68233915739e058603e268",
-    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
-    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+    "currentSha256": "c42dec8f6e81304c2031b73ca7f6a8676f2ec7af1709f5140bcff416e52530dd",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Observe only actual isError=true Native work results in turn-local evidence before returning the unchanged result.",
+    "evidence": {"path":".github/upstream-audit/evidence/b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e.tar.gz","sha256":"b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e","bytes":112575}
   },
   {
     "path": "src/cli-help.ts",
@@ -317,9 +317,9 @@
   {
     "path": "tests/enhanced-output-broker.test.ts",
     "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "c75e25cc6b1230bce719ce4c15a4e9941df5df920594e3dd469fe3361e8a6768",
-    "currentSha256": "5be5f2f0baa3ad136d87c9b45b3df7087c15e9134b40e4b1ae7659fc5f2fda80",
-    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Cover delivered-work recovery epochs and diagnostic metadata while retaining exactly-once atomic final and revision-fence assertions.",
-    "evidence": {"path":".github/upstream-audit/evidence/3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d.tar.gz","sha256":"3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d","bytes":113486}
+    "currentSha256": "26c7530dd362f1f313dcfd7584ff173ade4e553261493c93c97e6d102248abc7",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Cover delivered-work recovery epochs and diagnostic metadata while retaining exactly-once atomic final and revision-fence assertions. Drive real broker/control IPC to prove pre-ack rejection, unchanged revisions, continued tool use, exactly-once corrected final, real-error isolation, strict error flag and recovery final admission.",
+    "evidence": {"path":".github/upstream-audit/evidence/b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e.tar.gz","sha256":"b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e","bytes":112575}
   },
   {
     "path": "tests/enhanced-output-tunnel.test.ts",
@@ -465,12 +465,8 @@
     "path": "tests/browser-turn-binding.test.ts",
     "baseCommit": "1c96c3c9c7d70f7895632c841c45b6351248e468",
     "baselineSha256": "8c116642011702acb563d16df9cf919cad7b6586bde1903f8ab6ec71bf187919",
-    "currentSha256": "66ede6850385328ac036c4c415b11ac8e91ace8e5a0b914a92d761772ad72a97",
-    "reason": "Await the two rejected Promises before synchronous Error/message assertions to avoid Bun/Chromium async-matcher stalls; retain every scenario, timeout and rejection condition.",
-    "evidence": {
-      "path": ".github/upstream-audit/evidence/3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d.tar.gz",
-      "sha256": "3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d",
-      "bytes": 113486
-    }
+    "currentSha256": "d1ccd6ca46cb811eedc16f1eacb873d489c938dcf6f338eb6a77210933cbb3b9",
+    "reason": "Await the two rejected Promises before synchronous Error/message assertions to avoid Bun/Chromium async-matcher stalls; retain every scenario, timeout and rejection condition. Drive production reconciliation against rewritten rich-text read-only DOM; require one exact submission identity and reject foreign, missing, duplicate, extended or competing user turns. Cover assistant-only remounts before a matching or foreign user bubble appears, while preserving accepted-user rekeys. Allow literal non-authorizing identity examples in user context while requiring one complete current nonce; preserve duplicate-current, missing, foreign-only, prefix and Native token rejection.",
+    "evidence": {"path":".github/upstream-audit/evidence/56ae959fc90e09781e6ff86a3cfba0b255e09ef71f43b3e98e66f4011832a541.tar.gz","sha256":"56ae959fc90e09781e6ff86a3cfba0b255e09ef71f43b3e98e66f4011832a541","bytes":24372}
   }
 ]

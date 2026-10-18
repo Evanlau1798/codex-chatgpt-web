@@ -51,6 +51,13 @@ export class ChatGptToolEvidenceGuard {
 
   recoveryErrorEvidence() { return this.returnedErrors.slice(-4).map(value => ({ ...value })); }
 
+  assertSupportedOutput(text: string): void {
+    if (!hasUnsupportedNativeToolCauseClaim(text) || this.hasSupportingErrorEvidence()) return;
+    throw new Error("No returned Native tool error supports this blocking-cause claim. This output was not accepted. "
+      + "Use observable tool results; if a call produced no Native result, report that without assigning an unreported cause. "
+      + "Continue unfinished work and submit corrected output in this same response.");
+  }
+
   shouldEmitCommentary(text: string): boolean {
     if (!hasUnsupportedNativeToolCauseClaim(text) || this.hasSupportingErrorEvidence()) return true;
     this.unsupportedCommentary = true;

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { createDocument } from "@mixmark-io/domino";
 import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_USER_TURN_SELECTOR } from "../src/chatgpt-session";
+import { bindChatGptSubmissionIdentity, chatGptSubmissionIdentityMatches } from "../src/adapters/chatgpt-web/submission-identity";
 import {
   bindChatGptAssistantTurn,
   chatGptAssistantTurnChanged,
@@ -25,6 +26,55 @@ function surface(keys: string[]) {
     users: () => readChatGptTurnIdentities(page.locator(CHATGPT_USER_TURN_SELECTOR)),
   };
 }
+
+test("read-only submission identity preserves literal context, release ownership and transport accounting", () => {
+  const text = 'Literal `code` <context> C:\\repo\\file\n  Keep spaces.';
+  const release = () => {};
+  const original = { text, images: [], modelInputText: text, inlineChars: text.length,
+    multipart: { parts: ['{"record":1}', '{"record":2}'], commit: "Execute now" }, release };
+  const { prepared, identity } = bindChatGptSubmissionIdentity(original);
+  expect(identity).toMatch(/^codexsubmission:[a-f0-9]{32}$/);
+  expect(prepared.text).toBe(text + "\n" + identity);
+  expect(prepared.modelInputText).toBe(prepared.text);
+  expect(prepared.inlineChars).toBe(prepared.text.length);
+  expect(prepared.multipart.commit).toBe("Execute now\n" + identity);
+  expect(prepared.multipart.parts).toBe(original.multipart.parts);
+  expect(prepared.release).toBe(release);
+  expect(original.text).toBe(text);
+  expect(original.multipart.commit).toBe("Execute now");
+  expect(bindChatGptSubmissionIdentity(original).identity).not.toBe(identity);
+  expect("turnToken" in prepared).toBeFalse();
+});
+
+test("Native submissions retain their existing capability and prompt without another identity", () => {
+  const original = { text: "Bound prompt", images: [], turnToken: "turn_0123456789abcdef0123456789abcdef" };
+  const result = bindChatGptSubmissionIdentity(original);
+  expect(result.prepared).toBe(original);
+  expect(result.identity).toBeUndefined();
+});
+
+test("literal context may contain other non-authorizing identity examples", () => {
+  const own = "codexsubmission:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const example = "codexsubmission:0123456789abcdef0123456789abcdef";
+  const node = (textContent: string) => ({ textContent }) as Element;
+  const literal = `Review this source example: "${example}".\n`;
+  expect(chatGptSubmissionIdentityMatches(node(literal + own), own)).toBeTrue();
+  expect(chatGptSubmissionIdentityMatches(node(literal), own)).toBeFalse();
+  expect(chatGptSubmissionIdentityMatches(node(literal + own + " " + own), own)).toBeFalse();
+  const native = "turn_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  expect(chatGptSubmissionIdentityMatches(node(native + " turn_0123456789abcdef0123456789abcdef"), native)).toBeFalse();
+});
+
+test("submission identity proof rejects ambiguous and incomplete identities without granting tools", () => {
+  for (const identity of ["turn_0123456789abcdef0123456789abcdef", "codexsubmission:0123456789abcdef0123456789abcdef"]) {
+    const node = (textContent: string) => ({ textContent }) as Element;
+    expect(chatGptSubmissionIdentityMatches(node("Rewritten JSON/link labels. " + identity), identity)).toBeTrue();
+    for (const text of ["", identity + "extra", "prefix" + identity, identity + "_tail", "prefix_" + identity, identity + " " + identity]) {
+      expect(chatGptSubmissionIdentityMatches(node(text), identity)).toBeFalse();
+    }
+    expect(chatGptSubmissionIdentityMatches(node(identity), "arbitrary identity")).toBeFalse();
+  }
+});
 
 test("restored history before the retained anchor does not interrupt an accepted tool response", async () => {
   const initial = await surface(["visible"]).assistant();

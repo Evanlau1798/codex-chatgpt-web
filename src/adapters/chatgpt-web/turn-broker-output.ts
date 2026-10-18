@@ -1,5 +1,6 @@
 import type { BrokerTurnOutputEvent, BrokerTurnOutputKind } from "./turn-broker-protocol";
 import type { TurnChannel, TurnOutputWaiter } from "./turn-broker-state";
+import { ChatGptToolEvidenceGuard } from "./tool-evidence-guard";
 
 const MAX_OUTPUT_EVENT_CHARS = 1_000_000;
 const MAX_OUTPUT_TOTAL_CHARS = 5_000_000;
@@ -40,6 +41,7 @@ export function submitTurnOutput(
       || channel.outputChars + text.length + (nextMessagePrediction?.length ?? 0) > MAX_OUTPUT_TOTAL_CHARS) {
       throw new Error("Codex Native output exceeds the per-turn limit");
     }
+    (channel.toolEvidence ??= new ChatGptToolEvidenceGuard()).assertSupportedOutput(text);
     const event = { sequence: channel.outputEvents.length + 1, kind, text,
       ...(nextMessagePrediction === undefined ? {} : { nextMessagePrediction }) } satisfies BrokerTurnOutputEvent;
     channel.finalizationPendingOutput = event;
@@ -60,6 +62,7 @@ export function submitTurnOutput(
     || channel.outputChars + text.length + (nextMessagePrediction?.length ?? 0) > MAX_OUTPUT_TOTAL_CHARS) {
     throw new Error("Codex Native output exceeds the per-turn limit");
   }
+  if (kind !== "reasoning") (channel.toolEvidence ??= new ChatGptToolEvidenceGuard()).assertSupportedOutput(text);
   const event = { sequence: channel.outputEvents.length + 1, kind, text,
     ...(nextMessagePrediction === undefined ? {} : { nextMessagePrediction }) } satisfies BrokerTurnOutputEvent;
   publishTurnOutput(channel, event);

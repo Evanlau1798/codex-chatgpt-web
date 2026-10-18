@@ -5,10 +5,32 @@ import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker
 import { TurnContextStore } from "../src/adapters/chatgpt-web/turn-context-store";
 import { CHATGPT_WEB_LUNA_MODEL_ID, CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { estimateCompiledChatGptWebInputTokens } from "../src/adapters/chatgpt-web/input-tokens";
+import { bindChatGptSubmissionIdentity } from "../src/adapters/chatgpt-web/submission-identity";
+
+const UUID = "01234567-89ab-4cde-8f01-23456789abcd";
+const IDENTITY_SUFFIX = "\ncodexsubmission:" + UUID.replaceAll("-", "");
+
+test("Native connector verification keeps its tokenless prompt unchanged", async () => {
+  const estimate = spyOn(tokenEstimate, "estimateTokens");
+  const log = spyOn(console, "error").mockImplementation(() => {});
+  const stop = new Error("Stop before browser access");
+  const worker: any = Object.create(ChatGptBrowserWorker.prototype);
+  worker.config = {};
+  worker.runStage = () => { throw stop; };
+  try {
+    const result = await worker.runBrowserTurn({ traceId: "connector-verification", modelId: CHATGPT_WEB_MODEL_ID,
+      reasoning: "medium", capabilities: { solAvailable: true, proAvailable: true, localToolsEnabled: false },
+      nativeConnector: true, prepare: async () => ({ text: "Exact connector probe", images: [], release() {} }),
+    }).catch((error: unknown) => error);
+    expect(result).toBe(stop);
+    expect(estimate.mock.calls.filter(([text]) => text === "Exact connector probe")).toHaveLength(1);
+  } finally { estimate.mockRestore(); log.mockRestore(); }
+});
 
 test.each([undefined, "visible prompt", "canonical history"])("worker reuses only identical inline message estimates (canonical=%s)", async canonical => {
   const estimate = spyOn(tokenEstimate, "estimateTokens");
   const log = spyOn(console, "error").mockImplementation(() => {});
+  const uuid = spyOn(crypto, "randomUUID").mockReturnValue(UUID);
   let released = false;
   const worker: any = Object.create(ChatGptBrowserWorker.prototype);
   worker.config = {};
@@ -25,26 +47,27 @@ test.each([undefined, "visible prompt", "canonical history"])("worker reuses onl
     }).catch((error: unknown) => error);
     expect(outcome).toBe(stop);
     expect(released).toBeTrue();
-    expect(estimate.mock.calls.filter(([text]) => text === "visible prompt")).toHaveLength(1);
-    expect(estimate.mock.calls.filter(([text]) => text === "canonical history")).toHaveLength(canonical === "canonical history" ? 1 : 0);
-  } finally { estimate.mockRestore(); log.mockRestore(); }
+    expect(estimate.mock.calls.filter(([text]) => text === "visible prompt" + IDENTITY_SUFFIX)).toHaveLength(1);
+    expect(estimate.mock.calls.filter(([text]) => text === "canonical history" + IDENTITY_SUFFIX)).toHaveLength(canonical === "canonical history" ? 1 : 0);
+  } finally { uuid.mockRestore(); estimate.mockRestore(); log.mockRestore(); }
 });
 
 test("shared inline count still includes full skill attachment tokens at the Luna input boundary", async () => {
   const text = "skill instructions ".repeat(15_000);
   const digest = crypto.createHash("sha256").update(text).digest("hex").slice(0, 16);
   const prepared = { text: "task", images: [], skillFiles: [{ name: `fixture--${digest}.txt`, text }], release() {} };
-  const expected = estimateCompiledChatGptWebInputTokens(prepared, CHATGPT_WEB_LUNA_MODEL_ID);
-  expect(expected).toBeGreaterThan(28_000);
+  const uuid = spyOn(crypto, "randomUUID").mockReturnValue(UUID);
   const log = spyOn(console, "error").mockImplementation(() => {});
   const worker: any = Object.create(ChatGptBrowserWorker.prototype);
   worker.config = {};
   worker.runStage = () => { throw new Error("Must reject before browser access"); };
   try {
+    const expected = estimateCompiledChatGptWebInputTokens(bindChatGptSubmissionIdentity(prepared).prepared, CHATGPT_WEB_LUNA_MODEL_ID);
+    expect(expected).toBeGreaterThan(28_000);
     await expect(worker.runBrowserTurn({ traceId: "skill-budget", modelId: CHATGPT_WEB_LUNA_MODEL_ID,
       reasoning: "medium", capabilities: { solAvailable: false, proAvailable: false }, prepare: async () => prepared,
     })).rejects.toThrow(`requires ${expected.toLocaleString("en-US")} estimated input tokens`);
-  } finally { log.mockRestore(); }
+  } finally { uuid.mockRestore(); log.mockRestore(); }
 });
 
 test("immutable archive digest is computed once across pages and replays, with order and revocation intact", () => {

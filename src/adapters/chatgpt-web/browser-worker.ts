@@ -9,6 +9,7 @@ import { join, resolve } from "node:path";
 import { observeChatGptAttachmentUploads } from "./attachment-upload";
 import { validateSkillFiles } from "./skill-attachments";
 import { readChatGptUserMessage } from "./browser-user-message";
+import { bindChatGptSubmissionIdentity, chatGptSubmissionIdentityMatches } from "./submission-identity";
 import { chromium, type Browser, type BrowserContext, type Locator, type Page, type Request, type Response } from "playwright-core";
 import { detectChatGptLimitsPlan, prepareChatGptLimitsSubmission, supportsChatGptUsageTracking, readChatGptUsageAccount, readChatGptUsageModel, type ChatGptUsageModel } from "./limits";
 import {
@@ -937,6 +938,7 @@ interface ChatGptSubmissionBaseline {
   connectorName?: string;
   connectorMention?: { name: string; href: string };
   turnToken?: string;
+  submissionIdentity?: string;
   acceptedUserIdentity?: string;
   acknowledgedStages?: readonly ChatGptAcknowledgedMultipartStage[];
 }
@@ -2462,6 +2464,11 @@ export class ChatGptBrowserWorker {
     if (turnToken !== undefined && (!/^turn_[A-Za-z0-9_-]{32}$/.test(turnToken) || !submittedText?.includes(turnToken))) {
       throw new Error("ChatGPT submission identity does not match its prepared prompt");
     }
+    const submissionIdentity = previous?.submissionIdentity;
+    if (submissionIdentity && (turnToken || !/^codexsubmission:[a-f0-9]{32}$/.test(submissionIdentity)
+      || !submittedText?.includes(submissionIdentity))) {
+      throw new Error("ChatGPT read-only submission identity does not match its prepared prompt");
+    }
     const initialPageUrl = page.url();
     const userTurns = page.locator(CHATGPT_USER_TURN_SELECTOR);
     const responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
@@ -2508,6 +2515,7 @@ export class ChatGptBrowserWorker {
       connectorName: previous?.connectorName,
       connectorMention,
       turnToken,
+      submissionIdentity,
     };
   }
 
@@ -2558,7 +2566,7 @@ export class ChatGptBrowserWorker {
         const locator = page.locator(chatGptAssistantTurnSelector(identity));
         matches = baseline.acceptedUserIdentity
           ? user === baseline.acceptedUserIdentity
-          : Boolean(baseline.submittedText) && await this.userMessageMatchesSubmission(locator, baseline.submittedText!, signal, baseline.turnToken, baseline.connectorMention);
+          : Boolean(baseline.submittedText) && await this.userMessageMatchesSubmission(locator, baseline.submittedText!, signal, baseline.turnToken, baseline.connectorMention, baseline.submissionIdentity);
         // The accepted user identity (or exact submitted text) establishes ownership.
         // Activity can replace its temporary group while still generating; requiring
         // a completed answer here mistakes that same unfinished turn for a foreign one.
@@ -2579,6 +2587,10 @@ export class ChatGptBrowserWorker {
           && turn === `group:user:${identity.slice("group:assistant:".length)}`
           && !userIdentities.includes(turn)))) {
       throw new Error("ChatGPT opened another user turn while the bound assistant response was detached");
+    } else if (!baseline.acceptedUserIdentity?.startsWith("group:user:")
+      || identity !== `group:assistant:${baseline.acceptedUserIdentity.slice("group:user:".length)}`) {
+      // An assistant-only group is provisional until its submitted user can prove ownership.
+      return binding;
     }
 
     return {
@@ -2609,18 +2621,16 @@ export class ChatGptBrowserWorker {
     return content;
   }
 
-  private async userMessageMatchesSubmission(group: Locator, submitted: string, signal?: AbortSignal, turnToken?: string, connectorMention?: { name: string; href: string }): Promise<boolean> {
+  private async userMessageMatchesSubmission(group: Locator, submitted: string, signal?: AbortSignal, turnToken?: string, connectorMention?: { name: string; href: string }, submissionIdentity?: string): Promise<boolean> {
     const content = await this.expandedUserMessageContent(group, signal);
     if (!content) return false;
-    if (turnToken !== undefined) {
+    const identity = turnToken ?? submissionIdentity;
+    if (identity !== undefined) {
       // The composer was already checked byte-for-byte before Send. ChatGPT's
       // rich-text renderer can rewrite JSON/link labels afterwards, so use the
       // exact broker identity for this turn, never a shared prompt prefix or a
       // token inferred from the rendered message. Expand first to expose its tail.
-      return withChatGptBrowserObservationTimeout(withBrowserTurnAbort(content.evaluate((element, token) => {
-        const tokens = (element.textContent ?? "").match(/(?<![A-Za-z0-9_-])turn_[A-Za-z0-9_-]{32}(?![A-Za-z0-9_-])/g) ?? [];
-        return tokens.length === 1 && tokens[0] === token;
-      }, turnToken), signal));
+      return withChatGptBrowserObservationTimeout(withBrowserTurnAbort(content.evaluate(chatGptSubmissionIdentityMatches, identity), signal));
     }
     const observed = await withChatGptBrowserObservationTimeout(withBrowserTurnAbort(
       content.evaluate(readChatGptUserMessage, connectorMention ?? this.config?.appName), signal,
@@ -4453,9 +4463,12 @@ export class ChatGptBrowserWorker {
       },
     };
       const requestedMode = resolveChatGptWebModelMode(turn.modelId, turn.reasoning, turn.capabilities);
-    const prepared = reuseConversation && turn.prepareResume
+    const initialPrepared = reuseConversation && turn.prepareResume
       ? await turn.prepareResume()
       : await turn.prepare();
+    const { prepared, identity: submissionIdentity } = turn.compaction || turn.nativeConnector || turn.externalProgress || turn.tunneledOutput
+      ? { prepared: initialPrepared, identity: undefined }
+      : bindChatGptSubmissionIdentity(initialPrepared);
     const diagnostics = new ChatGptBrowserDiagnostics(
       turn.traceId,
       this.config.browserDiagnosticsPath,
@@ -4860,6 +4873,7 @@ export class ChatGptBrowserWorker {
       let recoveryCompletionTracker: ChatGptCompletionTracker | undefined;
       let recoveryInsertionCancelled = false;
       for (let responseAttempt = 1; ; responseAttempt += 1) {
+        if (submissionIdentity && !responsePrompt.includes(submissionIdentity)) responsePrompt += `\n${submissionIdentity}`;
         recoveryInsertionCancelled = false;
         if (responseAttempt > 1 && mode.selection && mode.selection.url !== page.url()) {
           // A submitted Temporary Chat may acquire /c/<id>. Re-prove the same
@@ -4899,6 +4913,7 @@ export class ChatGptBrowserWorker {
           initialResponseTurn,
           submittedText: responsePrompt,
           turnToken: prepared.turnToken,
+          submissionIdentity,
           connectorName: turn.nativeConnector === true || mode.localTools ? this.config.appName : undefined,
           acknowledgedStages,
         };

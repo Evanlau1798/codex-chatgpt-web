@@ -1,4 +1,5 @@
 import type { BrokerRetirementDiagnostics } from "./turn-broker-protocol";
+import { ChatGptToolEvidenceGuard } from "./tool-evidence-guard";
 export type { BrokerRetirementDiagnostics } from "./turn-broker-protocol";
 import { existsSync, lstatSync, unlinkSync } from "node:fs";
 import type { Server } from "node:net";
@@ -290,6 +291,15 @@ export class TurnBroker implements TurnBrokerOwner {
     if (!invocation) throw new Error(`tool call is not pending: ${callId}`);
     if (!channel.deliveredCallIds.delete(callId)) throw new Error(`tool call was completed before it was delivered: ${callId}`);
     channel.invocations.delete(callId);
+    if (channel.outputEnabled && result.isError === true) {
+      (channel.toolEvidence ??= new ChatGptToolEvidenceGuard()).observeToolResult({
+        role: "toolResult", toolCallId: callId, toolName: invocation.request.wireName,
+        timestamp: Date.now(), isError: true,
+        content: result.content.flatMap(part => part && typeof part === "object"
+          && "type" in part && part.type === "text" && "text" in part && typeof part.text === "string"
+          ? [part.text] : []).join("\n"),
+      });
+    }
     console.info(`[chatgpt-web] broker trace=${channel.traceId} completed call=${callId.slice(0, 17)} pending=${channel.invocations.size} isError=${result.isError === true}`);
     invocation.resolve(result);
   }
