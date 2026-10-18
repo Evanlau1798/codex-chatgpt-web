@@ -53,6 +53,7 @@ export interface SafeTurnControl {
 }
 
 export interface TurnChannel {
+  nativeOperations?: Map<string, import("./turn-broker-operations").NativeOperation>;
   traceId: string;
   toolEvidence?: ChatGptToolEvidenceGuard;
   externalOwner: boolean;
