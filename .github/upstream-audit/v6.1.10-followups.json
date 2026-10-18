@@ -107,30 +107,30 @@
   {
     "path": "README.ja.md",
     "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "68d52c949fadf6fad1e9a60976b0af23be082362675df0cbb9658f3bb59321e1",
-    "currentSha256": "4b2bb9e05bb08b83b798f550f5562798b040fb8487b6ad092409385438999c0e",
-    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
-    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+    "currentSha256": "e033772eeb5733b81e4e15a81850dab78cef50fdd7c6a7100a202427c64ca309",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Synchronize maintained README release headers and hotfix summaries for v6.1.10-Enhanced.2 while preserving upstream documentation and stable latest-release download links.",
+    "evidence": {"path":".github/upstream-audit/evidence/04859f04f6e9df2679231b9d05e72b3f65b94d9244bd40fc14fda2f8a7c8cf56.tar.gz","sha256":"04859f04f6e9df2679231b9d05e72b3f65b94d9244bd40fc14fda2f8a7c8cf56","bytes":88459}
   },
   {
     "path": "README.ko.md",
     "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "b12e7511cb7b78c0601bfa401075edaa94425b9d1b823b0bb8e2e6c550e8f776",
-    "currentSha256": "079f1cfff0e251537648ddfbc7aca399fe3f45aee07f340c7c26c2429abea3e1",
-    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
-    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+    "currentSha256": "8e2156c4de3827947984d89a185abc9b2d1a2c28260c4f7b3f8d297410e22e28",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Synchronize maintained README release headers and hotfix summaries for v6.1.10-Enhanced.2 while preserving upstream documentation and stable latest-release download links.",
+    "evidence": {"path":".github/upstream-audit/evidence/04859f04f6e9df2679231b9d05e72b3f65b94d9244bd40fc14fda2f8a7c8cf56.tar.gz","sha256":"04859f04f6e9df2679231b9d05e72b3f65b94d9244bd40fc14fda2f8a7c8cf56","bytes":88459}
   },
   {
     "path": "README.md",
     "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "daa2ca9cf28c63b4c56e733cd75529aa9ed540599a71067625a19ba6b64e1fdc",
-    "currentSha256": "8ce4072abe5dabf1403db176ec1ab0421562e4612a3ad8cd2a787ff0736640d8",
-    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
-    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+    "currentSha256": "8ba9ba1318c4448837f4cc3b8f98ff94e569f64451e30d78f384544ce53c9ec4",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Synchronize maintained README release headers and hotfix summaries for v6.1.10-Enhanced.2 while preserving upstream documentation and stable latest-release download links.",
+    "evidence": {"path":".github/upstream-audit/evidence/04859f04f6e9df2679231b9d05e72b3f65b94d9244bd40fc14fda2f8a7c8cf56.tar.gz","sha256":"04859f04f6e9df2679231b9d05e72b3f65b94d9244bd40fc14fda2f8a7c8cf56","bytes":88459}
   },
   {
     "path": "README.zh-CN.md",
     "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "b503b0270e2523b3b40f00da6b76c53b36cdfe2f5f18e192ede1d537aab1a1c4",
-    "currentSha256": "93f63a0590fde06f3d97fd6ac2e45d089f8acf7de1d3121c25e303a3adfdbbc8",
-    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
-    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+    "currentSha256": "83060b972b03f2143981db2daad4099cbdfaf19d5b45218489c33ede0013dd7d",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Synchronize maintained README release headers and hotfix summaries for v6.1.10-Enhanced.2 while preserving upstream documentation and stable latest-release download links.",
+    "evidence": {"path":".github/upstream-audit/evidence/04859f04f6e9df2679231b9d05e72b3f65b94d9244bd40fc14fda2f8a7c8cf56.tar.gz","sha256":"04859f04f6e9df2679231b9d05e72b3f65b94d9244bd40fc14fda2f8a7c8cf56","bytes":88459}
   },
   {
     "path": "launcher/electron/main.cjs",
