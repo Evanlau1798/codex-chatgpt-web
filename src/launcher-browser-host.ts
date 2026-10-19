@@ -5,32 +5,14 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 import { expandUserPath, stripUtf8Bom } from "./config";
 import { assertLauncherLoopbackEndpoint } from "./launcher-loopback-endpoint";
 import { closeLauncherBrowserConnection, runLauncherBrowserConnection } from "./launcher-browser-connection";
+import { LauncherBrowserTurnCancelledError, LauncherRetainedConversationUnavailableError, LauncherBrowserTurnOwnerLostError } from "./launcher-browser-connection";
+export { LauncherBrowserTurnCancelledError, LauncherRetainedConversationUnavailableError, LauncherBrowserTurnOwnerLostError } from "./launcher-browser-connection";
 import { processRunning } from "./process";
 
 export const LAUNCHER_BROWSER_HOST_KIND = "codex-web-gpt-launcher";
 export const LAUNCHER_BROWSER_IDLE_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Chtml%3E%3Chead%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3ECodex%20Web%20GPT%3C%2Ftitle%3E%3C%2Fhead%3E%3Cbody%3E%3C%2Fbody%3E%3C%2Fhtml%3E#codex-web-gpt-browser-host";
 export type LauncherBrowserHostProfile = "production" | "development";
-
-export class LauncherBrowserTurnCancelledError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "LauncherBrowserTurnCancelledError";
-  }
-}
-
-export class LauncherRetainedConversationUnavailableError extends Error {
-  constructor(message: string) { super(message); this.name = "LauncherRetainedConversationUnavailableError"; }
-}
-
 export * from "./launcher-manual-control";
-
-export class LauncherBrowserTurnOwnerLostError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "LauncherBrowserTurnOwnerLostError";
-  }
-}
-
 
 export interface LauncherBrowserHostDescriptor {
   version: 3;
