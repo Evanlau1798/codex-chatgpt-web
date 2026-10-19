@@ -3503,11 +3503,20 @@ describe("ChatGPT outer-native harness v4", () => {
     try {
       await client.connect(transport);
 
+      // The reported failures included a missing character and a different,
+      // correctly sized token. Neither may borrow the only registered turn.
+      const malformed = await call("codex_exec", { turn_token: token.slice(0, -1), cmd: "must not execute" });
+      expect(malformed.isError).toBe(true);
+      expect(JSON.stringify(malformed.content)).toContain("Copy turn_token exactly from the current request");
+      expect(JSON.stringify(malformed)).not.toContain(token);
+
       const invalid = await call("codex_tool_inventory", {
         turn_token: "turn_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       });
       expect(invalid.isError).toBe(true);
       expect(JSON.stringify(invalid.content)).toContain("turn token is invalid, expired, or revoked");
+      expect(JSON.stringify(invalid.content)).toContain("Copy turn_token exactly from the current request");
+      expect(JSON.stringify(invalid)).not.toContain(token);
 
       const execPromise = call("codex_exec", { turn_token: token, cmd: "pwd", workdir: tempRoot });
       const [execRequest] = await Promise.race([

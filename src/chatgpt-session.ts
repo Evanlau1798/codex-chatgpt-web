@@ -150,12 +150,29 @@ export function isTemporaryChatGptTurnUrl(value: string): boolean {
   }
 }
 
+export function isSelectedChatGptTurnUrl(value: string, useSavedChats = false): boolean {
+  if (!useSavedChats) return isTemporaryChatGptTurnUrl(value);
+  try {
+    const url = new URL(value);
+    return url.origin === "https://chatgpt.com"
+      && (url.pathname === "/" || /^\/c\/[^/]+$/.test(url.pathname))
+      && url.searchParams.get("temporary-chat") !== "true";
+  } catch { return false; }
+}
+
 /** The new renderer groups both roles under the user's stable turn key. */
-export function chatGptAssistantTurnSelector(identity: string): string {
+export function chatGptTurnContainerSelector(identity: string): string {
   const prefix = "group:assistant:";
   return identity.startsWith(prefix)
-    ? `[data-turn-key=${JSON.stringify(identity.slice(prefix.length))}]:has([data-conversation-role="assistant"], [data-chatgpt-agent-turn-start])`
+    ? `[data-turn-key=${JSON.stringify(identity.slice(prefix.length))}]`
     : `[data-turn-id=${JSON.stringify(identity)}]`;
+}
+
+export function chatGptAssistantTurnSelector(identity: string): string {
+  const container = chatGptTurnContainerSelector(identity);
+  return identity.startsWith("group:assistant:")
+    ? `${container}:has([data-conversation-role="assistant"], [data-chatgpt-agent-turn-start])`
+    : container;
 }
 
 export interface ChatGptEffortSliderState {

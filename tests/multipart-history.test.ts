@@ -35,6 +35,49 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("a new multipart user message
   } finally { await browser.close(); }
 }, 15_000);
 
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("pending multipart submissions do not expand their transient user bubble while earlier stages remain accounted for", async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  try {
+    const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+    for (const total of [2, 6]) {
+      const page = await browser.newPage();
+      try {
+        const stages = Array.from({ length: total === 6 ? 4 : 1 }, (_, index) => ({
+          ...formatChatGptWebMultipartStage(JSON.stringify({ context: `part ${index + 1}` }), `ctx_${"e".repeat(32)}`, index + 1, total),
+          identities: [`group:assistant:stage-${index}`],
+        }));
+        await page.setContent(`<main>${stages.map((stage, index) => group(`stage-${index}`, stage.text, stage.acknowledgement)).join("")}</main>`);
+        const prompt = "Next context message.\n" + "inert history\n".repeat(15_000);
+        const baseline = await worker.captureSubmissionBaseline(page, prompt, stages);
+        await page.locator("main").evaluate((node, html) => { node.insertAdjacentHTML("beforeend", html); }, group("pending", prompt.slice(0, 10_240), "", false));
+        await page.locator('[data-turn-key="pending"] [data-user-message-bubble]').evaluate(bubble => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.setAttribute("aria-expanded", "false");
+          button.setAttribute("data-thread-find-skip", "true");
+          button.setAttribute("data-markdown-copy", "exclude");
+          button.textContent = "Show more";
+          // ChatGPT replaces the just-submitted bubble with Activity while starting
+          // its answer. Waiting for this control to expand cannot establish Send.
+          button.onclick = () => {
+            bubble.closest("[data-turn-key]")!.innerHTML = '<span hidden data-chatgpt-agent-turn-start></span>';
+          };
+          bubble.append(button);
+        });
+        expect(await worker.currentSubmissionEvidence(page, baseline, AbortSignal.timeout(1_500))).toBe("user_turn");
+        expect(baseline.acceptedUserIdentity).toBe("group:user:pending");
+        expect(await page.locator('[data-turn-key="pending"] button').getAttribute("aria-expanded")).toBe("false");
+        // The ordinary turn-binding path owns the subsequent Activity replacement.
+        await page.locator('[data-turn-key="pending"]').evaluate(node => {
+          node.setAttribute("data-turn-key", "fallback");
+          node.innerHTML = '<span hidden data-chatgpt-agent-turn-start></span>';
+        });
+        expect((await worker.waitForNewAssistantTurn(page, baseline, Date.now() + 1_000)).identity).toBe("group:assistant:fallback");
+      } finally { await page.close(); }
+    }
+  } finally { await browser.close(); }
+}, 15_000);
+
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("acknowledged multipart history can rekey without becoming a new submission", async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
   try {

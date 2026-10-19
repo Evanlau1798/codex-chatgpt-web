@@ -38,9 +38,9 @@ export interface BrowserHelperRunMessage {
 }
 
 type MaintenanceMessage =
-  | { type: "verify"; id: string; config: { appName: string; browserHostDescriptorPath: string; brokerSocketPath: string } }
-  | { type: "inspect"; id: string; config: { appName: string; browserHostDescriptorPath: string }; detectCapabilities: boolean }
-  | { type: "smoke" | "limits"; id: string; config: { appName: string; browserHostDescriptorPath: string } };
+  | { type: "verify"; id: string; config: { appName: string; browserHostDescriptorPath: string; brokerSocketPath: string; useSavedChats?: boolean } }
+  | { type: "inspect"; id: string; config: { appName: string; browserHostDescriptorPath: string; useSavedChats?: boolean }; detectCapabilities: boolean }
+  | { type: "smoke" | "limits"; id: string; config: { appName: string; browserHostDescriptorPath: string; useSavedChats?: boolean } };
 
 export type BrowserHelperInputMessage = BrowserHelperRunMessage | MaintenanceMessage
   | { type: "answer_retry"; id: string; prompt?: string; acknowledge?: boolean; replaceCandidate?: boolean; allowLunaCheckpointRetry?: boolean }

@@ -535,6 +535,73 @@ test.each(["v1", "v2"])("%s recovered delegation still requires current rollout 
     rmSync(rolloutPath);
     expect(() => store.resolve(request)).toThrow("Codex has no canonical rollout for the requested root thread");
   });
+  for (const shared of [false, true]) for (const format of ["v1", "v2"]) test(`${format} full-access compaction keeps current workspace context when a restart omits native roots (#847, shared=${shared})`, () => {
+    const { codexHome, request, rolloutPath } = resumedRootFixture();
+    const bridgeHome = shared ? mkdtempSync(join(tmpdir(), "codex-shared-compaction-")) : codexHome;
+    if (shared) temporaryRoots.push(bridgeHome);
+    const body = request._rawBody as { input: Array<Record<string, unknown>>; client_metadata: Record<string, string> };
+    const oldTurnId = "01a06c66-0000-75c6-a0df-318f890ef6de";
+    body.input[0]!.internal_chat_message_metadata_passthrough = { turn_id: oldTurnId };
+    const summary = `Full-access restart checkpoint ${format} shared=${shared}`;
+    rememberCompactionContinuation({ ...request, _compactionRequest: true }, extractChatGptTurnIdentity(request), [
+      { turnId: oldTurnId, content: body.input[0]!.content },
+    ], summary);
+    const auxiliary = join(codexHome, "second-workspace");
+    const currentEnvironment = environmentXml.replace(
+      "</workspace_roots>", `<root>${auxiliary}</root></workspace_roots>`,
+    );
+    const environmentPart = { type: "input_text", text: currentEnvironment };
+    body.input.unshift({
+      type: "message", role: "user", id: "msg_current_environment", content: [environmentPart],
+      internal_chat_message_metadata_passthrough: { turn_id: rolloutTurnId },
+    });
+    body.input.push(format === "v2"
+      ? { type: "compaction", encrypted_content: encodeCompactionSummary(summary) }
+      : { type: "message", role: "user", content: [{ type: "input_text", text: `${SUMMARY_PREFIX}\n${summary}` }] });
+    const native = childTurnContext(rolloutTurnId, { workspace_roots: [root, auxiliary] });
+    const payload = native.payload as Record<string, unknown>;
+    const writeContext = () => writeFileSync(rolloutPath, [
+      { type: "session_meta", payload: { id: rolloutThreadId, source: "vscode" } }, native,
+    ].map(value => JSON.stringify(value)).join("\n") + "\n");
+    const resolveCurrent = () => new ChatGptThreadEnvironmentStore(
+      undefined, Date.now, bridgeHome, undefined, shared ? [codexHome] : [],
+    ).resolve(request);
+    writeContext();
+    const beforeRestart = resolveCurrent();
+    expect(beforeRestart.roots).toEqual([root, auxiliary]);
+    delete payload.workspace_roots;
+    writeContext();
+    expect(resolveCurrent()).toEqual(beforeRestart);
+
+    // Git metadata may also retain the second workspace. It is not a new grant.
+    const metadata = JSON.parse(body.client_metadata["x-codex-turn-metadata"]!);
+    metadata.workspaces = { [root]: {}, [auxiliary]: {} };
+    body.client_metadata["x-codex-turn-metadata"] = JSON.stringify(metadata);
+    expect(resolveCurrent()).toEqual(beforeRestart);
+    metadata.workspaces = { [root]: {} };
+    body.client_metadata["x-codex-turn-metadata"] = JSON.stringify(metadata);
+
+    for (const conflict of [
+      currentEnvironment.replaceAll(root, join(codexHome, "different-cwd")),
+      currentEnvironment.replace(dangerFullAccessProfileXml, '<permission_profile type="managed"><file_system type="restricted"><entry access="read"><special>:root</special></entry></file_system></permission_profile>'),
+    ]) {
+      environmentPart.text = conflict;
+      expect(resolveCurrent).toThrow("environment conflicts");
+    }
+    environmentPart.text = currentEnvironment;
+    // An explicitly declared root set must still match, even with full access.
+    payload.workspace_roots = [root];
+    writeContext();
+    expect(resolveCurrent).toThrow("environment conflicts");
+    payload.workspace_roots = null;
+    writeContext();
+    expect(resolveCurrent).toThrow();
+    delete payload.workspace_roots;
+    payload.turn_id = oldTurnId;
+    writeContext();
+    expect(resolveCurrent).toThrow("current turn");
+  });
+
 test("compaction keeps current native output-directory grants omitted from workspace roots", () => {
     const { codexHome, request, rolloutPath } = resumedRootFixture();
     const body = request._rawBody as { input: Array<Record<string, unknown>>; client_metadata: Record<string, string> };

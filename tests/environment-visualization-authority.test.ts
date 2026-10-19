@@ -60,6 +60,18 @@ function fixture(actor: "root" | "child", readOnly = false) {
   return { codexHome, workspace, visualization, request };
 }
 
+test.each(["root", "child"] as const)("%s secondary home accepts only its exact owned visualization root", actor => {
+  const f = fixture(actor);
+  const primary = mkdtempSync(join(tmpdir(), "cgw-primary-viz-"));
+  homes.push(primary);
+  const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, primary, undefined, [f.codexHome]);
+  expect(store.resolve(f.request(f.visualization())).roots).toEqual([f.workspace]);
+  for (const extra of [f.visualization(foreignId), join(f.visualization(), "child"),
+    join(primary, "visualizations", "2026", "10", "16", threadId), join(f.workspace, "extra")]) {
+    expect(() => store.resolve(f.request(extra))).toThrow("current Codex rollout");
+  }
+});
+
 test.each(["root", "child"] as const)("%s tolerates its exact visualization root without replacing canonical authority", actor => {
   const f = fixture(actor);
   const parsed = f.request(f.visualization());

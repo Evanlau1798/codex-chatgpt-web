@@ -47,11 +47,12 @@ async function stopChild(child) {
   }
 }
 
-async function runBrowserHelperOperation({ helper, descriptorPath, appName, brokerSocketPath, operation, payload = {}, logger }) {
+async function runBrowserHelperOperation({ helper, descriptorPath, appName, brokerSocketPath, useSavedChats = false, operation, payload = {}, logger }) {
   if (!helper || typeof helper.executable !== "string" || typeof helper.script !== "string") {
     throw new Error("Browser helper verification command is invalid");
   }
-  if (typeof descriptorPath !== "string" || !descriptorPath || typeof appName !== "string" || !appName) {
+  if (typeof descriptorPath !== "string" || !descriptorPath || typeof appName !== "string" || !appName
+    || typeof useSavedChats !== "boolean") {
     throw new Error("Browser helper verification config is invalid");
   }
   if (!["verify", "inspect", "smoke", "limits"].includes(operation)) {
@@ -122,6 +123,7 @@ async function runBrowserHelperOperation({ helper, descriptorPath, appName, brok
             appName,
             browserHostDescriptorPath: descriptorPath,
             ...(brokerSocketPath ? { brokerSocketPath } : {}),
+            useSavedChats,
           },
         }).catch(error => finish(error instanceof Error ? error : new Error(String(error))));
         return;

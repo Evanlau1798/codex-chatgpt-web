@@ -19,6 +19,7 @@ import {
   CHATGPT_COMPOSER_SELECTOR,
   CHATGPT_SEND_BUTTON_SELECTOR,
   CHATGPT_USER_TURN_SELECTOR,
+  chatGptTurnContainerSelector,
 } from "../src/chatgpt-session";
 import { activateChatGptSendControl, submitChatGptSendControl, activateOwnedChatGptSendControl, readChatGptAssistantTurnState } from "../src/adapters/chatgpt-web/response-turn-boundary";
 import { ChatGptViewportReadinessError, chatGptSuspensionClock } from "../src/adapters/chatgpt-web/browser-stage-lifecycle";
@@ -663,7 +664,7 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap", "fi
     diagnostics: { capture: async () => {} },
     settleChatGptUi: async () => {},
     CHATGPT_SEND_ENABLE_GRACE_MS: 5_000,
-    CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_SEND_BUTTON_SELECTOR, CHATGPT_USER_TURN_SELECTOR,
+    CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_SEND_BUTTON_SELECTOR, CHATGPT_USER_TURN_SELECTOR, chatGptTurnContainerSelector,
     CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, browserStageTimeouts, chatGptSuspensionClock,
     chatGptPromptAttachmentTimeoutMs, chatGptPromptPreservesLeading, planChatGptPromptInsertion,
     throwIfChatGptSessionFailureAlert, throwIfChatGptRateLimitDialog,
@@ -717,7 +718,7 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap", "fi
     }
   } else {
     expect(events).toEqual(["attach", "verify:stage", "send", "rebind", "ack"]);
-    expect(next.selected).toEqual(["conversation-turn-new"]);
+    expect(next.selected).toEqual(["conversation-turn-new", "conversation-turn-new"]);
   }
 });
 

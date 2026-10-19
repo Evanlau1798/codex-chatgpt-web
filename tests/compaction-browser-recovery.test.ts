@@ -177,7 +177,7 @@ test.each([
           else signal.addEventListener("abort", onAbort, { once: true });
         });
       }
-      return {};
+      return { identity: `stage:${actions.length}` };
     },
     waitForMultipartAcknowledgement: async () => { actions.push("ack"); return { identity: `stage:${actions.length}` }; },
   });

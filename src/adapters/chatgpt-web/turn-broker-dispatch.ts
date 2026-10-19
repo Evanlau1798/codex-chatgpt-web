@@ -191,7 +191,7 @@ async function claim(request: BrokerRequest, signal: AbortSignal, state: Dispatc
     throw new Error(retiredTurn !== undefined
       ? `This turn_token was issued for ${retiredTurnLabel(retiredTurn)}, which has already finished.`
       + " This Codex Native action can no longer run."
-      : "turn token is invalid, expired, or revoked");
+      : "turn token is invalid, expired, or revoked. Copy turn_token exactly from the current request; do not guess or reuse an earlier value.");
   }
   await waitForTurnObserver(activeChannel, signal);
   if (state.channels.get(token) !== activeChannel) throw new Error("turn token is invalid, expired, or revoked");

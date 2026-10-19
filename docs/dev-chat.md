@@ -50,12 +50,13 @@ and automatic compaction without embedding a giant fixture in the user prompt. I
 directly rather than through deferred tool search so the test can prove the requested call happened.
 
 Reusing the same name continues its canonical Responses history. Sequential native messages in the
-same compaction epoch lease one Temporary Chat, exactly like production. Every message receives a
+same compaction epoch lease one ChatGPT conversation, exactly like production. Every message receives a
 new turn-bound MCP token, and all MCP tool rounds for that message remain inside the same ChatGPT
 response. On an exact native compaction request, the same Web agent submits the checkpoint through
 a one-shot MCP control call in that chat; only then does the surface close and the next epoch open a
-new Temporary Chat. The complete named history remains owned by the existing prompt compiler. New
-chats use the cheapest account-supported browser mode:
+new chat. The complete named history remains owned by the existing prompt compiler. New
+chats follow the configured **Save chats in ChatGPT** setting (off by default) and use the cheapest
+account-supported browser mode:
 Instant (`light`) when Sol is available, otherwise Luna. Override it with `--model` or `/model`.
 
 Interactive commands:

@@ -1406,7 +1406,7 @@ test("connector verification persists ordered browser checkpoints when selection
   }
 });
 
-test("successful connector verification clears the proven selection before releasing the page", async () => {
+for (const useSavedChats of [false, true]) test(`connector verification prepares the selected chat mode (${useSavedChats}) and clears its selection`, async () => {
   const diagnosticsRoot = mkdtempSync(join(tmpdir(), "cgw-connector-verification-success-"));
   const socket = defaultBrokerEndpoint(diagnosticsRoot);
   const broker = TurnBroker.forSocket(socket);
@@ -1427,9 +1427,10 @@ test("successful connector verification clears the proven selection before relea
 
   try {
     const result = await verifyConnectorExclusive.call({
-      config: { appName: "Codex Native2 DEV", browserDiagnosticsPath: diagnosticsRoot, brokerSocketPath: socket },
+      config: { appName: "Codex Native2 DEV", browserDiagnosticsPath: diagnosticsRoot, brokerSocketPath: socket, useSavedChats },
       ensurePage: async () => page,
-      prepareChatSurface: async (_page: unknown, capture: (checkpoint: string) => Promise<void>) => {
+      prepareChatSurface: async (_page: unknown, capture: (checkpoint: string) => Promise<void>, saved: boolean) => {
+        expect(saved).toBe(useSavedChats);
         calls.push("prepare");
         await capture("composer-ready");
       },
@@ -2280,7 +2281,8 @@ test("effort menu waiting stops when ChatGPT reports an expired session", async 
 
 test("terminal model errors are scoped to the new assistant turn instead of global page alerts", () => {
   const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
-  expect(workerSource).toContain("throwIfChatGptTerminalErrorAlert(responseTurn)");
+  expect(workerSource).toContain("chatGptTurnContainerSelector(responseTurnBinding.id)");
+  expect(workerSource).toContain("await throwIfChatGptTerminalErrorAlert(responseTurnBinding");
   expect(workerSource).not.toContain("throwIfChatGptTerminalErrorAlert(page)");
 });
 
@@ -3472,6 +3474,26 @@ test("stale MCP progress stops suppressing DOM health without penalising long ac
   )).toBeFalse();
 });
 
+test("multipart observation surfaces Stopped thinking on its first observation even with live MCP work", async () => {
+  const absent = { last() { return this; }, filter() { return this; }, isVisible: async () => false,
+    getByText() { return this; }, getByTestId() { return this; } };
+  const page = { isClosed: () => false, locator: () => absent };
+  const binding = { identity: "group:assistant:current", locator: absent };
+  const snapshot = { responsePresent: true, stoppedThinkingVisible: true, visibleText: "", completionActionVisible: false };
+  let observations = 0;
+  let acknowledged = false;
+  const progress = {
+    snapshot: () => ({ revision: 1, lastToolBatchRevision: 1, activeToolCalls: 1, lastProgressAt: Date.now() }),
+    acknowledgeToolBatch: async () => { acknowledged = true; },
+  };
+  const observe = (ChatGptBrowserWorker.prototype as any).waitForMultipartAcknowledgement;
+  await expect(observe.call({ responseDomSnapshot: async () => { observations += 1; return snapshot; } },
+    page, binding.locator, { acknowledgement: "ack" }, Date.now() + 1_000, undefined, progress,
+  )).rejects.toMatchObject({ code: "chatgpt_stopped_thinking", retryable: false });
+  expect(observations).toBe(1);
+  expect(acknowledged).toBeFalse();
+});
+
 test("the shipped commentary classifier separates answer Markdown from reasoning in a real DOM", () => {
   // The classifier runs inside page.evaluate, so it cannot be imported. Extract and execute the
   // exact shipped source instead of a copy, which is what lets this test detect a regression in
@@ -3786,7 +3808,7 @@ test("two-part saved chats re-prove unchanged effort after the first message cre
     assertPromptAttached: async () => {},
     waitForSubmissionAccepted: async () => { throw finished; },
     attachPrompt: async () => {}, attachPromptWithCompactionRetry: async () => {}, attachFiles: async () => {},
-    waitForNewAssistantTurn: async () => ({}), waitForMultipartAcknowledgement: async () => {},
+      waitForNewAssistantTurn: async () => ({ identity: "saved_stage" }), waitForMultipartAcknowledgement: async () => {},
     sendAttachedPrompt: async (_page: unknown, _baseline: unknown, _initial: unknown, _capture: unknown,
       _signal: unknown, onSendActivated: () => Promise<void>) => {
       await onSendActivated();
