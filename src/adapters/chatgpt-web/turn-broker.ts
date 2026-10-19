@@ -10,6 +10,7 @@ import type { ChatGptTurnEnvironment } from "./environment";
 import { dispatchTurnBrokerRequest } from "./turn-broker-dispatch";
 import { startTurnBrokerServer } from "./turn-broker-server";
 import type { TurnBrokerOwner } from "./turn-broker-owner";
+import { setTurnObserverConnected } from "./turn-broker-observer";
 import {
   environmentIdentity,
   notifyCompactionDelivery,
@@ -304,6 +305,12 @@ export class TurnBroker implements TurnBrokerOwner {
     invocation.resolve(result);
   }
 
+  setObserverConnected(token: string, connected: boolean): boolean {
+    this.prune();
+    const channel = this.channels.get(token);
+    return channel ? setTurnObserverConnected(channel, connected) : false;
+  }
+
   beginCompletionFence(token: string): number | undefined {
     this.prune();
     const channel = this.channels.get(token);
@@ -327,7 +334,7 @@ export class TurnBroker implements TurnBrokerOwner {
     this.prune();
     const channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
-    if (channel.activityRevision !== expectedActivityRevision) return false;
+    if (channel.observerPause || channel.activityRevision !== expectedActivityRevision) return false;
     if (!channel.outputEnabled || channel.completionCommitted || channel.outputFinalSequence !== undefined) return false;
     if (channel.invocations.size > 0 || channel.queuedCallIds.length > 0 || channel.activities.size > 0) return false;
     if (channel.finalizationOnly) return true;
@@ -500,6 +507,9 @@ export class TurnBroker implements TurnBrokerOwner {
       ...(failure ? { failure } : {}),
     })}`);
     this.channels.delete(token);
+    const paused = channel.observerPause;
+    channel.observerPause = undefined;
+    paused?.resume();
     this.pending.delete(token);
     if (channel.bindingId) {
       this.bindings.delete(channel.bindingId);

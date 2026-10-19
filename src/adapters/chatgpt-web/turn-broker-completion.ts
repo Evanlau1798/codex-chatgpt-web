@@ -28,12 +28,14 @@ export function completeTurnActivity(channel: TurnChannel, activityId: string): 
 }
 
 export function beginTurnCompletionFence(channel: TurnChannel): number | undefined {
+  if (channel.observerPause) return undefined;
   if (channel.completionCommitted) return channel.completionRevision;
   if (channel.activities.size > 0 || channel.invocations.size > 0) return undefined;
   return channel.activityRevision;
 }
 
 export function commitTurnCompletionFence(channel: TurnChannel, revision: number): boolean {
+  if (channel.observerPause) return false;
   if (!Number.isSafeInteger(revision) || revision < 0) {
     throw new Error("turn completion fence revision is invalid");
   }

@@ -406,6 +406,10 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     });
     return {
       mode: "tools",
+      ...(useEnhancedWebSessionMode && !browserCompaction && !isClaudeClientSession(parsed) && brokerOwner.setObserverConnected ? {
+        setObserverConnected: (connected: boolean) => activeToken
+          ? brokerOwner.setObserverConnected!(activeToken, connected) : false,
+      } : {}),
       token: token.promise,
       browser,
       trace,

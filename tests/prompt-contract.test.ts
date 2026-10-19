@@ -33,6 +33,16 @@ function toolRequest(reasoning: "low" | "medium" | "high" | "xhigh" | "max"): Co
   parsed.context.tools = [{ name: "Read", description: "Read a file", parameters: {} }];
   return parsed;
 }
+
+test.each([undefined, 6] as const)("Native final contract distinguishes unaccepted steering from terminal acceptance (parts=%s)", parts => {
+  const compiled = compileChatGptWebPrompt(toolRequest("high"),
+    { localToolsEnabled: true, solAvailable: true, proAvailable: true }, "turn_12345678901234567890123456789012",
+    { nativeControlConnector: true, useEnhancedOutputTunnel: true, ...(parts ? { experimentalMultipartParts: parts } : {}) });
+  const prompt = compiled.multipart ? formatChatGptWebMultipartCommit(compiled.multipart, `ctx_${"d".repeat(32)}`) : compiled.text;
+  expect(prompt).toContain("accepted=false");
+  expect(prompt).toContain("accepted=true");
+  expect(prompt).toContain("exactly one accepted final");
+});
 test("inline and staged history escape Markdown delimiters without changing decoded code", () => {
   const parsed = request("high");
   const code = '```ts\nconst value = "`key`";\n``` '.repeat(20) + '\\u0060 \\` [text](https://example.com) 中文';

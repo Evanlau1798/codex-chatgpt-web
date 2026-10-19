@@ -37,9 +37,9 @@
   {
     "path": "scripts/lifecycle-sim/manifest.ts",
     "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1", "baselineSha256": "ebe6d90161e5bfad2afc0520ffe31a659eb179008d2996527579853094c72923",
-    "currentSha256": "cde043c38c7e3ca3b5e2055ff18b90d64909386905e59fa78c5ac4cd6fbd3706",
-    "reason": "Register real Responses HTTP compaction-continuation regressions in the canonical offline lifecycle gate. Preserve current Native work identity in correction/steering retries and exercise production factory/worker from offline lifecycle. Support observed semantic add-context/plugin navigation UI without focus-dismissal; preserve exact connector identity, duplicates and mention keyboard behavior. Include real production recovery-budget and bounded nonintrusive MCP diagnostic regressions in the offline lifecycle gate.",
-    "evidence": {"path":".github/upstream-audit/evidence/3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d.tar.gz","sha256":"3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d","bytes":113486}
+    "currentSha256": "35bb83b3e0b7d128f1fdb976289d6630e7407813327bef2a16ee9461ae0d0f2e",
+    "reason": "Register real Responses HTTP compaction-continuation regressions in the canonical offline lifecycle gate. Preserve current Native work identity in correction/steering retries and exercise production factory/worker from offline lifecycle. Support observed semantic add-context/plugin navigation UI without focus-dismissal; preserve exact connector identity, duplicates and mention keyboard behavior. Include real production recovery-budget and bounded nonintrusive MCP diagnostic regressions in the offline lifecycle gate. Retain an accepted Enhanced Native Web owner across a bounded capability-paused canonical steering reconnect. Revalidate observer claims across async resume and retire on lost ownership. Deliver late steering as a normal unaccepted final-control receipt, preserving exactly one atomic accepted final, explicit cancellation, deadlines, public ABI and context boundaries. Cover production primitives and MCP IPC in offline lifecycle simulation.",
+    "evidence": {"path":".github/upstream-audit/evidence/3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923.tar.gz","sha256":"3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923","bytes":153405}
   },
   {
     "path": "tests/compaction-continuation-registry.test.ts",
@@ -205,23 +205,23 @@
   {
     "path": "src/adapters/chatgpt-web/adapter-runtime-factory.ts",
     "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "d9ef72881e22ea13623080328f7bf1c225964e4c9c5cb84e8951c843c8b9e922",
-    "currentSha256": "035f8f375456101ddb250e021519d961fbddfbc9b005212ccffb70466654d234",
-    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Preserve current Native work identity in correction/steering retries and exercise production factory/worker from offline lifecycle. Keep original successful completion timestamp across prediction replay so cache publication cannot extend absolute TTL.",
-    "evidence": {"path":".github/upstream-audit/evidence/27a073044579a79400ccf88de7674d1d274f8fadda20d5ed7701274dbd2d2f2f.tar.gz","sha256":"27a073044579a79400ccf88de7674d1d274f8fadda20d5ed7701274dbd2d2f2f","bytes":81338}
+    "currentSha256": "37f2de38c10d001eda2508669343991e0b4d09426fe61424f05a50eca9476830",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Preserve current Native work identity in correction/steering retries and exercise production factory/worker from offline lifecycle. Keep original successful completion timestamp across prediction replay so cache publication cannot extend absolute TTL. Retain an accepted Enhanced Native Web owner across a bounded capability-paused canonical steering reconnect. Revalidate observer claims across async resume and retire on lost ownership. Deliver late steering as a normal unaccepted final-control receipt, preserving exactly one atomic accepted final, explicit cancellation, deadlines, public ABI and context boundaries. Cover production primitives and MCP IPC in offline lifecycle simulation.",
+    "evidence": {"path":".github/upstream-audit/evidence/3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923.tar.gz","sha256":"3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923","bytes":153405}
   },
   {
     "path": "src/adapters/chatgpt-web/index.ts",
     "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "62e381ccdf9c06843d47b58033eba1b564c6e18dc21a4b730c8302180d6dc68d",
-    "currentSha256": "ad2f5e3b678585624b58592bd37cc9d7bd82726d327b0f4fa1eeb715a7b4de90",
-    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Keep original successful completion timestamp across prediction replay so cache publication cannot extend absolute TTL.",
-    "evidence": {"path":".github/upstream-audit/evidence/27a073044579a79400ccf88de7674d1d274f8fadda20d5ed7701274dbd2d2f2f.tar.gz","sha256":"27a073044579a79400ccf88de7674d1d274f8fadda20d5ed7701274dbd2d2f2f","bytes":81338}
+    "currentSha256": "33394cfd5918ae27712666c29e92612e8ef3b41708e730b1b3d8c0cce3557f15",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Keep original successful completion timestamp across prediction replay so cache publication cannot extend absolute TTL. Retain an accepted Enhanced Native Web owner across a bounded capability-paused canonical steering reconnect. Revalidate observer claims across async resume and retire on lost ownership. Deliver late steering as a normal unaccepted final-control receipt, preserving exactly one atomic accepted final, explicit cancellation, deadlines, public ABI and context boundaries. Cover production primitives and MCP IPC in offline lifecycle simulation.",
+    "evidence": {"path":".github/upstream-audit/evidence/3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923.tar.gz","sha256":"3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923","bytes":153405}
   },
   {
     "path": "src/adapters/chatgpt-web/native-output-control.ts",
     "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "5b80e89ec22a2bece5b317606d19dc6a835a08cdd5e85de38b288a9ba90d3eba",
-    "currentSha256": "7ad7edb8ee003789c4c78ed7f24823bfb81664f287e33abfda5e2f4fb9dc5c3f",
-    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
-    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+    "currentSha256": "df4884dccdfe61f0c2a51978f27008d584b495f26ee00bba8919f8bcda232835",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Retain an accepted Enhanced Native Web owner across a bounded capability-paused canonical steering reconnect. Revalidate observer claims across async resume and retire on lost ownership. Deliver late steering as a normal unaccepted final-control receipt, preserving exactly one atomic accepted final, explicit cancellation, deadlines, public ABI and context boundaries. Cover production primitives and MCP IPC in offline lifecycle simulation.",
+    "evidence": {"path":".github/upstream-audit/evidence/3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923.tar.gz","sha256":"3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923","bytes":153405}
   },
   {
     "path": "src/adapters/chatgpt-web/prompt.ts",
@@ -247,44 +247,44 @@
   {
     "path": "src/adapters/chatgpt-web/turn-broker-dispatch.ts",
     "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "43a8ccc5a9d77dcf4a012f214c86a52174af356478a919944806aae5bccd3fc1",
-    "currentSha256": "fd9f93fee0715ce6a361c81d066dc18372e570e6aa9f587c33234f8a6d08dde2",
-    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Bound reference digests and isolate diagnostic sink failures without changing claim, accepted final acknowledgement or original rejection.",
-    "evidence": {"path":".github/upstream-audit/evidence/3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d.tar.gz","sha256":"3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d","bytes":113486}
+    "currentSha256": "35d6e978629ab155524de3233537880bb1bb0a980138b1f819023f4c34540634",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Bound reference digests and isolate diagnostic sink failures without changing claim, accepted final acknowledgement or original rejection. Retain an accepted Enhanced Native Web owner across a bounded capability-paused canonical steering reconnect. Revalidate observer claims across async resume and retire on lost ownership. Deliver late steering as a normal unaccepted final-control receipt, preserving exactly one atomic accepted final, explicit cancellation, deadlines, public ABI and context boundaries. Cover production primitives and MCP IPC in offline lifecycle simulation.",
+    "evidence": {"path":".github/upstream-audit/evidence/3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923.tar.gz","sha256":"3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923","bytes":153405}
   },
   {
     "path": "src/adapters/chatgpt-web/turn-broker-output.ts",
     "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "19768048909a09a304db6323cc93cd74f9f71b0758384bf1cc200e10f54a3e17",
-    "currentSha256": "9fde2b841e936f1b9353beb2c31d538a91678280553e2735b7153a1f35a6b344",
-    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Apply the existing evidence policy before accepting or holding Native commentary/final, so corrections stay in the same Web response and accepted final remains atomic.",
-    "evidence": {"path":".github/upstream-audit/evidence/b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e.tar.gz","sha256":"b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e","bytes":112575}
+    "currentSha256": "f9291a60bc0fddd762d96a082b90ac8196c6234a93714bdc0c60915b56180b56",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Apply the existing evidence policy before accepting or holding Native commentary/final, so corrections stay in the same Web response and accepted final remains atomic. Retain an accepted Enhanced Native Web owner across a bounded capability-paused canonical steering reconnect. Revalidate observer claims across async resume and retire on lost ownership. Deliver late steering as a normal unaccepted final-control receipt, preserving exactly one atomic accepted final, explicit cancellation, deadlines, public ABI and context boundaries. Cover production primitives and MCP IPC in offline lifecycle simulation.",
+    "evidence": {"path":".github/upstream-audit/evidence/3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923.tar.gz","sha256":"3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923","bytes":153405}
   },
   {
     "path": "src/adapters/chatgpt-web/turn-broker-owner.ts",
     "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "4b98c686d29a394c7d007e1cabe55c9baeca56afa90b1a6dd311f4fc078ede80",
-    "currentSha256": "a026f8ed76714c0101c003030d230a94ff7a02c30fb6fea4511794062e9b8ab4",
-    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
-    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+    "currentSha256": "457fe6fc4131dd2a5e00a3a5cf8930007f6b02fc02e19d54f0229fb8d6350204",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Retain an accepted Enhanced Native Web owner across a bounded capability-paused canonical steering reconnect. Revalidate observer claims across async resume and retire on lost ownership. Deliver late steering as a normal unaccepted final-control receipt, preserving exactly one atomic accepted final, explicit cancellation, deadlines, public ABI and context boundaries. Cover production primitives and MCP IPC in offline lifecycle simulation.",
+    "evidence": {"path":".github/upstream-audit/evidence/3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923.tar.gz","sha256":"3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923","bytes":153405}
   },
   {
     "path": "src/adapters/chatgpt-web/turn-broker-protocol.ts",
     "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "133b7a928cd1135fb687b08e2ceeeb04bec49f69bdd6b70e65db64cfd44bed01",
-    "currentSha256": "68bbc8780f68b1e4a1fac29aee0be128b002d8060586153620d14e3c2eff237c",
-    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
-    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+    "currentSha256": "dd37a35091add890e67098d4bfdf8e997a2b4ae0777681b72b9d795e3171aafc",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Retain an accepted Enhanced Native Web owner across a bounded capability-paused canonical steering reconnect. Revalidate observer claims across async resume and retire on lost ownership. Deliver late steering as a normal unaccepted final-control receipt, preserving exactly one atomic accepted final, explicit cancellation, deadlines, public ABI and context boundaries. Cover production primitives and MCP IPC in offline lifecycle simulation.",
+    "evidence": {"path":".github/upstream-audit/evidence/3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923.tar.gz","sha256":"3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923","bytes":153405}
   },
   {
     "path": "src/adapters/chatgpt-web/turn-broker-state.ts",
     "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "d19ec00aca8cf499e1b3352d7edb529728a415de904477fc21ae614bd32a6ff0",
-    "currentSha256": "c486f9a43af4aec805de821772c3b9f564709626a5d41f4b53a04c441de6736c",
-    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Keep bounded Native output evidence local to each broker channel lifecycle.",
-    "evidence": {"path":".github/upstream-audit/evidence/b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e.tar.gz","sha256":"b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e","bytes":112575}
+    "currentSha256": "aec491d45b992d0c67c17e56261d1dd063c1c59cea6145b41f4ae1f09b15a69a",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Keep bounded Native output evidence local to each broker channel lifecycle. Retain an accepted Enhanced Native Web owner across a bounded capability-paused canonical steering reconnect. Revalidate observer claims across async resume and retire on lost ownership. Deliver late steering as a normal unaccepted final-control receipt, preserving exactly one atomic accepted final, explicit cancellation, deadlines, public ABI and context boundaries. Cover production primitives and MCP IPC in offline lifecycle simulation.",
+    "evidence": {"path":".github/upstream-audit/evidence/3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923.tar.gz","sha256":"3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923","bytes":153405}
   },
   {
     "path": "src/adapters/chatgpt-web/turn-broker.ts",
     "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "d1b59b6a5779130700438cd56a45617f54dc38ba803bdd96009eafaf7cf6a68e",
-    "currentSha256": "c42dec8f6e81304c2031b73ca7f6a8676f2ec7af1709f5140bcff416e52530dd",
-    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Observe only actual isError=true Native work results in turn-local evidence before returning the unchanged result.",
-    "evidence": {"path":".github/upstream-audit/evidence/b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e.tar.gz","sha256":"b98cc3a28fa7e5c541c7bb76be0cecfe5ef9b77296ff1bb350972bc22c04412e","bytes":112575}
+    "currentSha256": "43539631c14228a6657a58d88c488d24bddd699d205a07f99a41507433ff3d9c",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Observe only actual isError=true Native work results in turn-local evidence before returning the unchanged result. Retain an accepted Enhanced Native Web owner across a bounded capability-paused canonical steering reconnect. Revalidate observer claims across async resume and retire on lost ownership. Deliver late steering as a normal unaccepted final-control receipt, preserving exactly one atomic accepted final, explicit cancellation, deadlines, public ABI and context boundaries. Cover production primitives and MCP IPC in offline lifecycle simulation.",
+    "evidence": {"path":".github/upstream-audit/evidence/3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923.tar.gz","sha256":"3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923","bytes":153405}
   },
   {
     "path": "src/cli-help.ts",
@@ -324,9 +324,9 @@
   {
     "path": "tests/enhanced-output-tunnel.test.ts",
     "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "a1933eafba6d225dca184a4921aacbfc7b64b0acbdbf4481a5750cb6729a71be",
-    "currentSha256": "35c318b40559c18bf75a9281bf20181db6ca37d9d66b4bc46896ff0c78bd0200",
-    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
-    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+    "currentSha256": "3b32c0a875c8f8ab52ba295c184d0ac62ff390937d0eb67985ae54696eb979b6",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Retain an accepted Enhanced Native Web owner across a bounded capability-paused canonical steering reconnect. Revalidate observer claims across async resume and retire on lost ownership. Deliver late steering as a normal unaccepted final-control receipt, preserving exactly one atomic accepted final, explicit cancellation, deadlines, public ABI and context boundaries. Cover production primitives and MCP IPC in offline lifecycle simulation.",
+    "evidence": {"path":".github/upstream-audit/evidence/3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923.tar.gz","sha256":"3a6066d0c96cd6c97d74cacdc33f1bc5929d4d958433937b00e44595928b2923","bytes":153405}
   },
   {
     "path": "tests/model-unavailable-replay.test.ts",

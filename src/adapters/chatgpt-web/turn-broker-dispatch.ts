@@ -29,6 +29,7 @@ import { submitTurnOutput } from "./turn-broker-output";
 import { readAgentWait, startAgentWait } from "./turn-broker-agent-wait";
 import { assertRetirementFailure } from "./turn-broker-protocol";
 import { chatGptToolTimeoutError } from "./adapter-error";
+import { waitForTurnObserver } from "./turn-broker-observer";
 
 interface DispatchState {
   acceptingExternalOwners(): boolean;
@@ -68,6 +69,7 @@ export async function dispatchTurnBrokerRequest(
     registerExternalSafe: state.registerExternalSafe,
     register: owner.register.bind(owner),
     registerSafe: owner.registerSafe.bind(owner),
+    setObserverConnected: owner.setObserverConnected?.bind(owner),
     updateEnvironment: owner.updateEnvironment.bind(owner),
     confirmSafeTurnSent: owner.confirmSafeTurnSent.bind(owner),
     nextToolBatch: owner.nextToolBatch.bind(owner),
@@ -100,12 +102,25 @@ export async function dispatchTurnBrokerRequest(
     if (typeof request.outputText !== "string") throw new Error("Codex Native output text is required");
     const channel = state.channels.get(request.token);
     if (!channel) throw new Error("turn token is invalid, expired, or revoked");
+    const activityRevision = channel.activityRevision;
+    await waitForTurnObserver(channel, signal);
+    if (state.channels.get(request.token) !== channel) throw new Error("turn token is invalid, expired, or revoked");
     let submitted: ReturnType<typeof submitTurnOutput>;
     try {
       if (request.outputKind === "final" && state.contexts.hasIncomplete(request.token)) {
         throw new Error("Read and verify the complete Codex context archive before submitting final output");
       }
+      if (request.outputKind === "final" && activityRevision !== channel.activityRevision
+        && !channel.steeringInstruction && channel.outputFinalSequence === undefined) {
+        return { accepted: false, reason: "steering", instruction:
+          "This final attempt was overtaken by Native turn activity or reconnection and was not accepted. Apply the latest instruction already delivered to this turn, then submit the updated complete answer." };
+      }
       submitted = submitTurnOutput(channel, request.outputKind!, request.outputText, request.nextMessagePrediction);
+      if ("steering" in submitted) {
+        console.info(`[chatgpt-web] broker trace=${channel.traceId} delivered queued native steering through output control`);
+        return { accepted: false, reason: "steering", instruction:
+          `A new user instruction arrived. Continue any unfinished work with this update, then submit the complete final answer:\n\n${submitted.steering}` };
+      }
     } catch (error) {
       const kind = ["commentary", "reasoning", "final"].includes(request.outputKind!) ? request.outputKind : "invalid";
       try {
@@ -153,7 +168,7 @@ export async function dispatchTurnBrokerRequest(
     if (channel.completedActivities.has(request.activityId)) return { completed: false, duplicate: true };
     return { completed: completeTurnActivity(channel, request.activityId) };
   }
-  return invoke(request, state);
+  return invoke(request, state, signal);
 }
 
 async function claim(request: BrokerRequest, signal: AbortSignal, state: DispatchState): Promise<unknown> {
@@ -178,6 +193,8 @@ async function claim(request: BrokerRequest, signal: AbortSignal, state: Dispatc
       + " This Codex Native action can no longer run."
       : "turn token is invalid, expired, or revoked");
   }
+  await waitForTurnObserver(activeChannel, signal);
+  if (state.channels.get(token) !== activeChannel) throw new Error("turn token is invalid, expired, or revoked");
   if (activeChannel.finalizationOnly) {
     throw new Error("Codex Native work tools are closed during final-answer recovery; call codex.control.output with kind=final");
   }
@@ -217,7 +234,8 @@ async function claim(request: BrokerRequest, signal: AbortSignal, state: Dispatc
   return { bindingId, activityId: request.activityId, environment: activeChannel.environment };
 }
 
-function invoke(request: BrokerRequest, state: DispatchState): unknown {
+function invoke(request: BrokerRequest, state: DispatchState, signal?: AbortSignal): unknown {
+  signal?.throwIfAborted();
   const bindingId = request.bindingId;
   if (typeof bindingId !== "string" || bindingId.length === 0) throw new Error("binding id is required");
   const binding = state.bindings.get(bindingId);
@@ -242,6 +260,9 @@ function invoke(request: BrokerRequest, state: DispatchState): unknown {
     return { released: true, ...(request.failure === undefined ? {} : { diagnostics: state.retiredBindings.get(bindingId)! }) };
   }
   if (request.method === "resolve") return { environment: binding.channel.environment };
+  if (binding.channel.observerPause) {
+    return waitForTurnObserver(binding.channel, signal).then(() => invoke(request, state, signal));
+  }
   assertSafeHarnessRunning(binding.channel);
   if (binding.channel.outputSealed) {
     throw new Error("Codex Native work cannot start after DOM fallback was sealed");

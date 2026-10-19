@@ -15,6 +15,7 @@ export const codexLifecycleTests = [
   "tests/compaction-continuation-registry.test.ts",
   "tests/trusted-environment-cleanup.test.ts",
   "tests/native-steering-boundary.test.ts",
+  "tests/native-observer-handoff.test.ts",
   "tests/local-compaction-release.test.ts",
   "tests/subagent-environment-inheritance.test.ts",
 ] as const;

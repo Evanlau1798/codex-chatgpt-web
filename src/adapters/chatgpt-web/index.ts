@@ -193,6 +193,7 @@ export function createChatGptWebAdapter(
     name: "chatgpt-web",
     async runTurn(parsed, incoming, emit) {
       const observerAbort = new AbortController();
+      let releaseObserver = () => {};
       incoming = { ...incoming, abortSignal: incoming.abortSignal
         ? AbortSignal.any([incoming.abortSignal, observerAbort.signal]) : observerAbort.signal };
       const write = emit;
@@ -368,6 +369,27 @@ export function createChatGptWebAdapter(
       await chatGptTurnSessions.waitForRetirement(executionKey, incoming.abortSignal);
       let session = await sessionForChatGptRequest(chatGptTurnSessions, executionKey, parsed,
         () => startRuntimeForTurn(parsed, environment, traceId, turnCapabilities), executionNamespace, useEnhancedWebSessionMode, traceId, incoming.abortSignal);
+      let observerEpoch = 0;
+      const bindObserver = () => {
+        releaseObserver();
+        const owner = session;
+        observerEpoch = owner.observerHandoff.attach(owner.userRevisionKey());
+        const epoch = observerEpoch;
+        const disconnect = () => {
+          if (owner.isActive() && owner.runtime.submission?.phase === "accepted" && owner.runtime.setObserverConnected) {
+            console.info(`[chatgpt-web] browser turn ${traceId} native observer detached; awaiting canonical steering reconnect`);
+            owner.observerHandoff.detach(epoch, owner.runtime.setObserverConnected,
+              () => {
+                console.info(`[chatgpt-web] browser turn ${traceId} native observer handoff closed without resumption`);
+                chatGptTurnSessions.retire(executionKey, owner);
+              });
+          }
+        };
+        incoming.abortSignal?.addEventListener("abort", disconnect, { once: true });
+        releaseObserver = () => incoming.abortSignal?.removeEventListener("abort", disconnect);
+        if (incoming.abortSignal?.aborted) disconnect();
+      };
+      bindObserver();
       if (session.runtime.mode === "tools" && !environment) {
         environment = await resolveTrustedCodexEnvironment(environmentStore, parsed, executionKey);
       }
@@ -541,6 +563,9 @@ export function createChatGptWebAdapter(
                 if (useEnhancedWebSessionMode) deliverPendingChatGptSteering(session, broker, turnToken, traceId);
               }
             } else if (useEnhancedWebSessionMode) deliverPendingChatGptSteering(session, broker, turnToken, traceId);
+            if (await session.observerHandoff.resume()) {
+              console.info(`[chatgpt-web] browser turn ${traceId} native observer resumed on existing Web owner`);
+            }
           } else if (session.outstanding().length > 0) {
             throw new Error("Read-only ChatGPT Web runtime cannot own local tool calls");
           }
@@ -696,10 +721,12 @@ export function createChatGptWebAdapter(
           await chatGptTurnSessions.retireAndWait(executionKey, incoming.abortSignal);
           session = await sessionForChatGptRequest(chatGptTurnSessions, executionKey, recoveryInput,
             () => startRuntimeForTurn(recoveryInput, environment, traceId, turnCapabilities), executionNamespace, useEnhancedWebSessionMode, traceId, incoming.abortSignal);
+          bindObserver();
           await session.runExclusive(async () => { session.observeCanonicalRequest(parsed); });
         }
         if (useEnhancedWebSessionMode && parsed._localCompactionRequest) { const key = chatGptConversationKey(parsed, executionNamespace); if (key) await chatGptTurnSessions.retireConversationAndWait(key); }
       } catch (error) {
+        if (incoming.abortSignal?.aborted && session.observerHandoff.preserves(observerEpoch)) throw error;
         if (observerAbort.signal.aborted && !session.runtime.manualControl) throw observerAbort.signal.reason;
         const failure = awaitingRuntime ? session.settledOutcome() : undefined;
         if (failure?.type === "error") error = failure.error;
@@ -778,6 +805,7 @@ export function createChatGptWebAdapter(
         }
         throw error;
       } finally {
+        releaseObserver();
         clearInterval(heartbeat);
         if (!manualInteraction) {
           if (retainedSafetyTraceId) accountSafety.releaseTrace(retainedSafetyTraceId);

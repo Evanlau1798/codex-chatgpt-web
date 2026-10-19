@@ -288,7 +288,7 @@ test("Enhanced manual compact returns its summary through the one-shot control c
   }
 }, 20_000);
 
-test("Enhanced streaming retains one production surface and fully cleans an aborted continuation", async () => {
+test("Enhanced streaming retains one production surface and fully cleans an explicitly interrupted continuation", async () => {
   const root = join(tmpdir(), `cgw-production-enhanced-stream-${process.pid}-${Date.now()}`);
   mkdirSync(root, { recursive: true });
   const config = defaultConfig("full");
@@ -411,6 +411,13 @@ test("Enhanced streaming retains one production surface and fully cleans an abor
     await cancellationReady;
     controller.abort();
     await cancelled;
+    // A sampling disconnect can also be queued steering; Stop carries the exact native identity.
+    const interrupt = await fetch(`${endpoint}/admin/interrupt-turn`, {
+      method: "POST", headers: { ...jsonHeaders, authorization: `Bearer ${config.controlToken}` },
+      body: JSON.stringify({ threadId: "enhanced-thread", turnId: cancelTurnId }),
+    });
+    expect(interrupt.status).toBe(200);
+    expect(await interrupt.json()).toMatchObject({ cancelled_browser_turns: 1 });
     for (let attempt = 0; attempt < 50 && chatGptTurnSessions.activeCount() > 0; attempt += 1) await Bun.sleep(10);
     const health = await fetch(`${endpoint}/healthz`).then(response => response.json()) as Record<string, unknown>;
     expect(turns.at(-1)?.conversationKey).toBe(turns[0]!.conversationKey);
