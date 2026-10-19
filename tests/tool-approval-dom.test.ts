@@ -73,3 +73,34 @@ domTest("an approval waits for its actions to finish mounting", async () => {
     expect(await page.locator("body").getAttribute("data-chosen")).toBe("Allow once");
   });
 }, 20_000);
+
+domTest("automatic approval waits for the requesting message to finish streaming", async () => {
+  await withPage(async page => {
+    await page.setContent(card() + '<button data-testid="stop-button">Stop</button>');
+    await page.getByRole("button", { name: "Allow once", exact: true }).evaluate(button => {
+      (button as HTMLElement).onclick = () => {
+        document.body.dataset.chosen = document.querySelector('[data-testid="stop-button"]')
+          ? "Invalid conversation body" : "Allow once";
+        button.closest("section")!.remove();
+      };
+    });
+    const approval = resolveChatGptToolConfirmation(page, "Codex Native2", true, undefined, 2_000);
+    await page.waitForTimeout(150);
+    expect(await page.locator("body").getAttribute("data-chosen")).toBeNull();
+    await page.getByTestId("stop-button").evaluate(button => button.remove());
+    expect(await approval).toBeTrue();
+    expect(await page.locator("body").getAttribute("data-chosen")).toBe("Allow once");
+  });
+}, 20_000);
+
+domTest("streaming approval timeout and cancellation never click a permission button", async () => {
+  await withPage(async page => {
+    for (const cancel of [false, true]) {
+      await page.setContent(card() + '<button data-testid="stop-button">Stop</button>');
+      const signal = cancel ? AbortSignal.timeout(100) : undefined;
+      await expect(resolveChatGptToolConfirmation(page, "Codex Native2", true, signal, 200)).rejects.toThrow();
+      expect(await page.locator("body").getAttribute("data-chosen")).toBeNull();
+      expect(await page.locator("section").count()).toBe(1);
+    }
+  });
+}, 20_000);

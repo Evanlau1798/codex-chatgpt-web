@@ -2083,7 +2083,7 @@ test("a live helper retains exclusive ownership of its running turn", async () =
   );
 });
 
-test("a replacement helper takes over only after the previous owner exited", async () => {
+test("a replacement helper cannot acquire a running turn as a fresh submission after its owner exits", async () => {
   const deadPid = 2_147_483_647;
   const tab = {
     id: "tab-dead-owner",
@@ -2114,13 +2114,14 @@ test("a replacement helper takes over only after the previous owner exited", asy
     logger: { info() {}, warn: (event, detail) => warnings.push([event, detail]) },
   });
 
-  const lease = await BrowserHost.prototype.beginTurn.call(fixture, tab.traceId, false, process.pid);
-
-  assert.deepEqual(lease, { surfaceId: tab.surfaceId, tabId: tab.id, reused: false });
-  assert.equal(tab.helperPid, process.pid);
-  assert.equal(warnings.length, 1);
-  assert.equal(warnings[0][0], "browser.stale_turn_owner_replaced");
-  assert.equal(warnings[0][1].previousHelperPid, deadPid);
+  await assert.rejects(() => BrowserHost.prototype.beginTurn.call(fixture, tab.traceId, false, process.pid), {
+    code: "turn_owner_lost",
+  });
+  assert.equal(tab.helperPid, deadPid);
+  assert.equal(tab.status, "running");
+  assert.equal(fixture.turnTabs.get(tab.id), tab);
+  assert.equal(fixture.selectedTabId, "home");
+  assert.equal(warnings.length, 0);
 });
 
 test("a live turn heartbeat refreshes its lease and rejects another helper", () => {

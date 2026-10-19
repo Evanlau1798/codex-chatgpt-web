@@ -554,6 +554,14 @@ export class ChatGptThreadEnvironmentStore {
       }
     }
 
+    console.warn(`[chatgpt-web] trusted_environment_recovery ${JSON.stringify({
+      currentContext: hasCurrentContext,
+      compactionContinuation: currentCompaction,
+      nativeMetadata: rolloutIdentity !== undefined,
+      nativeTurnId: identity.turnId !== undefined,
+      registeredHomes: this.codexHomes.length,
+      nativeRolloutFound: false,
+    })}`);
     if (this.codexHomes.length > 1) {
       // Multiple registered owners must always have an exact current native
       // rollout. Historical envelopes, inherited permissions and cache entries
@@ -567,7 +575,10 @@ export class ChatGptThreadEnvironmentStore {
     const missingEnvironment = directError as MissingTrustedCodexEnvironmentError;
     // Only a current native rollout can supersede an unrecognized historical envelope. Without
     // that proof, do not turn arbitrary history or an invalid update into cached authority.
-    if (hasRawChatGptEnvironmentContext(parsed)) throw missingEnvironment;
+    if (hasRawChatGptEnvironmentContext(parsed)) {
+      console.warn("[chatgpt-web] trusted_environment_recovery rejected=unrecognized_current_context");
+      throw missingEnvironment;
+    }
     const sameThread = this.get(identity.threadId);
     if (sameThread) return {
       cwd: sameThread.cwd,

@@ -256,12 +256,16 @@ export async function ensureChatGptPersonalizedConnectorAccess(
     return await ensureWithinDeadline(page, deadline, signal, captureDiagnostic, proveConnectorAccess);
   } catch (error) {
     if (error instanceof ChatGptPersistentBrowserStateError) throw error;
+    const guidance = " If the connector works in a regular chat, enable Launcher → Settings → Save chats in ChatGPT, finish active tasks, then restart the launcher and Codex. Task chats will be kept in your ChatGPT history.";
     if (!abortSignal?.aborted && (
       error instanceof ChatGptBrowserMutationDeadlineError
       || deadlineController.signal.aborted
       || Date.now() >= deadline
     )) {
-      throw unavailable("ChatGPT personalization preflight exceeded its readiness deadline");
+      throw unavailable("ChatGPT did not expose usable personalization controls for this Temporary Chat." + guidance);
+    }
+    if (error instanceof ChatGptWebAdapterError && error.code === "connector_not_found") {
+      throw unavailable(error.message + guidance);
     }
     throw error;
   } finally {

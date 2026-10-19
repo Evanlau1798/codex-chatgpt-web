@@ -9,6 +9,24 @@ const group = (key: string, text: string | undefined, answer: string, complete =
     <div data-content-search-unit-key="${key}:assistant"><div data-conversation-role="assistant"></div><div data-markdown-text-style="assistant-message"><p>${escape(answer)}</p></div></div>
     ${complete ? '<div class="turn-action-controls"><button>Copy</button></div>' : ""}</div>`;
 
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("a previously acknowledged but unmounted stage cannot acknowledge the next Send when it returns", async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  try {
+    const page = await browser.newPage();
+    const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+    const stage = { ...formatChatGptWebMultipartStage('{"context":"Earlier context"}', `ctx_${"f".repeat(32)}`, 1, 6),
+      identities: ["group:assistant:earlier"] };
+    await page.setContent("<main></main>");
+    const baseline = await worker.captureSubmissionBaseline(page, "Next context part", [stage]);
+    await page.locator("main").evaluate((node, html) => { node.innerHTML = html; }, group("earlier", stage.text, stage.acknowledgement));
+    expect(await worker.currentSubmissionEvidence(page, baseline)).toBeUndefined();
+    expect(baseline.acceptedUserIdentity).toBeUndefined();
+    await page.locator("main").evaluate((node, html) => { node.insertAdjacentHTML("beforeend", html); }, group("next", "Next context part", "", false));
+    expect(await worker.currentSubmissionEvidence(page, baseline)).toBe("user_turn");
+    expect(baseline.acceptedUserIdentity).toBe("group:user:next");
+  } finally { await browser.close(); }
+});
+
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("a new multipart user message is accepted before ChatGPT mounts its assistant area", async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
   try {
@@ -49,6 +67,9 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("pending multipart submission
         await page.setContent(`<main>${stages.map((stage, index) => group(`stage-${index}`, stage.text, stage.acknowledgement)).join("")}</main>`);
         const prompt = "Next context message.\n" + "inert history\n".repeat(15_000);
         const baseline = await worker.captureSubmissionBaseline(page, prompt, stages);
+        // The saved-chat virtualizer can remove an entire earlier group, not just
+        // its message section, as a large next part is submitted.
+        await page.locator('[data-turn-key="stage-0"]').evaluate(node => node.remove());
         await page.locator("main").evaluate((node, html) => { node.insertAdjacentHTML("beforeend", html); }, group("pending", prompt.slice(0, 10_240), "", false));
         await page.locator('[data-turn-key="pending"] [data-user-message-bubble]').evaluate(bubble => {
           const button = document.createElement("button");
@@ -180,6 +201,10 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("rekeyed multipart stages ver
           button.setAttribute("data-markdown-copy", "exclude");
           button.textContent = "Показать ещё";
           button.onclick = () => {
+            if (button.getAttribute("aria-expanded") === "true") {
+              button.setAttribute("aria-expanded", "false");
+              return;
+            }
             bubble.querySelector("[data-search-result-target]")!.textContent = data.text;
             button.setAttribute("aria-expanded", "true");
             if (data.duplicate) {
@@ -200,7 +225,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("rekeyed multipart stages ver
         if (scenario === "complete") {
           expect(result).toEqual({ value: undefined });
           expect(baseline.acknowledgedStages[0].identities).toContain("group:assistant:persisted");
-          expect(await page.locator('[aria-expanded="true"]').count()).toBe(1);
+          expect(await page.locator('[aria-expanded="true"]').count()).toBe(0);
         } else expect(result.error).toBeInstanceOf(Error);
       } finally { await page.close(); }
     }

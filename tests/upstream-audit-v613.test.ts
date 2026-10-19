@@ -188,7 +188,7 @@ test("v6.1.3 evidence is content-addressed, references v6.1.2, and reconstructs 
   }
 }, 30_000);
 
-test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8", "v6.1.10", "v6.1.11"])("continuing %s evidence closes source anchors and reconstructs the original merge from retained prerequisites", release => {
+test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8", "v6.1.10", "v6.1.11", "v6.1.12"])("continuing %s evidence closes source anchors and reconstructs the original merge from retained prerequisites", release => {
   const next = JSON.parse(readFileSync(resolve(root, `.github/upstream-audit/${release}.json`), "utf8"));
   if (release === "v6.1.5") {
     expect(next.coverage).toEqual({paths: 54, hunks: 202, testPaths: 21, testCaseDeltas: 61, pending: 0, missing: 0});
@@ -215,7 +215,7 @@ test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8", "v6.1.10", "v6.1.11"])("conti
     expect(next.evidence.path).toBe(`.github/upstream-audit/evidence/${next.evidence.sha256}.tar.gz`);
   }
   const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
-  const publishedObjects = release === "v6.1.7" || release === "v6.1.8" || release === "v6.1.10" || release === "v6.1.11"
+  const publishedObjects = release === "v6.1.7" || release === "v6.1.8" || release === "v6.1.10" || release === "v6.1.11" || release === "v6.1.12"
     ? new Set(git(["rev-list", "--objects", "HEAD"]).split(/\r?\n/).map(line => line.split(" ")[0])) : undefined;
   const retainedTargets = new Map<string, Buffer>();
   if (next.evidence.targetBlobs) {

@@ -1,6 +1,26 @@
 import { expect, test } from "bun:test";
 import { ensureChatGptPersonalizedConnectorAccess } from "../src/adapters/chatgpt-web/personalization";
 
+test("the absolute personalization deadline always returns the connector deadline error", async () => {
+  const originalNow = Date.now;
+  let now = 10_000;
+  let countReads = 0;
+  Date.now = () => now;
+  const absent = visibleLocator(() => {
+    countReads += 1;
+    if (countReads === 2) now += 30_001;
+    return 0;
+  });
+  try {
+    await expect(ensureChatGptPersonalizedConnectorAccess({ getByRole: () => absent } as any))
+      .rejects.toMatchObject({
+        status: 424,
+        code: "connector_not_found",
+        message: expect.stringContaining("enable Launcher → Settings → Save chats in ChatGPT"),
+      });
+  } finally { Date.now = originalNow; }
+});
+
 function visibleLocator(count: () => number, overrides: Record<string, unknown> = {}) {
   const locator = {
     filter: () => locator,

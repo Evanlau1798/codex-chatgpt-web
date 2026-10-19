@@ -177,8 +177,32 @@ function artifact(root: string, extension: string): string {
   return join(directory, name);
 }
 
+test("page-state console output bounds long retained history without truncating disk evidence", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-bounded-log-"));
+  const originalInfo = console.info;
+  const logs: string[] = [];
+  console.info = value => { logs.push(String(value)); };
+  const assistants = Array.from({ length: 1000 }, (_, textChars) => ({ textChars, htmlChars: textChars + 1 }));
+  const state = { ...diagnosticState, turns: { ...diagnosticState.turns, assistant: assistants } };
+  try {
+    await new ChatGptBrowserDiagnostics("bounded-history", root).capture({ evaluate: async () => state } as any, "turn-failed");
+    const line = logs.find(line => line.startsWith("[chatgpt-web] page_state "))!;
+    expect(line.length).toBeLessThan(8_000);
+    const logged = JSON.parse(line.slice("[chatgpt-web] page_state ".length));
+    expect(logged.state.turns.assistant).toEqual({ count: 1000, omitted: 960, recent: assistants.slice(-40) });
+    const disk = JSON.parse(readFileSync(artifact(root, ".json"), "utf8"));
+    expect(disk.state.turns.assistant).toEqual(assistants);
+  } finally {
+    console.info = originalInfo;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("preserves DOM diagnostic JSON when screenshot capture times out", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-browser-diagnostic-"));
+  const originalInfo = console.info;
+  const logs: string[] = [];
+  console.info = value => { logs.push(String(value)); };
   try {
     let screenshotCalls = 0;
     const page = {
@@ -192,8 +216,13 @@ test("preserves DOM diagnostic JSON when screenshot capture times out", async ()
     expect(JSON.stringify(json.state)).not.toMatch(/https:|Temporary Chat|surface-test/);
     expect(json.screenshotError).toBeUndefined();
     expect(screenshotCalls).toBe(0);
+    const logged = JSON.parse(logs.find(line => line.startsWith("[chatgpt-web] page_state "))!.slice("[chatgpt-web] page_state ".length));
+    expect(logged.traceId).toBe("trace_json_survives");
+    expect(logged.state).toEqual(json.state);
+    expect(JSON.stringify(logged)).not.toMatch(/https:|Temporary Chat|surface-test/);
     expect(() => artifact(root, ".png")).toThrow("missing diagnostic .png");
   } finally {
+    console.info = originalInfo;
     rmSync(root, { recursive: true, force: true });
   }
 });

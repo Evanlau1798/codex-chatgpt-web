@@ -2050,13 +2050,12 @@ class BrowserHost {
         if (processRunning(existing.helperPid)) {
           throw new Error(`ChatGPT browser turn ${traceId} is owned by another helper process`);
         }
-        this.logger.warn("browser.stale_turn_owner_replaced", {
-          tabId: existing.id,
-          traceId,
-          previousHelperPid: existing.helperPid,
-          helperPid,
-          evidence: "previous helper exited",
-        });
+        // The old helper may already have submitted this message. Its process
+        // exit supplies no proof of the current response or submission boundary.
+        // Never hand its running document to the fresh-prompt path.
+        const error = new Error("The browser helper exited while this ChatGPT turn was running. Check the existing ChatGPT tab before retrying; the message may already have been submitted.");
+        error.code = "turn_owner_lost";
+        throw error;
       }
       if (startupPrepared && sameTrace?.failedAt !== undefined) this.removeTurnTab(sameTrace, false);
       if (startupPrepared) this.rememberClosedTurnOwner(existing.traceId, existing.helperPid);

@@ -24,6 +24,14 @@ export class LauncherRetainedConversationUnavailableError extends Error {
 
 export * from "./launcher-manual-control";
 
+export class LauncherBrowserTurnOwnerLostError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LauncherBrowserTurnOwnerLostError";
+  }
+}
+
+
 export interface LauncherBrowserHostDescriptor {
   version: 3;
   kind: typeof LAUNCHER_BROWSER_HOST_KIND;
@@ -421,6 +429,16 @@ export async function notifyLauncherTurn(
           typeof body.error === "string" ? body.error : `Browser turn ${activity.traceId} was cancelled by the user`,
         );
       }
+      if (response.status === 409 && body.code === "retained_conversation_unavailable") {
+        throw new LauncherRetainedConversationUnavailableError(
+          typeof body.error === "string" ? body.error : "The retained ChatGPT conversation is no longer available",
+        );
+      }
+      if (response.status === 409 && body.code === "turn_owner_lost") {
+        throw new LauncherBrowserTurnOwnerLostError(
+          typeof body.error === "string" ? body.error : "The running ChatGPT turn lost its browser helper. Check its tab before retrying.",
+        );
+      }
       const detail = typeof body.error === "string" ? body.error : "";
       throw new Error(`HTTP ${response.status}${detail ? `: ${detail}` : ""}`);
     }
@@ -458,6 +476,7 @@ export async function notifyLauncherTurn(
     if (signal?.aborted) throw new DOMException("Launcher browser acquisition cancelled", "AbortError");
     if (controller.signal.aborted) throw new Error(`Launcher browser control ${activity.phase} timed out after ${timeoutMs}ms`);
     if (error instanceof LauncherBrowserTurnCancelledError
+      || error instanceof LauncherBrowserTurnOwnerLostError
       || error instanceof LauncherRetainedConversationUnavailableError) throw error;
     throw new Error(`Launcher browser control channel failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {

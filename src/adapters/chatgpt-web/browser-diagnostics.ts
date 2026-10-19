@@ -160,6 +160,11 @@ export class ChatGptBrowserDiagnostics {
       this.writeEnvelope(jsonPath, envelope);
 
       if (failed) {
+        console.info(`[chatgpt-web] page_state ${JSON.stringify({
+          traceId: this.traceId, checkpoint: stem,
+          ...(stateError ? { unavailable: true } : { state: sanitizeChatGptBrowserDiagnosticState(state) }),
+        }, (_key, value) => Array.isArray(value) && value.length > 40
+          ? { count: value.length, omitted: value.length - 40, recent: value.slice(-40) } : value)}`);
         // Preserve bounded, content-free structural and actionability evidence
         // when a failing renderer is replaced. Never log account or prompt text.
         if (responseStructure) {
