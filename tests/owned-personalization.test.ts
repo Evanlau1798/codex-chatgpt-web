@@ -3,13 +3,20 @@ import { runInNewContext } from "node:vm";
 import { registerOwnedChatGptWorkPage, recoverOwnedTemporaryPersonalization } from "../src/adapters/chatgpt-web/owned-personalization";
 import { ensureChatGptPersonalizedConnectorAccess } from "../src/adapters/chatgpt-web/personalization";
 
-function fixture(options: { url?: string; gate?: boolean; layer?: boolean; ready?: boolean; clients?: number; notifyFails?: boolean } = {}) {
+function fixture(options: { url?: string; gate?: boolean; layer?: boolean; ready?: boolean; clients?: number; notifyFails?: boolean;
+  gateThrows?: boolean; layerThrows?: boolean; layerNull?: boolean } = {}) {
   let notifications = 0, evaluations = 0;
   const listeners = new Map<string, () => void>();
   const location = { href: options.url ?? "https://chatgpt.com/?temporary-chat=true" };
-  const original = (name: string) => ({ value: name === "2958953032" ? options.gate === true : false, ruleID: "original" });
+  const original = (name: string) => {
+    if (options.gateThrows) throw new Error("SDK gate unavailable");
+    return { value: name === "2958953032" ? options.gate === true : false, ruleID: "original" };
+  };
   const client = { loadingStatus: options.ready === false ? "Loading" : "Ready", getFeatureGate: original,
-    getLayer: () => ({ get: () => options.layer !== false }),
+    getLayer: () => {
+      if (options.layerThrows) throw new Error("SDK layer unavailable");
+      return options.layerNull ? null : { get: () => options.layer !== false };
+    },
     $emt: () => { notifications++; if (options.notifyFails) throw new Error("notification failed"); } };
   const descriptor = Object.getOwnPropertyDescriptor(client, "getFeatureGate");
   const w: any = { __STATSIG__: { firstInstance: client,
@@ -101,4 +108,24 @@ test("native controls keep the recovery callback dormant and abort prevents a pa
   await expect(ensureChatGptPersonalizedConnectorAccess(f.page, undefined, undefined, abort.signal,
     async () => { attempts++; return true; })).rejects.toBeDefined();
   expect(attempts).toBe(0);
+});
+
+test.each([{ gateThrows: true }, { layerThrows: true }, { layerNull: true }])("SDK probe failure %j preserves the original getter without claiming recovery", async options => {
+  const f = fixture(options); registerOwnedChatGptWorkPage(f.page);
+  expect(await recoverOwnedTemporaryPersonalization(f.page)).toBe(false);
+  expect(f.client.getFeatureGate).toBe(f.descriptor!.value);
+  expect(f.notifications()).toBe(0);
+  expect(f.listeners.size).toBe(0);
+});
+
+test("an SDK probe failure falls through to the existing connector-access proof", async () => {
+  const f = fixture({ layerNull: true }); registerOwnedChatGptWorkPage(f.page);
+  f.page.getByRole = () => { const locator = { filter: () => locator, count: async () => 0 }; return locator; };
+  let proofs = 0;
+  expect(await ensureChatGptPersonalizedConnectorAccess(f.page, undefined,
+    async () => { proofs++; return true; }, undefined, () => recoverOwnedTemporaryPersonalization(f.page)))
+    .toBe("already-personalized");
+  expect(proofs).toBe(1);
+  expect(f.notifications()).toBe(0);
+  expect(f.client.getFeatureGate).toBe(f.descriptor!.value);
 });

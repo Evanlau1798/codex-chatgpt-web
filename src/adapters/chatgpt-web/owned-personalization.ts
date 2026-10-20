@@ -24,8 +24,10 @@ export async function recoverOwnedTemporaryPersonalization(page: Page): Promise<
     if (!descriptor?.writable || !descriptor.configurable || typeof descriptor.value !== "function"
       || typeof client.getLayer !== "function" || typeof client.$emt !== "function") return false;
     const original = descriptor.value;
-    if (original.call(client, "2958953032", { disableExposureLog: true })?.value !== false
-      || client.getLayer("2590740961", { disableExposureLog: true }).get("enabled", false) !== true) return false;
+    try {
+      if (original.call(client, "2958953032", { disableExposureLog: true })?.value !== false
+        || client.getLayer("2590740961", { disableExposureLog: true }).get("enabled", false) !== true) return false;
+    } catch { return false; }
     const getter = function(this: unknown, name: string, options: unknown) {
       const value = original.call(this, name, options);
       if (name !== "2958953032" || value?.value !== false || !temporary() || client.loadingStatus !== "Ready") return value;
