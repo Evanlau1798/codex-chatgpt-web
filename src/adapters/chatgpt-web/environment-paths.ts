@@ -107,6 +107,8 @@ export function isCurrentOrParentThreadVisualizationRoot(
     && /^(?:0[1-9]|[12]\d|3[01])$/.test(parts[2]!)
     && threadIds.includes(parts[3]!))) return false;
   if (pathIdentity(candidateHome) === pathIdentity(codexHome)) return true;
+  // Only local paths may trigger filesystem lookup; a local drive namespace is safe.
+  if (/^(?:\\\\|\/\/)/.test(candidateHome) && !/^\\\\\?\\[a-z]:\\/i.test(candidateHome)) return false;
   // Resolve only the home alias, never symlinks inside its visualization subtree.
   try { return pathIdentity(realpathSync(candidateHome)) === pathIdentity(realpathSync(codexHome)); }
   catch { return false; }

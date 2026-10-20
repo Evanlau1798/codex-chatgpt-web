@@ -1,9 +1,11 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, toNamespacedPath } from "node:path";
 import { parseRequest } from "../src/responses/parser";
 import { ChatGptThreadEnvironmentStore } from "../src/adapters/chatgpt-web/thread-environment";
+import { isCurrentOrParentThreadVisualizationRoot } from "../src/adapters/chatgpt-web/environment-paths";
 
 const threadId = "01a14546-fe57-74c2-b66f-86c4ed016b87";
 const turnId = "01a1454c-61e4-7bf2-9d1f-1c4d0495eb1f";
@@ -92,6 +94,7 @@ test.each(["root", "child"] as const)("%s secondary home recognizes a filesystem
   const visual = (id = threadId) => join(alias, "visualizations", "2026", "10", "16", id);
   const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, primary, undefined, [f.codexHome]);
   expect(store.resolve(f.request(visual())).roots).toEqual([f.workspace]);
+  expect(store.resolve(f.request(toNamespacedPath(visual()))).roots).toEqual([f.workspace]);
   mkdirSync(join(f.codexHome, "visualizations"), { recursive: true });
   symlinkSync(join(f.codexHome, "visualizations"), join(primary, "visualizations"),
     process.platform === "win32" ? "junction" : "dir");
@@ -105,6 +108,28 @@ test("a verified child may carry its parent visualization root", () => {
   const f = fixture("child");
   expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, f.codexHome).resolve(f.request(f.visualization(parentId))).roots)
     .toEqual([f.workspace]);
+});
+
+test.skipIf(process.platform !== "win32")("home aliases never probe UNC or device paths", () => {
+  const blocked = () => {
+    throw new Error("Filesystem boundary mocked; no network access");
+  };
+  const realpath = spyOn(fs, "realpathSync").mockImplementation(Object.assign(blocked, { native: blocked }));
+  const metadata = { thread_id: threadId };
+  const home = join(tmpdir(), "cgw-network-trusted-home");
+  try {
+    isCurrentOrParentThreadVisualizationRoot(
+      join(tmpdir(), "cgw-local-alias", "visualizations", "2026", "10", "16", threadId), metadata, home);
+    expect(realpath).toHaveBeenCalledTimes(1); // Prove interception before any network-shaped input.
+    realpath.mockClear();
+    for (const prefix of [String.raw`\\host.invalid\share`, String.raw`\\?\UNC\host.invalid\share`,
+      String.raw`\\.\GLOBALROOT\Device\probe`, String.raw`/\host.invalid\share`,
+      String.raw`\/host.invalid\share`, "//host.invalid/share"]) {
+      expect(isCurrentOrParentThreadVisualizationRoot(
+        prefix + "\\visualizations\\2026\\10\\16\\" + threadId, metadata, home)).toBe(false);
+      expect(realpath).not.toHaveBeenCalled();
+    }
+  } finally { realpath.mockRestore(); }
 });
 
 test("explicit network context still compares writable roots without granting the auxiliary path", () => {
