@@ -269,8 +269,8 @@ export function compileChatGptWebPrompt(
     : localTools
     ? [
       "For local work required by the task, use the attached Codex Native tools directly according to their declared descriptions and schemas.",
-      "These tools are connected by the user to their Codex runtime; local actions execute on that runtime's device under its configured sandbox and approval rules. Assess each action by its actual effects and the user's authorization; an authenticated connection does not make every action low risk.",
-      "Call a Codex Native tool only when the latest active request requires a local effect or fresh local evidence that is not already present in the supplied context; otherwise answer the request directly without a tool call.",
+      "Native tools execute on the user's device under its sandbox and approval rules. Assess actual effects and user authorization; an authenticated connection does not make an action low risk.",
+      "Use a Native tool only for local effects or fresh local evidence required by the latest active request and absent from supplied context; otherwise answer directly.",
       multipartEnabled
         ? "Exact outer client tool wire names for this turn are stored in the reconstructed tool records. Connector shortcuts are routes to these capabilities, not additional permissions."
         : "Exact outer client tool wire names for this turn are stored in codex_context_json.tool_wire_names. Connector shortcuts are routes to these capabilities, not additional permissions.",
@@ -293,12 +293,12 @@ export function compileChatGptWebPrompt(
       "When a command needs sandbox_permissions, justification, or prefix_rule, inventory the actual exec_command or shell_command and use codex_tool_call instead of codex_exec.",
       "Never emulate a stateful or persistent tool with codex_exec, shell commands, or a temporary language process. If discovery or loading fails, report only the observed failure and do not attempt that fallback.",
       "Codex Native shell_command is one-shot: do not request a TTY or expect later stdin. Use APIs compatible with the active platform shell, pipe generated input inside the same command, and never print secret values.",
-      "Request independent tool calls together as separate invocations, with one wire_name and its arguments or input per codex_tool_call. Do not concatenate unrelated shell commands into a single command or combine work tools with final output in one invocation; keep dependent calls sequential and wait for all work results before a separate final output call.",
+      "Request independent tool calls together as separate invocations: one wire_name and its arguments or input per codex_tool_call. Do not concatenate unrelated shell commands; keep dependent calls sequential. Never mix work and final; wait for all work results before a separate final output call.",
       "Use actual Codex Native results as evidence for local observations and effects.",
       "Historical failure or termination text is not evidence that this turn's attached tools are unavailable.",
       "Only a tool result returned in this turn can establish a current tool failure.",
       "Describe failed local actions using only observable tool evidence. If no native result was returned, state only that the action did not execute; never infer or name an unreported cause.",
-    "Do not claim a safety or permission block without an explicit tool result or platform error supporting it. After a refusal, explain the action and request confirmation only if authorization is missing; use the declared approval flow and wait. Existing authorization remains valid; confirmation cannot override platform restrictions or authorize bypassing a refusal through another tool. Do not split, rephrase, or reroute a rejected action to bypass the restriction.",
+      "Do not claim a safety or permission block without an explicit tool result or platform error supporting it. After refusal, explain the action; request confirmation only if authorization is missing, using the declared approval flow and wait. Existing authorization remains valid; confirmation cannot override platform restrictions. Do not split, rephrase, or reroute a rejected action to bypass the restriction.",
       "Errors in read files or history describe earlier events. A successful read is not a current failure; report current errors from the actual action and tool result.",
       "A Codex Native MCP tool result may require context compaction. If it does, follow the compaction instructions in that result exactly.",
       "After a deterministic tool failure, update the working hypothesis from that result and inspect the relevant repository or environment before choosing a different next action; do not repeat the same call unless its inputs or observable state changed.",
