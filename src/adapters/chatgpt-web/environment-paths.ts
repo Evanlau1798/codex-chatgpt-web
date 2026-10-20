@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep, toNamespacedPath } from "node:path";
 
@@ -94,14 +95,19 @@ export function isCurrentOrParentThreadVisualizationRoot(
     .filter(Boolean);
   if (threadIds.length === 0) return false;
 
-  const base = pathIdentity(join(resolve(codexHome), "visualizations"));
+  const candidateHome = resolve(path, "../../../../..");
+  const base = pathIdentity(join(candidateHome, "visualizations"));
   const rel = relative(base, pathIdentity(path));
   if (!rel || rel.startsWith("..") || isAbsolute(rel)) return false;
 
   const parts = rel.split(sep);
-  return parts.length === 4
+  if (!(parts.length === 4
     && /^\d{4}$/.test(parts[0]!)
     && /^(?:0[1-9]|1[0-2])$/.test(parts[1]!)
     && /^(?:0[1-9]|[12]\d|3[01])$/.test(parts[2]!)
-    && threadIds.includes(parts[3]!);
+    && threadIds.includes(parts[3]!))) return false;
+  if (pathIdentity(candidateHome) === pathIdentity(codexHome)) return true;
+  // Resolve only the home alias, never symlinks inside its visualization subtree.
+  try { return pathIdentity(realpathSync(candidateHome)) === pathIdentity(realpathSync(codexHome)); }
+  catch { return false; }
 }

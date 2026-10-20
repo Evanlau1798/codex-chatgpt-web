@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseRequest } from "../src/responses/parser";
@@ -81,6 +81,24 @@ test.each(["root", "child"] as const)("%s tolerates its exact visualization root
   expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, f.codexHome).resolve(parsed)).toMatchObject(expected);
   (parsed._rawBody as { input: unknown[] }).input.shift();
   expect(store.resolve(parsed)).toMatchObject(expected);
+});
+
+test.each(["root", "child"] as const)("%s secondary home recognizes a filesystem alias without trusting another home", actor => {
+  const f = fixture(actor);
+  const primary = mkdtempSync(join(tmpdir(), "cgw-primary-viz-alias-"));
+  homes.push(primary);
+  const alias = join(primary, "secondary-alias");
+  symlinkSync(f.codexHome, alias, process.platform === "win32" ? "junction" : "dir");
+  const visual = (id = threadId) => join(alias, "visualizations", "2026", "10", "16", id);
+  const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, primary, undefined, [f.codexHome]);
+  expect(store.resolve(f.request(visual())).roots).toEqual([f.workspace]);
+  mkdirSync(join(f.codexHome, "visualizations"), { recursive: true });
+  symlinkSync(join(f.codexHome, "visualizations"), join(primary, "visualizations"),
+    process.platform === "win32" ? "junction" : "dir");
+  for (const extra of [visual(foreignId), join(visual(), "child"),
+    join(primary, "visualizations", "2026", "10", "16", threadId)]) {
+    expect(() => store.resolve(f.request(extra))).toThrow("current Codex rollout");
+  }
 });
 
 test("a verified child may carry its parent visualization root", () => {
