@@ -237,6 +237,7 @@ import {
   settleAbortedChatGptMutation,
 } from "../../browser-mutation";
 import { ensureChatGptPersonalizedConnectorAccess } from "./personalization";
+import { registerOwnedChatGptWorkPage, recoverOwnedTemporaryPersonalization } from "./owned-personalization";
 import { verifyCurrentConnectorContract } from "./connector-contract";
 
 export { MAX_CHATGPT_BROWSER_TABS } from "./concurrency";
@@ -1491,6 +1492,7 @@ export class ChatGptBrowserWorker {
       descriptorPath: this.config.browserHostDescriptorPath!, connectorIdentity: this.config.appName,
       prefix: ` ${prefix}`,
       prepare: async (page, signal) => {
+        registerOwnedChatGptWorkPage(page);
         await this.prepareChatSurface(page, undefined, this.config.useSavedChats);
         signal.throwIfAborted();
         const mode = await this.selectModelAndEffort(page, modelId, reasoning, capabilities,
@@ -2891,6 +2893,7 @@ export class ChatGptBrowserWorker {
       captureDiagnostic,
       proveConnectorAccess,
       signal,
+      () => recoverOwnedTemporaryPersonalization(page),
     );
   }
 
@@ -4637,6 +4640,7 @@ export class ChatGptBrowserWorker {
         return connection.page;
       });
       if (!maintenancePage && !launcherSurfaceId) managedPage = page;
+      if (launcherSurfaceId || managedPage) registerOwnedChatGptWorkPage(page);
       diagnosticPage = page;
       const rebindLauncherPage = async (
         attempt: number, cause: Error, callerSignal?: AbortSignal, episodeRemainingMs?: () => number,
@@ -4693,6 +4697,7 @@ export class ChatGptBrowserWorker {
             });
             checkCurrent();
             page = connection.page;
+            registerOwnedChatGptWorkPage(page);
             diagnosticPage = page;
           }, rebindSignal);
           check();

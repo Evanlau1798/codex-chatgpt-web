@@ -43,6 +43,27 @@ test.each([undefined, 6] as const)("Native final contract distinguishes unaccept
   expect(prompt).toContain("accepted=true");
   expect(prompt).toContain("exactly one accepted final");
 });
+test.each([undefined, 6] as const)("Native work batching keeps separate operations and final settlement (parts=%s)", parts => {
+  const capabilities = { localToolsEnabled: true, solAvailable: true, proAvailable: true };
+  const parsed = toolRequest("high");
+  const options = { nativeControlConnector: true, useEnhancedOutputTunnel: true,
+    ...(parts ? { experimentalMultipartParts: parts } : {}) };
+  const compiled = compileChatGptWebPrompt(parsed, capabilities,
+    "turn_12345678901234567890123456789012", options);
+  const prompt = compiled.multipart
+    ? formatChatGptWebMultipartCommit(compiled.multipart, `ctx_${"d".repeat(32)}`) : compiled.text;
+  expect(prompt).toContain("Request independent tool calls together as separate invocations");
+  expect(prompt).toContain("one wire_name and its arguments or input per codex_tool_call");
+  expect(prompt).toContain("Do not concatenate unrelated shell commands");
+  expect(prompt).toContain("keep dependent calls sequential");
+  expect(prompt).toContain("wait for all work results before a separate final output call");
+  expect(prompt).toContain("Do not split, rephrase, or reroute a rejected action to bypass the restriction");
+
+  const readOnly = compileChatGptWebPrompt(request("high"), { ...capabilities, localToolsEnabled: false },
+    undefined, parts ? { experimentalMultipartParts: parts } : {});
+  expect(readOnly.text).not.toContain("Request independent tool calls together as separate invocations");
+});
+
 test("inline and staged history escape Markdown delimiters without changing decoded code", () => {
   const parsed = request("high");
   const code = '```ts\nconst value = "`key`";\n``` '.repeat(20) + '\\u0060 \\` [text](https://example.com) 中文';
