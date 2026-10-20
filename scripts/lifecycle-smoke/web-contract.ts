@@ -9,6 +9,7 @@ import {
 import { loadConfig } from "../../src/config";
 import { verifyCurrentConnectorContract } from "../../src/adapters/chatgpt-web/connector-contract";
 import { countChatGptTurnRoots } from "../../src/adapters/chatgpt-web/response-turn-boundary";
+import { registerOwnedChatGptWorkPage } from "../../src/adapters/chatgpt-web/owned-personalization";
 import { VERSION } from "../../src/version";
 import {
   connectLauncherBrowserHost,
@@ -130,6 +131,7 @@ const heartbeat = setInterval(() => {
 }, LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS);
 heartbeat.unref?.();
 try {
+  registerOwnedChatGptWorkPage(connection.page);
   await connection.page.goto(CHATGPT_TEMPORARY_CHAT_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
   sessionUrl = connection.page.url();
   if (!isTemporaryChatGptUrl(sessionUrl)) throw new Error("Web contract smoke requires Temporary Chat");
