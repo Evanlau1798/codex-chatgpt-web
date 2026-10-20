@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import * as lifecycle from "../src/adapters/chatgpt-web/browser-stage-lifecycle";
 import { closeLauncherBrowserConnection } from "../src/launcher-browser-connection";
+import { registerOwnedChatGptWorkPage } from "../src/adapters/chatgpt-web/owned-personalization";
 
 // Execute the shipped closure with the real stage/viewport lifecycle. Only CDP transport is fake.
 function rebindFixture(viewport: "pending" | "failed" | "ready", connectMode: "normal" | "late" | "wrong-target" = "normal") {
@@ -31,7 +32,7 @@ function rebindFixture(viewport: "pending" | "failed" | "ready", connectMode: "n
     } },
   };
   const dependencies = {
-    ...lifecycle, closeLauncherBrowserConnection, old, deadline: undefined, launcherTargetId: "original-target",
+    ...lifecycle, closeLauncherBrowserConnection, registerOwnedChatGptWorkPage, old, deadline: undefined, launcherTargetId: "original-target",
     turn: { traceId: "rebind-ownership" }, launcherSurfaceId: "same-surface",
     process: { pid: 42 }, console: { warn() {} },
     redactChatGptUiDiagnostic: (text: string) => text,
