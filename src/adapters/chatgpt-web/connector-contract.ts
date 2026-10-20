@@ -15,12 +15,13 @@ const PROBE_QUERY_PATTERN = /^__codex_contract_probe__:([^:]+):([a-f0-9]{32})$/;
 const PROBE_DIR = join(tmpdir(), "codex-chatgpt-web-contract-probes");
 
 function observeProbe(nonce: string | undefined, phase: "expected" | "produced" | "consumed" | "query_rejected",
-  detail: { matched?: boolean; reason?: "pattern" | "revision"; reference?: string } = {}): void {
+  detail: { matched?: boolean; reason?: "pattern" | "revision"; reference?: string; query?: string } = {}): void {
   try {
     console.error(`[chatgpt-web] connector_probe=${JSON.stringify({ at: new Date().toISOString(), pid: process.pid,
       ...(nonce ? { nonce_hash: scopeHash(nonce) } : {}), root_hash: scopeHash(PROBE_DIR), phase,
       ...(detail.matched !== undefined ? { matched: detail.matched } : {}),
       ...(detail.reason ? { reason: detail.reason } : {}),
+      ...(detail.query !== undefined ? { query_hash: scopeHash(detail.query), query_chars: detail.query.length } : {}),
       ...(detail.reference && detail.reference.length <= 256 ? { reference_hash: scopeHash(detail.reference) } : {}) })}`);
   } catch { /* Diagnostics cannot change contract verification. */ }
 }
@@ -112,21 +113,18 @@ export async function verifyCurrentConnectorContract(
         JSON.stringify({ request_id: reference, query, include_schema: false }),
         "Do not call any other tool. After the inventory call succeeds, reply briefly.",
       ].join(" ")
-    : reference
-      ? [
+    : [
           "Do not send progress updates for this connector verification.",
-          "Call codex_tool_inventory exactly once with",
-          JSON.stringify({ turn_token: reference, query, include_schema: false }),
+          reference ? "Call codex_tool_inventory exactly once with these JSON arguments:"
+            : "Call codex_tool_inventory exactly once using the current turn_token from codex_native_turn_binding and these JSON arguments:",
+          "```json",
+          JSON.stringify({ ...(reference ? { turn_token: reference } : {}), query, include_schema: false }),
+          "```",
+          "Do not add Markdown escapes to argument strings; preserve their literal values.",
           "Do not call any other work tool. After the inventory call succeeds, complete the brief final response through the bound output control if the transport requires it; otherwise reply briefly.",
-        ].join(" ")
-      : [
-          "Do not send progress updates for this connector verification.",
-          "Call codex_tool_inventory exactly once using the current turn_token from codex_native_turn_binding, with",
-          JSON.stringify({ query, include_schema: false }),
-          "Do not call any other work tool. After the inventory call succeeds, complete the brief final response through the bound output control if the transport requires it; otherwise reply briefly.",
-        ].join(" ");
+        ].join("\n");
   discardConnectorContractProbeEvidence(nonce);
-  observeProbe(nonce, "expected");
+  observeProbe(nonce, "expected", { query });
   try {
     await runProbe({ contractRevision, nonce, query, prompt });
     if (!consumeConnectorContractProbeEvidence(nonce, contractRevision)) {

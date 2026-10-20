@@ -30,6 +30,7 @@ test("contract evidence correlates producer and consumer without revealing nonce
       expect(Number.isFinite(Date.parse(event.at))).toBeTrue();
     }
     expect(events.at(-1)).toMatchObject({ matched: true });
+    expect(events[0]).toMatchObject({ query_hash: scopeHash(query), query_chars: query.length });
     for (const secret of [nonce, query, tmpdir()]) expect(JSON.stringify(events)).not.toContain(secret);
     log.mockImplementation(() => { throw new Error("diagnostic sink unavailable"); });
     await verifyCurrentConnectorContract("Codex Native2", "native", async probe => {
@@ -56,6 +57,16 @@ test("current connector verification uses reserved inventory semantics without a
     expect(recordConnectorContractProbeQuery(probe.query, "native")).toBeTrue();
   })).resolves.toBeUndefined();
   expect(observedRevision).toBe(NATIVE2_CONTRACT_REVISION);
+});
+
+test.each([undefined, "turn_0123456789abcdef0123456789abcdef"])("native probe carries literal query arguments in JSON code (reference=%s)", async reference => {
+  await verifyCurrentConnectorContract("Codex Native2", "native", async probe => {
+    const json = /```json\n([^\n]+)\n```/.exec(probe.prompt);
+    expect(json).not.toBeNull();
+    expect(JSON.parse(json![1]!)).toEqual({ ...(reference ? { turn_token: reference } : {}), query: probe.query, include_schema: false });
+    expect(probe.prompt).toContain("Do not add Markdown escapes to argument strings");
+    recordConnectorContractProbeQuery(probe.query, "native");
+  }, reference);
 });
 
 test("reserved inventory probe records only the current contract revision and a valid nonce", () => {
