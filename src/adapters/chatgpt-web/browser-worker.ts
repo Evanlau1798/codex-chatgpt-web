@@ -4547,7 +4547,7 @@ export class ChatGptBrowserWorker {
     const initialPrepared = reuseConversation && turn.prepareResume
       ? await turn.prepareResume()
       : await turn.prepare();
-    const { prepared, identity: submissionIdentity } = turn.compaction || turn.nativeConnector || turn.externalProgress || turn.tunneledOutput
+    const { prepared, identity: submissionIdentity } = turn.compaction || turn.externalProgress || turn.tunneledOutput
       ? { prepared: initialPrepared, identity: undefined }
       : bindChatGptSubmissionIdentity(initialPrepared);
     const diagnostics = new ChatGptBrowserDiagnostics(
