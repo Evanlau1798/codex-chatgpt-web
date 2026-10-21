@@ -83,6 +83,7 @@ export async function runEnhancedCompaction(
     let lastActivity = "started";
     let acknowledgedParts = 0;
     const armDeadline = (kind?: "generation" | "submitted" | "multipart_acknowledged", part?: number): void => {
+      if (kind === "generation") return; // Generation state is liveness, not observed content progress.
       lastActivity = kind ?? "source_activity";
       if (part !== undefined) acknowledgedParts = part;
       if (deadline.signal.aborted) return;

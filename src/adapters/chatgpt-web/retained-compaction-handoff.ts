@@ -92,7 +92,6 @@ export async function requestRetainedCompactionHandoff(
       compaction: true,
       abortSignal: browserAbort.signal,
       onSubmitted: armDeadline,
-      onGenerationProgress: armDeadline,
       onProgress: armDeadline,
       onReasoningSummary: armDeadline,
       onCommentary: armDeadline,

@@ -142,7 +142,9 @@ test("a timed-out fresh compaction retains its owner until helper cleanup comple
   let browserStarts = 0;
   let cancelled = false;
   let fallbackTrace = "";
+  let running!: BrowserTurn;
   (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
+    running = turn;
     browserStarts += 1;
     fallbackTrace = turn.traceId;
     started();
@@ -177,7 +179,10 @@ test("a timed-out fresh compaction retains its owner until helper cleanup comple
   try {
     void observe();
     await ready;
-    mock.timers.tick(41);
+    for (let tick = 0; tick < 5; tick++) {
+      mock.timers.tick(9);
+      running.onGenerationProgress?.();
+    }
     await Bun.sleep(5);
     expect(cancelled).toBeTrue();
     expect(failures).toHaveLength(1);

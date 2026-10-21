@@ -87,19 +87,27 @@ test("Original compact timeout retains physical ownership until the browser actu
   }
 });
 
-test("Enhanced local compaction expires after default awake inactivity without releasing its browser owner", async () => {
+test.each([
+  { enhanced: true, activity: "silent" },
+  { enhanced: true, activity: "generation" },
+  { enhanced: false, activity: "generation" },
+  { enhanced: true, activity: "heartbeat" },
+  { enhanced: true, activity: "content" },
+])("browser compaction bounds $activity inactivity and retains ownership (Enhanced=$enhanced)", async ({ enhanced, activity }) => {
   const root = mkdtempSync(join(shortSocketTempRoot(), "cgw-local-physical-"));
   const provider: CodexProviderConfig = { adapter: "chatgpt-web", baseUrl: `browser://local-${root}`,
     chatgptWeb: { browserHost: "launcher", browserHostDescriptorPath: join(root, "launcher.json"),
       brokerSocketPath: defaultBrokerEndpoint(root), localToolsEnabled: true, solAvailable: true,
-      proAvailable: true, useEnhancedWebSessionMode: true } };
+      proAvailable: true, useEnhancedWebSessionMode: enhanced } };
   const worker = ChatGptBrowserWorker.forProvider(provider);
   const originalRun = worker.run;
   let started!: () => void;
   const ready = new Promise<void>(resolve => { started = resolve; });
   let finish!: (text: string) => void;
   const physical = new Promise<string>(resolve => { finish = resolve; });
+  let running!: BrowserTurn;
   worker.run = async turn => {
+    running = turn;
     turn.onSubmitted?.(); started();
     const answer = await physical;
     turn.onTextDelta(answer);
@@ -107,18 +115,24 @@ test("Enhanced local compaction expires after default awake inactivity without r
   };
   mock.timers.enable({ apis: ["setTimeout", "Date"] });
   const clockNow = spyOn(performance, "now").mockImplementation(() => Date.now());
-  const parsed = { ...request(), _localCompactionRequest: true };
+  const parsed = { ...request(!enhanced), _localCompactionRequest: enhanced };
   const key = `${chatGptWebExecutionNamespace(provider)}:${chatGptTurnExecutionKey(parsed)}`;
   const events: AdapterEvent[] = [];
   const run = createChatGptWebAdapter(provider).runTurn!(parsed, { headers: new Headers() }, event => events.push(event));
   try {
     await ready;
     for (let second = 0; second < 301; second++) {
+      if (second % 10 === 0) {
+        if (activity === "generation") running.onGenerationProgress?.();
+        if (activity === "heartbeat") running.onHeartbeat?.();
+        if (activity === "content") running.onProgress?.();
+      }
       mock.timers.tick(1_000);
       chatGptSuspensionClock.tick(performance.now());
     }
     await Bun.sleep(0);
-    expect(events.at(-1)).toMatchObject({ type: "error", code: "compaction_handoff_timeout" });
+    if (activity === "content") expect(events.some(event => event.type === "error")).toBeFalse();
+    else expect(events.at(-1)).toMatchObject({ type: "error", code: "compaction_handoff_timeout" });
     const owner = chatGptTurnSessions.find(key)!;
     expect(owner).toBeDefined();
     let settled = false;

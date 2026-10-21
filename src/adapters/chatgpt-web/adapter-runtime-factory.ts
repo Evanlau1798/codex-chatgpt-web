@@ -251,7 +251,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         onCommentary: emitCommentary,
         onHeartbeat: () => trace.signalProgress(),
         onProgress: () => { trace.recordProgress(); hooks.onCompactionProgress?.(); },
-        onGenerationProgress: () => { trace.recordProgress(); hooks.onCompactionProgress?.("generation"); },
+        onGenerationProgress: () => trace.signalProgress(),
         beginFinalizationOnly: async expectedActivityRevision => {
           const started = activeToken
             ? await brokerOwner.beginFinalizationOnly(activeToken, expectedActivityRevision)
@@ -369,7 +369,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       onCommentary: emitCommentary,
       onHeartbeat: () => trace.signalProgress(),
       onProgress: () => { trace.recordProgress(); hooks.onCompactionProgress?.(); },
-        onGenerationProgress: () => { trace.recordProgress(); hooks.onCompactionProgress?.("generation"); },
+      onGenerationProgress: () => trace.signalProgress(),
       beginFinalizationOnly: async expectedActivityRevision => {
         const started = activeToken
           ? await brokerOwner.beginFinalizationOnly(activeToken, expectedActivityRevision)
