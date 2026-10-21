@@ -20,12 +20,12 @@ async function fixture(run, { selectedClaude = false, managedClaude = false } = 
     fs.writeFileSync(journal, '{"version":1}\n');
   }
   const config = { mode: "full", browserHost: "launcher", appName: "Codex Native2",
-    releaseVersion: "old", browserInteractionMode: "automatic" };
+    releaseVersion: "6.1.12-Enhanced.1", browserInteractionMode: "automatic" };
   const configPath = path.join(core, "config.json");
   fs.writeFileSync(configPath, JSON.stringify(config));
   const calls = [];
   const host = new RuntimeHost({
-    app: { getPath: () => root, getVersion: () => "new" },
+    app: { getPath: () => root, getVersion: () => "6.1.13-Enhanced.1" },
     logger: { info() {}, warn() {}, error() {} },
     sourceRoot: root, browserDescriptorPath: path.join(root, "browser.json"),
     coreHome: core, codexHome: path.join(root, "codex"),
