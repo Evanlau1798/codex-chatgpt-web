@@ -127,7 +127,8 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       if (capturedCheckpoint) { checkpointCaptureError = new Error("ChatGPT Luna emitted more than one rolling checkpoint"); return; }
       capturedCheckpoint = captured;
     };
-    const finalizeCheckpoint = (browser: Promise<string>): Promise<string> => (browserCompaction && !useEnhancedWebSessionMode
+    // Structured Enhanced handoffs own their timer; local compaction uses the factory timer.
+    const finalizeCheckpoint = (browser: Promise<string>): Promise<string> => (browserCompaction && (!useEnhancedWebSessionMode || parsed._compactionRequest !== true)
       ? withCompactionInactivity(browser, trace, Math.min(timeoutMs ?? MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
           MAX_COMPACTION_HANDOFF_TIMEOUT_MS), error => browserAbort.abort(error))
       : browser).then(answer => {

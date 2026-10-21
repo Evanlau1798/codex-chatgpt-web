@@ -51,7 +51,12 @@ test("Original compact timeout retains physical ownership until the browser actu
   const ready = new Promise<void>(resolve => { started = resolve; });
   let finish!: (text: string) => void;
   const physical = new Promise<string>(resolve => { finish = resolve; });
-  worker.run = async turn => { turn.onSubmitted?.(); started(); return physical; };
+  worker.run = async turn => {
+    turn.onSubmitted?.(); started();
+    const answer = await physical;
+    turn.onTextDelta(answer);
+    return answer;
+  };
   mock.timers.enable({ apis: ["setTimeout", "Date"] });
   const clockNow = spyOn(performance, "now").mockImplementation(() => Date.now());
   const parsed = request(true);
@@ -62,6 +67,57 @@ test("Original compact timeout retains physical ownership until the browser actu
     await ready;
     mock.timers.tick(41);
     await run;
+    expect(events.at(-1)).toMatchObject({ type: "error", code: "compaction_handoff_timeout" });
+    const owner = chatGptTurnSessions.find(key)!;
+    expect(owner).toBeDefined();
+    let settled = false;
+    void owner.physicalSettlement.then(() => { settled = true; });
+    await Bun.sleep(0);
+    expect(settled).toBeFalse();
+    finish("browser cleanup");
+    await owner.physicalSettlement;
+    expect(settled).toBeTrue();
+  } finally {
+    finish("cleanup");
+    await run;
+    await chatGptTurnSessions.retireAndWait(key);
+    clockNow.mockRestore(); mock.timers.reset(); worker.run = originalRun;
+    await TurnBroker.forSocket(provider.chatgptWeb!.brokerSocketPath!).close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Enhanced local compaction expires after default awake inactivity without releasing its browser owner", async () => {
+  const root = mkdtempSync(join(shortSocketTempRoot(), "cgw-local-physical-"));
+  const provider: CodexProviderConfig = { adapter: "chatgpt-web", baseUrl: `browser://local-${root}`,
+    chatgptWeb: { browserHost: "launcher", browserHostDescriptorPath: join(root, "launcher.json"),
+      brokerSocketPath: defaultBrokerEndpoint(root), localToolsEnabled: true, solAvailable: true,
+      proAvailable: true, useEnhancedWebSessionMode: true } };
+  const worker = ChatGptBrowserWorker.forProvider(provider);
+  const originalRun = worker.run;
+  let started!: () => void;
+  const ready = new Promise<void>(resolve => { started = resolve; });
+  let finish!: (text: string) => void;
+  const physical = new Promise<string>(resolve => { finish = resolve; });
+  worker.run = async turn => {
+    turn.onSubmitted?.(); started();
+    const answer = await physical;
+    turn.onTextDelta(answer);
+    return answer;
+  };
+  mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const clockNow = spyOn(performance, "now").mockImplementation(() => Date.now());
+  const parsed = { ...request(), _localCompactionRequest: true };
+  const key = `${chatGptWebExecutionNamespace(provider)}:${chatGptTurnExecutionKey(parsed)}`;
+  const events: AdapterEvent[] = [];
+  const run = createChatGptWebAdapter(provider).runTurn!(parsed, { headers: new Headers() }, event => events.push(event));
+  try {
+    await ready;
+    for (let second = 0; second < 301; second++) {
+      mock.timers.tick(1_000);
+      chatGptSuspensionClock.tick(performance.now());
+    }
+    await Bun.sleep(0);
     expect(events.at(-1)).toMatchObject({ type: "error", code: "compaction_handoff_timeout" });
     const owner = chatGptTurnSessions.find(key)!;
     expect(owner).toBeDefined();
