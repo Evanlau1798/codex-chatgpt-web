@@ -97,7 +97,8 @@ test("completed retries remain bounded without evicting failed captures from unr
   try {
     await capture(firstTrace, "initial-failure", "failed", new Error("private"));
     const first = readdirSync(root)[0]!;
-    utimesSync(join(root, first), 1, 1);
+    const recent = new Date(Date.now() - 1_000);
+    utimesSync(join(root, first), recent, recent);
     for (let i = 0; i < 8; i++) {
       await capture(`unrelated_${i}`, "initial", "failed");
     }
