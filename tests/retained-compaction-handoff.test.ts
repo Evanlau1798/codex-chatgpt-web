@@ -1,3 +1,4 @@
+import { spyOn } from "bun:test";
 import { expect, test } from "bun:test";
 import { chatGptRetainedSurfaceUnavailableError } from "../src/adapters/chatgpt-web/adapter-error";
 import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
@@ -19,7 +20,8 @@ test.each([false, true])("retained handoff refreshes generation, never hidden he
   } as unknown as TurnBroker;
   const browser = deferred<string>();
   let running: BrowserTurn | undefined;
-  mock.timers.enable({ apis: ["setTimeout"] });
+  mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const clockNow = spyOn(performance, "now").mockImplementation(() => Date.now());
   const run = requestRetainedCompactionHandoff({ run: turn => {
     running = turn;
     turn.abortSignal!.addEventListener("abort", () => browser.resolve("settled"), { once: true });
@@ -36,7 +38,7 @@ test.each([false, true])("retained handoff refreshes generation, never hidden he
     if (hidden) await expect(run).rejects.toThrow("timed out after 40ms");
     else {
       const prompt = await running!.prepare();
-      const token = /turn_token (control_\w+)/.exec(prompt.text)![1]!;
+      const token = /turn_token (turn_\w+)/.exec(prompt.text)![1]!;
       const id = /handoff_id (handoff_\w+)/.exec(prompt.text)![1]!;
       store.submit(token, id, "Complete generation-aware handoff.");
       prompt.release();
@@ -44,6 +46,7 @@ test.each([false, true])("retained handoff refreshes generation, never hidden he
     }
   } finally {
     browser.resolve("cleanup");
+    clockNow.mockRestore();
     mock.timers.reset();
     await run.catch(() => {});
   }

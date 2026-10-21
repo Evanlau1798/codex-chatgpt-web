@@ -25,7 +25,7 @@ interface CompactionTransaction extends CompactionTransactionHandle {
   timer?: ReturnType<typeof setTimeout>;
 }
 
-function opaqueId(prefix: "control" | "handoff"): string {
+function opaqueId(prefix: "turn" | "handoff"): string {
   return `${prefix}_${randomBytes(16).toString("hex")}`;
 }
 
@@ -38,7 +38,9 @@ export class CompactionTransactionStore {
       throw new Error("compaction transaction TTL must be a positive finite number");
     }
     const transaction: CompactionTransaction = {
-      token: opaqueId("control"),
+      // The native MCP contract accepts turn_ capabilities. Authority comes from
+      // this summary-only store; this token never enters the ordinary tool registry.
+      token: opaqueId("turn"),
       handoffId: opaqueId("handoff"),
       traceId,
       state: "pending",

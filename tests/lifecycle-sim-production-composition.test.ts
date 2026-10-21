@@ -239,7 +239,7 @@ test("Enhanced manual compact returns its summary through the one-shot control c
       turn.onSendActivated?.();
       turn.onSubmitted?.();
       turn.onTextDelta("DOM_HANDOFF_MUST_NOT_BE_ACCEPTED");
-      const token = preparedText.match(/turn_token (control_[A-Za-z0-9_-]+)/)?.[1];
+      const token = preparedText.match(/turn_token (turn_[A-Za-z0-9_-]+)/)?.[1];
       const handoffId = preparedText.match(/handoff_id (handoff_[A-Za-z0-9_-]+)/)?.[1];
       if (!token || !handoffId) throw new Error("Enhanced manual compact has no one-shot control identity");
       await callTurnBroker(config.brokerSocketPath, {

@@ -32,6 +32,8 @@ function submittedFailure(
       || isChatGptTerminalCompletionFailure(error)
       || error.code === "chatgpt_stopped_thinking"
       || error.code === "context_length_exceeded"
+      || error.code === "compaction_handoff_timeout"
+      || error.code === "chatgpt_tool_approval_required"
       || error.code === "codex_tool_timeout"
       || error.code === "chatgpt_submitted_turn_failed")
     ? error

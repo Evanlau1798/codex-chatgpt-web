@@ -103,7 +103,7 @@ test("an intercepted compact boundary supplies its checkpoint binding without pr
     requestCompaction: (_token: string, result: BrokerToolResult, onDelivered?: () => void) => {
       const prompt = (result.content[0] as { text: string }).text;
       expect(prompt).toContain("do not stop first or wait for another message");
-      store.submit(/turn_token (control_\w+)/.exec(prompt)![1]!, /handoff_id (handoff_\w+)/.exec(prompt)![1]!, "Valid source checkpoint.");
+      store.submit(/turn_token (turn_\w+)/.exec(prompt)![1]!, /handoff_id (handoff_\w+)/.exec(prompt)![1]!, "Valid source checkpoint.");
       onDelivered?.();
       finish("turn complete");
       return 1;

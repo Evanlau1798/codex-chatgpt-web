@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const { randomBytes } = require("node:crypto");
 const { isLegacyConnectorName, validateConnectorName, validateConnectorNameSuffix } = require("./connector-identity.cjs");
 const { assertBiggerContextChangeAllowed } = require("./context-mode.cjs");
+const { compareVersions } = require("./update.cjs");
 const CORE_SETUP_TIMEOUT_MS = 5 * 60_000;
 const MCP_SETUP_TIMEOUT_MS = 10 * 60_000;
 
@@ -454,6 +455,12 @@ module.exports = {
       || (existing.config?.releaseVersion === currentVersion && !connectorMigrationRequired && !tunnelProfileMigrationRequired)) {
       return { updated: false };
     }
+    if (compareVersions(currentVersion, existing.config.releaseVersion) < 0) {
+      throw new Error(
+        `This launcher is version ${currentVersion}, but a newer runtime ${existing.config.releaseVersion} is already installed. `
+        + `Open Codex Web GPT ${existing.config.releaseVersion} or newer to continue.`,
+      );
+    }
     const args = [
       "setup",
       existing.mode === "full" ? "--full" : "--browser-only",
@@ -464,6 +471,9 @@ module.exports = {
       "--acknowledge-unofficial",
       "--restart-service",
     ];
+    if (interactionMode === "automatic" && existing.config?.autoApproveToolCalls === true) {
+      args.push("--auto-approve-tool-calls");
+    }
     args.push("--preserve-disconnected-route");
     const result = await this.runSetup("runtime-upgrade", args, {
       message: tunnelProfileMigrationRequired

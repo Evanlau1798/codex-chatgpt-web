@@ -303,5 +303,5 @@ export const fr = {
   autoApproveToolsBody: "Cliquer sur Autoriser une fois lorsque ChatGPT demande à utiliser le plugin Codex sélectionné. Les autorisations de Codex restent applicables. Désactivé par défaut.",
   manualAutoApproveUnavailable: "L’autorisation automatique des outils est indisponible en mode Zero Risk.",
   toolApprovalNeeded: "ChatGPT attend votre autorisation",
-  toolApprovalPendingBody: "Ouvrez cette conversation pour choisir Autoriser une fois ou Refuser. Les demandes sans réponse sont refusées après une minute.",
+  toolApprovalPendingBody: "Ouvrez cette conversation pour choisir Autoriser une fois ou Refuser. Pour autoriser tous les outils, ouvrez les paramètres du plugin dans ChatGPT → Permissions → Allow all actions. Sans décision après une minute, la tâche s’arrête sans sélectionner de bouton.",
 };

@@ -112,7 +112,7 @@ describe("compact mode routing", () => {
       const prepared = await turn.prepare();
       preparedText = prepared.text;
       prepared.release();
-      const token = /turn_token (control_\w+)/.exec(preparedText)![1]!;
+      const token = /turn_token (turn_\w+)/.exec(preparedText)![1]!;
       const handoffId = /handoff_id (handoff_\w+)/.exec(preparedText)![1]!;
       await callTurnBroker(socketPath, { method: "submit_compaction_handoff", token, handoffId, summary });
       if (!turn.abortSignal?.aborted) {
@@ -183,7 +183,7 @@ describe("compact mode routing", () => {
         nativeConnectorAvailable: true,
         timeoutMs: 20,
         startFallback: async (_traceId, signal, _onProgress, _retainOwnershipUntil, instruction) => {
-          const token = /turn_token (control_\w+)/.exec(instruction)![1]!;
+          const token = /turn_token (turn_\w+)/.exec(instruction)![1]!;
           const handoffId = /handoff_id (handoff_\w+)/.exec(instruction)![1]!;
           await callTurnBroker(socketPath, {
             method: "submit_compaction_handoff", token, handoffId, summary: "Fallback checkpoint summary.",
@@ -238,7 +238,7 @@ describe("compact mode routing", () => {
         nativeConnectorAvailable: true,
         timeoutMs: 20,
         startFallback: async (_traceId, signal, _onProgress, _retainOwnershipUntil, instruction) => {
-          const token = /turn_token (control_\w+)/.exec(instruction)![1]!;
+          const token = /turn_token (turn_\w+)/.exec(instruction)![1]!;
           const handoffId = /handoff_id (handoff_\w+)/.exec(instruction)![1]!;
           await callTurnBroker(socketPath, {
             method: "submit_compaction_handoff", token, handoffId, summary: "Fallback checkpoint summary.",

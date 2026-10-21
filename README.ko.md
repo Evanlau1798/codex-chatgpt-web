@@ -16,11 +16,11 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **버전: `6.1.12-Enhanced.1`.** 다운로드 버튼은 항상 최신 공개 Enhanced 릴리스를 엽니다.
+> **버전: `6.1.13-Enhanced.1`.** 다운로드 버튼은 항상 최신 공개 Enhanced 릴리스를 엽니다.
 
 다음 메시지 제안은 기본적으로 꺼져 있으며 Enhanced 설정에 있습니다. 자동 Native 출력의 최종 답변과 동시에 생성하고 로컬 5분 TTL 캐시를 재사용합니다. 캐시가 없으면 제안하지 않으며 추가 Web 요청이나 페이지를 만들지 않습니다.
 
-upstream v6.1.12을 통합하면서 Enhanced 세션, Native2 도구 및 Fast startup을 유지합니다.
+upstream v6.1.13을 통합하면서 Enhanced 세션, Native2 도구 및 Fast startup을 유지합니다.
 
 Enhanced.2는 Native2 복구와 최종 응답 전달을 개선하며, 미완료 작업과 응답의 소유 관계를 유지합니다.
 

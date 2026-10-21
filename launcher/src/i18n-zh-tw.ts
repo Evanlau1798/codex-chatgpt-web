@@ -190,7 +190,7 @@ export const zhTW = {
   autoApproveToolsBody: "ChatGPT 要求使用所選 Codex 外掛程式時，自動點擊「允許一次」。Codex 的權限設定仍然有效。預設關閉。",
   manualAutoApproveUnavailable: "Zero Risk 模式不支援自動核准工具請求。",
   toolApprovalNeeded: "ChatGPT 需要你的核准",
-  toolApprovalPendingBody: "開啟此聊天，選擇「允許一次」或「拒絕」。一分鐘內未回應的請求將被拒絕。",
+  toolApprovalPendingBody: "開啟此聊天，選擇「允許一次」或「拒絕」。若要允許所有工具，請開啟 ChatGPT 中的外掛程式設定 → Permissions → Allow all actions。一分鐘內未作出選擇，任務將停止，不會自動點擊任何按鈕。",
   manualPromptTitle: "在 ChatGPT 中傳送此回合",
   manualPromptInstruction: "提示已複製到剪貼簿。請將其貼到開啟的 ChatGPT 分頁，選擇所需模型與 effort，再選擇 Codex Zero Risk 連接器，傳送後在下方確認。",
   manualPromptCopy: "複製提示",

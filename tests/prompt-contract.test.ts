@@ -131,7 +131,7 @@ test("tool-capable prompts pass one stable turn token directly to native actions
   expect(resume).toBeGreaterThan(envelopeEnd);
   expect(tokenMatches).toHaveLength(1);
   expect(compiled.text).toContain("[retired turn handle]");
-  expect(transportOnly).toContain("For local work required by the task, use the attached Codex Native tools directly according to their declared descriptions and schemas.");
+  expect(transportOnly).toContain("For local work required by the task, use the selected plugin's tools directly according to their declared descriptions and schemas.");
   expect(transportOnly).toContain("Use actual Codex Native results as evidence for local observations and effects.");
   expect(transportOnly).toContain("After a deterministic tool failure, update the working hypothesis from that result");
   expect(transportOnly).toContain("inspect the relevant repository or environment before choosing a different next action");
@@ -216,7 +216,7 @@ test("Pro preserves the same native Codex delegation contract as Extra High", ()
   const extraHigh = compileChatGptWebPrompt(toolRequest("xhigh"), capabilities, token);
 
   for (const compiled of [pro, extraHigh]) {
-    expect(compiled.text).toContain("For local work required by the task, use the attached Codex Native tools directly according to their declared descriptions and schemas.");
+    expect(compiled.text).toContain("For local work required by the task, use the selected plugin's tools directly according to their declared descriptions and schemas.");
     expect(compiled.text).toContain(`Pass this exact turn_token unchanged to every Codex Native call in this response`);
     expect(compiled.text).not.toContain("Complete this task directly in the current parent response.");
     expect(compiled.text).not.toContain("Do not create, spawn, delegate to, or wait on sub-agents");
@@ -731,7 +731,7 @@ test("uses the public Instant name without leaking the browser menu alias into t
     { localToolsEnabled: false, solAvailable: true, proAvailable: true },
   );
 
-  expect(compiled.text).toContain("This is ChatGPT Web Instant with no Codex Native bridge to the user's local computer");
+  expect(compiled.text).toContain("This is ChatGPT Web Instant with no local Codex bridge");
   expect(compiled.text).not.toContain("Instant 5.5");
 });
 
@@ -788,4 +788,26 @@ test("inline and multipart transports preserve code while escaping its Markdown 
     expect(() => JSON.parse(part)).not.toThrow();
   }
   expect(JSON.stringify(multipart.multipart!.parts.map(part => JSON.parse(part)))).toContain("```python");
+});
+
+test("custom plugin identity stays explicit in inline and multipart execution without rewriting task history", () => {
+  const capabilities = { localToolsEnabled: true, solAvailable: true, extraHighAvailable: true, proAvailable: true };
+  const parsed = request("high");
+  parsed.context.messages[1]!.content = "Compare Codex Native2 with the selected plugin.";
+  parsed.context.tools = [{ name: "Read", description: "Read", parameters: {} }];
+  for (const appName of ["Codex app", "Codex Native2 DEV", "Codex Робота"]) {
+    for (const parts of [undefined, 2, 6] as const) {
+      const compiled = compileChatGptWebPrompt(parsed, capabilities, "turn_12345678901234567890123456789012", {
+        appName, experimentalMultipartParts: parts,
+      });
+      const contract = compiled.multipart?.commit ?? compiled.text;
+      expect(contract).toContain(`The selected local Codex plugin for this turn is ${JSON.stringify(appName)}.`);
+      expect(contract).toContain("Do not substitute another plugin for this local connection");
+      expect(contract).not.toContain("attached Codex Native tools");
+      const history = compiled.multipart
+        ? compiled.multipart.parts.flatMap(part => JSON.parse(part).records).filter(record => record.kind === "message").map(record => record.message)
+        : JSON.parse(compiled.text.match(/<codex_context_json>\n(.+)\n<\/codex_context_json>/s)![1]!).messages;
+      expect(history[1].content).toBe(parsed.context.messages[1]!.content);
+    }
+  }
 });

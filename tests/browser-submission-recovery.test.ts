@@ -14,6 +14,8 @@ import { ChatGptPromptOperation } from "../src/adapters/chatgpt-web/prompt-opera
 import { chatGptPromptPreservesLeading, planChatGptPromptInsertion } from "../src/adapters/chatgpt-web/prompt-insertion-plan";
 import { chatGptPromptAttachmentTimeoutMs } from "../src/adapters/chatgpt-web/prompt-attachment-budget";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
+import { estimateTokens } from "../src/lib/token-estimate";
+import { skillFileTokens } from "../src/adapters/chatgpt-web/skill-attachments";
 import {
   CHATGPT_ASSISTANT_TURN_SELECTOR,
   CHATGPT_COMPOSER_SELECTOR,
@@ -643,8 +645,10 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap", "fi
   const progress = new ChatGptExternalTurnProgress();
   const dependencies = {
     usageSubmission: async () => undefined, recordFinalUsage: undefined,
+    estimateTokens, skillFileTokens, estimatedInputTokens: 1,
     generation: { active: () => false, progress() {} },
     submissionRejection: {
+      captureAlertBaseline: async () => {},
       begin() {},
       activate() {},
       ownedSubmissionRequestObserved: () => false,
@@ -653,6 +657,7 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap", "fi
     first, next, initial, events, ChatGptPromptOperation, connectorAttemptBudget: { remaining: 3 },
     turn: {
       traceId: `production-${lane}-rebind`, externalProgress: progress,
+      capabilities: { proAvailable: true },
       onSendActivated: () => { events.push("activated"); progress.recordBrokerActivity(); },
       onSubmitted: () => { events.push("submitted"); },
     },

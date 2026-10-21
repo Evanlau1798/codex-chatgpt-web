@@ -4,6 +4,29 @@ import { chromium, type Browser } from "playwright-core";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import { setChatGptThinkMode } from "../src/adapters/chatgpt-web/think-mode";
 import { CHATGPT_COMPOSER_SELECTOR, detectChatGptAccountCapabilities } from "../src/chatgpt-session";
+import { assertChatGptModelFamily } from "../src/adapters/chatgpt-web/model-selection";
+
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("GPT-5.6 Pro verifies the split model/effort header before Send (#875)", async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`<div id="picker" role="menu">
+      <div data-model-picker-view-toggle="true"><div data-menu-row-content><span>5.6 Sol</span><span id="effort-label">5.6 Pro</span></div></div>
+      <div role="menuitemradio" aria-checked="false">6</div>
+      <div role="menuitemradio" aria-checked="true">GPT-5.6 Sol</div>
+      <span id="status">5.6 Pro, 5 of 5.</span>
+      <div role="menuitem" aria-describedby="status"><div data-model-picker-power-slider>
+        <span role="slider" aria-hidden="true" aria-valuemin="0" aria-valuemax="4" aria-valuenow="4"></span>
+      </div></div></div>`);
+    const menu = {
+      menu: page.locator("#picker"), slider: page.locator('[role="slider"]'),
+    } as Parameters<typeof assertChatGptModelFamily>[0];
+    await assertChatGptModelFamily(menu, "5.6", "max", 4);
+    await page.locator("#effort-label").evaluate(element => { element.textContent = "6 Pro"; });
+    const failure = await assertChatGptModelFamily(menu, "5.6", "max", 4).then(() => undefined, error => error);
+    expect(failure).toMatchObject({ code: "model_version_unavailable", retryable: false });
+  } finally { await browser.close(); }
+}, 15_000);
 
 let browser: Browser;
 beforeAll(async () => {

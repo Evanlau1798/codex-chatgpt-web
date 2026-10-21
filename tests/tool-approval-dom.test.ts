@@ -1,13 +1,70 @@
 import { expect, test } from "bun:test";
 import { chromium, type Page } from "playwright-core";
-import { resolveChatGptToolConfirmation } from "../src/adapters/chatgpt-web/browser-worker";
+import { resolveChatGptToolConfirmation, throwIfChatGptToolApprovalRequired } from "../src/adapters/chatgpt-web/browser-worker";
 
 const domTest = test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER);
+
+// Semantic fixture from the Oct 19 screenshot/AX text and the saved role=alert
+// checkpoint. This models the permission card, not a verbatim HTML capture.
+const inlineApproval = `<div>
+  <div>Codex Native2</div>
+  <div role="alert"><p>Allow ChatGPT to use Codex Native2?</p>
+    <p>ChatGPT will call Codex Native2's Run a native Codex command tool. <button>See details</button></p></div>
+  <button>Always allow</button><button>Deny</button>
+  <div><button>Allow once</button><button aria-label="Approval options">⌄</button></div>
+</div>`;
 
 async function withPage(run: (page: Page) => Promise<void>) {
   const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
   try { await run(await browser.newPage()); } finally { await browser.close(); }
 }
+
+domTest("the current inline permission card explains the setting even when the configured plugin name differs", async () => {
+  await withPage(async page => {
+    await page.setContent(`<div data-turn-key="current">${inlineApproval}</div>`);
+    await page.locator("button").evaluateAll(buttons => buttons.forEach(button => {
+      (button as HTMLElement).onclick = () => { document.body.dataset.clicked = button.textContent!; };
+    }));
+    for (const configuredName of ["Codex Native2", "Codex app"]) {
+      // An unowned surface must never gain automatic-click authority from this diagnosis.
+      expect(await resolveChatGptToolConfirmation(page, configuredName, true)).toBeFalse();
+      await expect(throwIfChatGptToolApprovalRequired(page.locator('[data-turn-key="current"]')))
+        .rejects.toMatchObject({ code: "chatgpt_tool_approval_required", status: 403, retryable: false });
+      await expect(throwIfChatGptToolApprovalRequired(page.locator('[data-turn-key="current"]')))
+        .rejects.toThrow("Permissions → Allow all actions");
+      expect(await page.locator("body").getAttribute("data-clicked")).toBeNull();
+    }
+  });
+}, 20_000);
+
+domTest("permission diagnosis ignores old turns, hidden cards, quoted answers, and ordinary error alerts", async () => {
+  await withPage(async page => {
+    for (const content of [
+      `<div hidden>${inlineApproval}</div>`,
+      `<div class="markdown">${inlineApproval}</div>`,
+      `<div data-user-message-bubble>${inlineApproval}</div>`,
+      '<div role="alert">Something went wrong</div>',
+      '<p>Allow ChatGPT to use Codex Native2?</p>',
+    ]) {
+      await page.setContent(`<div data-turn-key="old">${inlineApproval}</div><div data-turn-key="current">${content}</div>`);
+      await expect(throwIfChatGptToolApprovalRequired(page.locator('[data-turn-key="current"]'))).resolves.toBeUndefined();
+    }
+  });
+}, 20_000);
+
+domTest("an unanswered recognized approval reports the setting and leaves all permission buttons untouched", async () => {
+  await withPage(async page => {
+    await page.setContent(card());
+    const pending: boolean[] = [];
+    await expect(resolveChatGptToolConfirmation(page, "Codex Native2", false, undefined, 10,
+      undefined, async value => { pending.push(value); })).rejects.toMatchObject({
+        code: "chatgpt_tool_approval_required", retryable: false,
+      });
+    expect(pending).toEqual([true, false]);
+    expect(await page.locator("section").count()).toBe(1);
+    expect(await page.locator("body").getAttribute("data-chosen")).toBeNull();
+  });
+}, 20_000);
 
 // Structure reported in #768: the owned surface contains an alert and a split button.
 function card(app = "Codex Native2", actions = "Allow once", attribute = 'data-codex-approval-surface="true"') {

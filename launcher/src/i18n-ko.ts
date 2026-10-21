@@ -190,7 +190,7 @@ export const ko = {
   autoApproveToolsBody: "ChatGPT가 선택한 Codex 플러그인 사용을 요청하면 ‘한 번 허용’을 클릭합니다. Codex 권한 설정은 그대로 적용됩니다. 기본값은 꺼짐입니다.",
   manualAutoApproveUnavailable: "Zero Risk 모드에서는 도구 자동 승인을 사용할 수 없습니다.",
   toolApprovalNeeded: "ChatGPT가 승인을 기다리고 있습니다",
-  toolApprovalPendingBody: "이 채팅을 열어 ‘한 번 허용’ 또는 ‘거부’를 선택하세요. 1분 동안 응답이 없으면 요청이 거부됩니다.",
+  toolApprovalPendingBody: "이 채팅을 열어 ‘한 번 허용’ 또는 ‘거부’를 선택하세요. 모든 도구를 허용하려면 ChatGPT의 플러그인 설정 → Permissions → Allow all actions를 여세요. 1분 동안 선택하지 않으면 버튼을 누르지 않고 작업을 중지합니다.",
   manualPromptTitle: "이 턴을 ChatGPT에서 전송",
   manualPromptInstruction: "프롬프트가 이미 클립보드에 복사되어 있습니다. 열려 있는 ChatGPT 탭에 붙여넣고 원하는 모델과 effort를 선택한 다음 Codex Zero Risk 커넥터를 선택하여 전송하고 아래에서 확인하세요.",
   manualPromptCopy: "프롬프트 복사",

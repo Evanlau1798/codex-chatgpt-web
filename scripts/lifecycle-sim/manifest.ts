@@ -57,6 +57,8 @@ export const sharedLifecycleTests = [
   "tests/native-correlation-errors.test.ts",
   "tests/bridge-platform.test.ts",
   "tests/enhanced-compaction-settlement.test.ts",
+  "tests/upstream-compaction-contract.test.ts",
+  "tests/compaction-suspension-clock.test.ts",
   "tests/browser-worker-retained-connector.test.ts",
   "tests/prompt-fast-insertion.test.ts",
   "tests/prompt-literal-paste.test.ts",

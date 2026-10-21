@@ -181,6 +181,7 @@ async function runFixture(options: {
   };
   const response: any = {
     ...hidden,
+    locator: () => hidden,
     count: async () => 1,
     evaluate: async () => text,
   };
@@ -216,6 +217,7 @@ async function runFixture(options: {
   };
   const page: any = Object.assign(new EventEmitter(), {
     isClosed: () => false, url: () => submitted && options.conversationRoute || options.initialRoute || CHATGPT_TEMPORARY_CHAT_URL, evaluate: async () => ({}),
+    evaluateHandle: async () => ({ evaluate: async () => false, dispose: async () => {} }),
     mainFrame: () => page,
     getByText: () => hidden,
     keyboard: { press: async () => { actions.push("composer-end"); } },
@@ -642,7 +644,8 @@ test("successful worker turns preserve the earlier failed diagnostic history", a
     history.start();
     writeFileSync(join(failure, "01-turn-failed.json"), "{}");
     history.finish("failed");
-    utimesSync(failure, 100, 100);
+    const recent = new Date(Date.now() - 1_000);
+    utimesSync(failure, recent, recent);
     for (let index = 0; index < 10; index++) {
       const result = await runFixture({ diagnosticsRoot: root, tunneledFinal: true });
       expect(result.error).toBeUndefined();
@@ -669,17 +672,17 @@ test.each([false, true])("manual approval restores its owned protection (DOM=%s)
   for (const approvalOutcome of [undefined, "timeout", "aborted"] as const) {
   const result = await runFixture({ manualApproval: true, untunneled, approvalOutcome });
   if (approvalOutcome === "aborted") expect(result.error).toBeInstanceOf(DOMException);
+  else if (approvalOutcome === "timeout") expect(result.error).toMatchObject({ code: "chatgpt_tool_approval_required", status: 403 });
   else expect(result.error).toBeUndefined();
   expect(result.actions.filter(action => action.startsWith("approval-pending:"))).toEqual([
     "approval-pending:true", "approval-pending:false",
   ]);
   expect(result.actions).toContain("approval-focus");
-  if (approvalOutcome === "timeout") expect(result.actions).toContain("approval-Deny");
-  else expect(result.actions).not.toContain("approval-Deny");
+  expect(result.actions).not.toContain("approval-Deny");
   expect(result.approvalVisibility).toEqual([true, false, true]);
   expect(result.approvalTab.interactionLocked).toBe(true);
   expect((result.otherTab as any).approvalPending).toBeUndefined();
-  if (approvalOutcome !== "aborted") expect(result.answer).toBe(FINAL);
+  if (!approvalOutcome) expect(result.answer).toBe(FINAL);
   }
 });
 
@@ -699,8 +702,8 @@ async function runLateCompletionActionFixture() {
     filter() { return this; }, first() { return this; }, last() { return this; }, nth() { return this; },
     getByText() { return this; }, getByRole() { return this; }, getByTestId() { return this; },
   };
-  const historical: any = { ...hidden, count: async () => 1 };
-  const current: any = { ...hidden, count: async () => 1 };
+  const historical: any = { ...hidden, locator: () => hidden, count: async () => 1 };
+  const current: any = { ...hidden, locator: () => hidden, count: async () => 1 };
   const turns: any = {
     ...hidden,
     nth: (index: number) => index === 0 ? historical : current,
@@ -714,6 +717,7 @@ async function runLateCompletionActionFixture() {
     getByText: () => hidden,
     url: () => submitted ? "https://chatgpt.com/c/current?temporary-chat=true" : CHATGPT_TEMPORARY_CHAT_URL,
     evaluate: async () => ({}),
+    evaluateHandle: async () => ({ evaluate: async () => false, dispose: async () => {} }),
     locator: (selector: string) => {
       if (selector === CHATGPT_ASSISTANT_TURN_SELECTOR) return turns;
       if (selector === CHATGPT_USER_TURN_SELECTOR) return { ...hidden, evaluateAll: async () => [] };

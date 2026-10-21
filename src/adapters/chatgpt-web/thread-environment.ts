@@ -15,6 +15,7 @@ import {
   extractChatGptRootThreadMetadata,
   hasCurrentChatGptEnvironmentContext,
   extractChatGptCalendarEnvironmentDelta,
+  extractChatGptNativeCompactionEnvironment,
   hasRawChatGptEnvironmentContext,
   isChatGptCompactionContinuation,
   MissingTrustedCodexEnvironmentError,
@@ -462,6 +463,8 @@ export class ChatGptThreadEnvironmentStore {
     const lineage = extractChatGptThreadSpawnLineage(parsed);
     const currentCompaction = isChatGptCompactionContinuation(parsed);
     const postCompactionContext = !currentCompaction && isAcceptedPostCompactionContext(parsed);
+    const nativeCompaction = hasCurrentContext && !currentCompaction && !directEnvironment
+      ? extractChatGptNativeCompactionEnvironment(parsed) : undefined;
     const body = record(parsed._rawBody);
     const input = Array.isArray(body?.input) ? body.input : [];
     const checkpointIndex = latestCompactionIndex(input);
@@ -475,7 +478,7 @@ export class ChatGptThreadEnvironmentStore {
       && input.some(value => isCurrentTurnInstruction(record(value), metadata, identity.turnId!));
     const ordinaryContinuation = hasCurrentInstruction && !crossesForeignCompaction;
     const rootMetadata = extractChatGptRootThreadMetadata(parsed);
-    const currentTurnAnchor = crossesForeignCompaction && !!identity.turnId && !currentCompaction && !postCompactionContext
+    const currentTurnAnchor = crossesForeignCompaction && !!identity.turnId && !currentCompaction && !postCompactionContext && !nativeCompaction
       ? currentTurnRolloutAnchor(input, checkpointIndex, metadata, identity.turnId, !lineage && !!rootMetadata)
       : undefined;
     const historicalMessages = !hasCurrentContext && (lineage || rootMetadata)
@@ -495,6 +498,7 @@ export class ChatGptThreadEnvironmentStore {
         ...(compactionSourceTurnId ? { compactionSourceTurnId } : {}),
         ...(historicalMessages ? { historicalEnvironmentMessages: historicalMessages } : {}),
         ...(currentTurnAnchor ? { currentTurnAnchor } : {}),
+        ...(nativeCompaction ? { compactedEnvironmentItems: nativeCompaction.items } : {}),
         tools: effectiveChatGptToolPolicy(parsed).tools,
       });
       if (rollout) {
@@ -522,7 +526,7 @@ export class ChatGptThreadEnvironmentStore {
         // Full-access context may list Codex's auxiliary visualization root absent from turn_context.
         const isVisualizationRoot = (path: string): boolean => rolloutEnvironment.sandboxPolicy.type === "dangerFullAccess"
           && isCurrentOrParentThreadVisualizationRoot(path, visualizationOwner, rollout.codexHome);
-        if (calendarDelta && (rolloutEnvironment.sandboxPolicy.type !== "dangerFullAccess"
+        if (calendarDelta && (calendarDelta.filesystemProfiles.some(profile => profile !== rollout.filesystemProfileXml)
           || calendarDelta.workspaceRoots.some(roots => {
             const authoritative = new Set(rolloutEnvironment.roots.filter(path => !isVisualizationRoot(path)).map(environmentPathIdentity));
             const actual = roots.filter(path => !isVisualizationRoot(path));
@@ -547,7 +551,7 @@ export class ChatGptThreadEnvironmentStore {
           throw new Error(`${steering ? "Steering" : "Compaction continuation"} environment conflicts with its current Codex rollout`);
         }
         if ((hasCurrentContext || crossesForeignCompaction)
-          && !currentCompaction && !postCompactionContext && !ordinaryContinuation
+          && !currentCompaction && !postCompactionContext && !ordinaryContinuation && !nativeCompaction
           && !currentTurnAnchor) throw new MissingTrustedCodexEnvironmentError("cwd");
         this.set(rolloutIdentity.threadId, rolloutEnvironment);
         return rolloutEnvironment;

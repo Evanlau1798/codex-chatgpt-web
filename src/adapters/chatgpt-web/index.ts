@@ -178,7 +178,7 @@ export function createChatGptWebAdapter(
     requireAutomaticAdmission(args[0], args[2]);
     return automaticStartRuntime(...args);
   };
-  const automaticUsagePromptOptions = chatGptAutomaticUsagePromptOptions(runtimeConfig, manualInteraction);
+  const automaticUsagePromptOptions = { ...chatGptAutomaticUsagePromptOptions(runtimeConfig, manualInteraction), appName: provider.chatgptWeb?.appName };
   const startRuntime = manualInteraction
     ? createZeroRiskRuntimeStarter({
         provider,
@@ -327,6 +327,7 @@ export function createChatGptWebAdapter(
         }
         if (useEnhancedWebSessionMode) {
           const enhancedCompaction = await runEnhancedCompaction({
+            appName: provider.chatgptWeb?.appName,
             worker, parsed, broker, executionNamespace, capabilities: turnCapabilities,
             responseExecutionKey, nativeConnectorAvailable: configuredCapabilities.localToolsEnabled,
             abortSignal: incoming.abortSignal, timeoutMs,
@@ -604,10 +605,10 @@ export function createChatGptWebAdapter(
               let next: Awaited<typeof browserOutcome | NonNullable<typeof nextTools> | typeof nextTrace | typeof nextText>;
               try {
                 awaitingRuntime = true;
-                next = await withAbort(withStallTimeout(
-                  Promise.race([...(nextTools ? [nextTools] : []), browserOutcome, nextTrace, nextText]),
-                  stallTimeoutMs,
-                ), incoming.abortSignal);
+                const activity = Promise.race([...(nextTools ? [nextTools] : []), browserOutcome, nextTrace, nextText]);
+                // Compaction owns a suspension-aware inactivity budget; heartbeat cannot renew it.
+                next = await withAbort(parsed._compactionRequest || parsed._localCompactionRequest
+                  ? activity : withStallTimeout(activity, stallTimeoutMs), incoming.abortSignal);
                 awaitingRuntime = false;
               } catch (error) {
                 if (observerAbort.signal.aborted) throw observerAbort.signal.reason;
