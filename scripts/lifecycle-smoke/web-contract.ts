@@ -8,7 +8,6 @@ import {
 } from "../../src/chatgpt-session";
 import { loadConfig } from "../../src/config";
 import { verifyCurrentConnectorContract } from "../../src/adapters/chatgpt-web/connector-contract";
-import { countChatGptTurnRoots } from "../../src/adapters/chatgpt-web/response-turn-boundary";
 import { registerOwnedChatGptWorkPage } from "../../src/adapters/chatgpt-web/owned-personalization";
 import { VERSION } from "../../src/version";
 import {
@@ -22,6 +21,8 @@ import {
   assertWebContractRuntimeVersion,
   deriveWebContractCapabilities,
   waitForWebContractSurface,
+  inspectWebContractCanary,
+  connectWebContractInspection,
   requestWebContractTurn,
   runWebContractTurns,
   webContractCandidateSurfaceIds,
@@ -173,9 +174,6 @@ const item = (turnId: string, id: string, text: string) => ({
   content: [{ type: "input_text", text }],
   internal_chat_message_metadata_passthrough: { turn_id: turnId },
 });
-const initialSurfaceIds = new Set(Object.keys(
-  readLauncherBrowserHostDescriptor(config.browserHostDescriptorPath).surfaceTargets,
-));
 let retainedSurfaceId: string | undefined;
 let contractProbeTurns = externalConnectorContractVerified ? 2 : 0;
 await runWebContractTurns(async (turn, previousResponseId) => withDeadline(WEB_CONTRACT_TURN_TIMEOUT_MS, async signal => {
@@ -240,15 +238,13 @@ await runWebContractTurns(async (turn, previousResponseId) => withDeadline(WEB_C
     return webContractCandidateSurfaceIds(
       descriptor.surfaceId,
       Object.keys(descriptor.surfaceTargets),
-      initialSurfaceIds,
       retainedSurfaceId,
     );
   }, async (surfaceId, remainingMs, signal) => {
     let retained;
     try {
-      retained = await connectLauncherBrowserHost(
-        config.browserHostDescriptorPath!, remainingMs, surfaceId, signal,
-      );
+      // Inspection must not change focus on standby pages or an unrelated active turn.
+      retained = await connectWebContractInspection(config.browserHostDescriptorPath!, surfaceId, remainingMs, signal);
     } catch (error) {
       if (error instanceof Error
         && error.message === "Launcher browser surface is no longer registered with its native target") return undefined;
@@ -269,8 +265,7 @@ await runWebContractTurns(async (turn, previousResponseId) => withDeadline(WEB_C
     });
     try {
       const turns = retained.page.locator(CHATGPT_USER_TURN_SELECTOR);
-      const userTurns = await Promise.race([countChatGptTurnRoots(turns), aborted]);
-      return { ownsCanary: true, userTurns };
+      return await Promise.race([inspectWebContractCanary(turns, threadId), aborted]);
     } finally {
       signal.removeEventListener("abort", onAbort!);
       await retained.browser.close().catch(() => {});
