@@ -28,6 +28,7 @@ mkdirSync(codexHome, { recursive: true });
 writeFileSync(join(root, "models.json"), `${JSON.stringify(catalog)}\n`);
 
 let responseRequests = 0;
+let beginCancellationDeadline: (() => void) | undefined;
 async function* cancelledStream(): AsyncGenerator<AdapterEvent> {
   yield {
     type: "error",
@@ -51,6 +52,7 @@ const server = Bun.serve({
     await request.json();
     responseRequests += 1;
     if (responseRequests === 1) {
+      beginCancellationDeadline?.();
       return new Response(bridgeToResponsesSSE(cancelledStream(), "chatgpt-web/high"), {
         headers: { "content-type": "text/event-stream", "cache-control": "no-cache" },
       });
@@ -79,8 +81,11 @@ writeFileSync(join(codexHome, "config.toml"), [
   "",
 ].join("\n"));
 
+let timeout: ReturnType<typeof setTimeout> | undefined;
+let cancellationStartedAt: number | undefined;
+let expired: "startup" | "cancellation" | undefined;
+let stopChild: (() => Promise<void>) | undefined;
 try {
-  const startedAt = Date.now();
   const child = Bun.spawn([
     codex,
     "exec",
@@ -97,24 +102,52 @@ try {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const timeout = setTimeout(() => child.kill(), 15_000);
+  stopChild = async () => {
+    if (child.exitCode === null) {
+      child.kill();
+      await child.exited;
+    }
+  };
+  // Bound cold startup separately; the cancellation budget starts at the provider error.
+  timeout = setTimeout(() => {
+    expired = "startup";
+    child.kill();
+  }, 30_000);
+  beginCancellationDeadline = () => {
+    if (cancellationStartedAt !== undefined || expired) return;
+    cancellationStartedAt = performance.now();
+    clearTimeout(timeout);
+    timeout = setTimeout(() => {
+      expired = "cancellation";
+      child.kill();
+    }, 15_000);
+  };
   const [exitCode, stdout, stderr] = await Promise.all([
     child.exited,
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
   ]);
-  clearTimeout(timeout);
 
+  if (expired === "startup") throw new Error("Codex did not send a Responses request within the startup deadline");
+  if (cancellationStartedAt === undefined) throw new Error("Codex exited before sending a Responses request");
+  if (expired === "cancellation" || performance.now() - cancellationStartedAt >= 15_000) {
+    throw new Error("Codex did not terminate within the cancellation deadline");
+  }
   if (exitCode === 0) throw new Error(`Codex reported cancellation as success:\n${stdout}`);
   if (responseRequests !== 2) {
     throw new Error(`Codex made ${responseRequests} Responses requests; expected one streamed failure and one terminal replay`);
   }
-  if (Date.now() - startedAt >= 15_000) throw new Error("Codex cancellation did not terminate within the smoke deadline");
   if (!`${stdout}\n${stderr}`.includes("client_cancelled")) {
     throw new Error(`Codex did not surface the terminal cancellation body:\n${stdout}\n${stderr}`);
   }
   process.stdout.write("NATIVE_CODEX_BROWSER_TAB_CANCEL_SMOKE_OK\n");
 } finally {
-  await server.stop(true);
-  rmSync(root, { recursive: true, force: true });
+  beginCancellationDeadline = undefined;
+  clearTimeout(timeout);
+  try {
+    await stopChild?.();
+  } finally {
+    await server.stop(true);
+    rmSync(root, { recursive: true, force: true });
+  }
 }
