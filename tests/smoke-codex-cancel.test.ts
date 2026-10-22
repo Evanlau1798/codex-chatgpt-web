@@ -12,7 +12,7 @@ const source = readFileSync(new URL("../scripts/smoke-codex-cancel.ts", import.m
 const javascript = new Bun.Transpiler({ loader: "ts" }).transformSync(source.replace(/^import .+;\r?\n/gm, ""));
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
-async function runSmoke(options: { startupMs: number; cancellationMs?: number; replayMs?: number; noRequest?: boolean; readFailure?: boolean }) {
+async function runSmoke(options: { startupMs: number; cancellationMs?: number; replayMs?: number; noRequest?: boolean; readFailure?: boolean; drainMs?: number; deliveryMs?: number; configFailure?: boolean; stopFailure?: boolean; neverExit?: boolean }) {
   const scratch = mkdtempSync(join(tmpdir(), "codex-cancel-deadline-test-"));
   let now = 0;
   let nextTimer = 0;
@@ -44,15 +44,16 @@ async function runSmoke(options: { startupMs: number; cancellationMs?: number; r
   const fakeBun = {
     serve(settings: { fetch: typeof handler }) {
       handler = settings.fetch;
-      return { port: 12345, async stop() { stopped = true; } };
+      return { port: 12345, async stop() { stopped = true; if (options.stopFailure) throw new Error("synthetic server stop failure"); } };
     },
     spawn() {
+      let drain: ReadableStreamDefaultController<Uint8Array> | undefined;
       const child = {
         exitCode: null as number | null,
         kill() { kills += 1; },
         stdout: options.readFailure
           ? new ReadableStream({ start(controller) { controller.error(new Error("synthetic stdout failure")); } })
-          : new Response("").body,
+          : options.drainMs ? new ReadableStream<Uint8Array>({ start(controller) { drain = controller; } }) : new Response("").body,
         stderr: new Response("client_cancelled").body,
         exited: Promise.resolve(1),
       };
@@ -64,17 +65,31 @@ async function runSmoke(options: { startupMs: number; cancellationMs?: number; r
           if (!kills) await invoke();
           advance((options.cancellationMs ?? 100) - (options.replayMs ?? 0));
         }
+        if (options.neverExit) return new Promise<number>(() => {});
         child.exitCode = 1;
         return 1;
       });
+      if (options.drainMs) void child.exited.then(() => queueMicrotask(() => {
+        advance(options.drainMs!);
+        drain!.close();
+      }));
       return child;
     },
   };
   const inputs = {
-    existsSync, mkdirSync, rmSync, writeFileSync, join, resolve,
+    existsSync, mkdirSync, rmSync, join, resolve,
+    writeFileSync(file: string, content: string) {
+      if (options.configFailure && file.endsWith("config.toml")) throw new Error("synthetic config failure");
+      writeFileSync(file, content);
+    },
     tmpdir: () => scratch,
     spawnSync: () => ({ status: 0, stdout: JSON.stringify({ models: [{ slug: "gpt-5.6", visibility: "list", supported_reasoning_levels: [] }] }) }),
-    bridgeToResponsesSSE, defaultConfig, augmentNativeModelCatalog,
+    bridgeToResponsesSSE(...args: Parameters<typeof bridgeToResponsesSSE>) {
+      const events = args[0];
+      args[0] = (async function* () { advance(options.deliveryMs ?? 0); yield* events; })();
+      return bridgeToResponsesSSE(...args);
+    },
+    defaultConfig, augmentNativeModelCatalog,
     Bun: fakeBun,
     Date: { now: () => now },
     performance: { now: () => now },
@@ -87,7 +102,19 @@ async function runSmoke(options: { startupMs: number; cancellationMs?: number; r
     clearTimeout(id: number) { timers.delete(id); },
   };
   try {
-    try { await new AsyncFunction(...Object.keys(inputs), javascript)(...Object.values(inputs)); }
+    try {
+      const execution = new AsyncFunction(...Object.keys(inputs), javascript)(...Object.values(inputs));
+      if (options.neverExit) {
+        let settled = false;
+        void execution.then(() => { settled = true; }, () => { settled = true; });
+        for (let turn = 0; turn < 50 && !settled; turn++) {
+          await Promise.resolve();
+          if (timers.size) advance(Math.max(0, Math.min(...[...timers.values()].map(timer => timer.at)) - now));
+        }
+        if (!settled) throw new Error("smoke did not settle after its controlled deadlines");
+      }
+      await execution;
+    }
     catch (caught) { error = caught instanceof Error ? caught.message : String(caught); }
     return { error, output, kills, requests, stopped, timers: timers.size, leftovers: readdirSync(scratch) };
   } finally {
@@ -131,5 +158,49 @@ test("a failed output read still disposes the deadline and owned smoke resources
   expect(result.error).toContain("synthetic stdout failure");
   expect(result.timers).toBe(0);
   expect(result.stopped).toBe(true);
+  expect(result.leftovers).toEqual([]);
+});
+
+test("output drainage does not consume the cancellation exit deadline", async () => {
+  const result = await runSmoke({ startupMs: 20_000, cancellationMs: 14_900, drainMs: 1_000 });
+  expect(result).toEqual({ error: "", output: "NATIVE_CODEX_BROWSER_TAB_CANCEL_SMOKE_OK\n", kills: 0, requests: 2, stopped: true, timers: 0, leftovers: [] });
+});
+
+test("output drainage has its own bound after the child has exited", async () => {
+  const result = await runSmoke({ startupMs: 100, cancellationMs: 100, drainMs: 6_000 });
+  expect(result.error).toContain("output deadline");
+  expect(result.kills).toBe(0);
+  expect(result.timers).toBe(0);
+  expect(result.stopped).toBe(true);
+  expect(result.leftovers).toEqual([]);
+});
+
+test("the cancellation budget starts only when the stream emits its terminal error", async () => {
+  const result = await runSmoke({ startupMs: 1_000, deliveryMs: 14_000, cancellationMs: 1_100 });
+  expect(result.error).toBe("");
+  expect(result.output).toContain("NATIVE_CODEX_BROWSER_TAB_CANCEL_SMOKE_OK");
+  expect(result.kills).toBe(0);
+});
+
+test("configuration failure still stops the server and removes its scratch", async () => {
+  const result = await runSmoke({ startupMs: 100, configFailure: true });
+  expect(result.error).toContain("synthetic config failure");
+  expect(result.stopped).toBe(true);
+  expect(result.leftovers).toEqual([]);
+});
+
+test("server stop failure still removes scratch", async () => {
+  const result = await runSmoke({ startupMs: 100, stopFailure: true });
+  expect(result.error).toContain("synthetic server stop failure");
+  expect(result.stopped).toBe(true);
+  expect(result.leftovers).toEqual([]);
+});
+
+test("an unresponsive owned child cannot block server and scratch cleanup", async () => {
+  const result = await runSmoke({ startupMs: 30_001, noRequest: true, neverExit: true });
+  expect(result.error).toContain("cleanup deadline");
+  expect(result.kills).toBeGreaterThan(0);
+  expect(result.stopped).toBe(true);
+  expect(result.timers).toBe(0);
   expect(result.leftovers).toEqual([]);
 });
