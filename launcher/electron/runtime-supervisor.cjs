@@ -483,8 +483,8 @@ class RuntimeSupervisor {
               message: errorMessage(cleanupError),
             });
           } finally {
-            // A failed native stop normally restarts monitoring; persistence failure must not.
-            if (this.stopping) this.stopTunnelMonitor();
+            // Failed persistence stays unmonitored without disabling a newer tunnel generation.
+            if (name === "tunnel" && this.tunnel === child) this.stopTunnelMonitor();
           }
         })();
         this.stateWriteCleanups.set(child, cleanup);
@@ -983,7 +983,10 @@ class RuntimeSupervisor {
     let lastPublishedDetail;
     while (Date.now() < deadline) {
       const health = await this.readTunnelHealth(config);
-      if (health.pid) {
+      if (health.pid && (this.tunnel?.managed !== true
+        || this.tunnel.pid !== health.pid
+        || this.tunnel.exitCode !== null
+        || this.tunnel.signalCode !== null)) {
         this.tunnel = {
           pid: health.pid,
           exitCode: null,
@@ -1593,11 +1596,11 @@ class RuntimeSupervisor {
     try {
       result = await this.runTunnelStopCommand(config);
     } catch (error) {
-      this.startTunnelMonitor(config);
+      if (this.tunnel === managed) this.startTunnelMonitor(config);
       throw error;
     }
     if (result.code !== 0) {
-      this.startTunnelMonitor(config);
+      if (this.tunnel === managed) this.startTunnelMonitor(config);
       throw new Error(`tunnel runtime refused graceful shutdown: ${tunnelControlDiagnostic(result)}`);
     }
     try {
@@ -1605,7 +1608,7 @@ class RuntimeSupervisor {
     } catch (error) {
       // The native manager accepted the stop request but did not prove the terminal state.
       // Keep supervising the alias until the caller either recovers or retries the transaction.
-      this.startTunnelMonitor(config);
+      if (this.tunnel === managed) this.startTunnelMonitor(config);
       throw error;
     }
     if (this.tunnel === managed) this.tunnel = null;

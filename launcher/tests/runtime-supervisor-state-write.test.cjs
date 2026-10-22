@@ -122,6 +122,65 @@ test("failed managed cleanup preserves ownership and reports the failure without
   }
 });
 
+for (const entry of ["stopForSetup", "forceStopOwnedRuntime"]) {
+  for (const failure of ["command throws", "command refused", "terminal unproven"]) {
+    test(`${entry} keeps failed ownership cleanup unmonitored after ${failure}`, async t => {
+      const { root, supervisor, errors } = fixture();
+      t.mock.timers.enable({ apis: ["setInterval"] });
+      let release;
+      const gate = new Promise(resolve => { release = resolve; });
+      let stops = 0;
+      let terminalChecks = 0;
+      let observations = 0;
+      const managed = {
+        pid: null, exitCode: null, signalCode: null, managed: true,
+        kill() { assert.fail("managed ownership must use the native stop contract"); },
+      };
+      supervisor.tunnel = managed;
+      supervisor.readConfig = () => ({ mode: "full", tunnel: { alias: "owned-fixture" } });
+      supervisor.proxyHealth = async () => false;
+      supervisor.observeTunnelForMonitor = async () => { observations += 1; return { statusKnown: false }; };
+      supervisor.runTunnelStopCommand = async () => {
+        stops += 1;
+        if (stops === 2) await gate;
+        if (failure === "command throws") throw new Error("synthetic native stop failed");
+        return { code: failure === "command refused" ? 9 : 0, output: "synthetic native stop refused" };
+      };
+      supervisor.waitForTunnelStopped = async () => {
+        terminalChecks += 1;
+        throw new Error("synthetic native terminal state unproven");
+      };
+      failWrites(supervisor);
+      try {
+        if (entry === "stopForSetup") {
+          await assert.rejects(supervisor.stopForSetup(), /synthetic native/);
+        } else {
+          assert.equal((await supervisor.forceStopOwnedRuntime(new Error("test shutdown"))).status, "forced-partial");
+        }
+        assert.equal(stops, 2, "ownership persistence failure must retry through production native stop");
+        assert.equal(supervisor.stopping, false, "outer stop must settle before cleanup is released");
+        assert.equal(supervisor.stateWriteCleanups.has(managed), true);
+        release();
+        await Promise.all([...supervisor.stateWriteCleanups.values()]);
+        assert.equal(supervisor.tunnel, managed, "failed native stop must retain the owned generation");
+        assert.equal(terminalChecks, failure === "terminal unproven" ? 2 : 0);
+        assert.ok(errors.some(error => error.event === "runtime.state_write_cleanup_failed"));
+        assert.equal(supervisor.tunnelMonitorTimer, null, "ownership failure must stay fail-closed after outer stop settles");
+        t.mock.timers.tick(10_000);
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(observations, 0);
+        assert.equal(supervisor.restartTimers.tunnel, null);
+      } finally {
+        release();
+        await Promise.allSettled([...supervisor.recoveryTasks]);
+        supervisor.stopTunnelMonitor();
+        t.mock.timers.reset();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+}
+
 test("explicit startup waits for an outstanding ownership-failure cleanup", async () => {
   const { root, supervisor } = fixture();
   let release;
@@ -249,6 +308,108 @@ test("successful persistence and foreign marker evidence do not authorize child 
     failWrites(supervisor);
     assert.equal(supervisor.tryWriteState("degraded"), false);
     assert.equal(cleanup, 0, "disk marker PIDs alone cannot grant process ownership");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const failure of ["command throws", "command refused", "terminal unproven"]) {
+  test(`failed cleanup preserves the newer monitor after ${failure}`, async t => {
+    const { root, supervisor } = fixture();
+    t.mock.timers.enable({ apis: ["setInterval"] });
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const config = { tunnel: { alias: "old-owned-fixture" } };
+    const replacementConfig = { tunnel: { alias: "new-owned-fixture" } };
+    const managed = { pid: 101, exitCode: null, signalCode: null, managed: true };
+    const replacement = { ...managed, pid: 202 };
+    const observations = [];
+    supervisor.tunnel = managed;
+    supervisor.readConfig = () => config;
+    supervisor.runTunnelStopCommand = async () => {
+      await gate;
+      if (failure === "command throws") throw new Error("synthetic native stop failed");
+      return { code: failure === "command refused" ? 9 : 0, output: "synthetic native stop refused" };
+    };
+    supervisor.waitForTunnelStopped = async () => { throw new Error("synthetic terminal unproven"); };
+    supervisor.observeTunnelForMonitor = async current => {
+      observations.push(current.tunnel.alias);
+      return { statusKnown: true, ready: true, pid: replacement.pid };
+    };
+    failWrites(supervisor);
+    try {
+      supervisor.tryWriteState("ready");
+      // An already-running recovery can publish a replacement while native cleanup awaits.
+      supervisor.tunnel = replacement;
+      supervisor.stopping = false;
+      supervisor.startTunnelMonitor(replacementConfig);
+      const timer = supervisor.tunnelMonitorTimer;
+      const generation = supervisor.tunnelMonitorGeneration;
+      supervisor.tunnelMonitorFailures = 1;
+      supervisor.tunnelMonitorObservationUnavailable = true;
+      release();
+      await Promise.all([...supervisor.stateWriteCleanups.values()]);
+      assert.equal(supervisor.tunnel, replacement);
+      assert.equal(supervisor.tunnelMonitorTimer, timer, "old cleanup cannot rebuild a replacement's monitor");
+      assert.equal(supervisor.tunnelMonitorGeneration, generation);
+      assert.equal(supervisor.tunnelMonitorFailures, 1);
+      assert.equal(supervisor.tunnelMonitorObservationUnavailable, true);
+      t.mock.timers.tick(10_000);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(observations, [replacementConfig.tunnel.alias]);
+    } finally {
+      release();
+      await Promise.allSettled([...supervisor.recoveryTasks]);
+      supervisor.stopTunnelMonitor();
+      t.mock.timers.reset();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test("repeated healthy polls preserve managed identity and coalesce the same native stop", async () => {
+  const { root, supervisor } = fixture();
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const config = { mode: "full", tunnel: { alias: "owned-fixture" } };
+  let stops = 0;
+  supervisor.readConfig = () => config;
+  supervisor.readTunnelHealth = async () => ({ ready: true, pid: 4242 });
+  supervisor.runTunnelStopCommand = async () => { stops += 1; await gate; return { code: 0 }; };
+  supervisor.waitForTunnelStopped = async () => ({ state: "stopped", processRunning: false });
+  failWrites(supervisor);
+  try {
+    await supervisor.waitForTunnel(config);
+    const managed = supervisor.tunnel;
+    supervisor.tryWriteState("ready");
+    await supervisor.waitForTunnel(config);
+    supervisor.tryWriteState("degraded");
+    assert.equal(stops, 1, "the same native PID must not receive overlapping stop requests");
+    assert.equal(supervisor.tunnel, managed);
+    assert.equal(supervisor.stateWriteCleanups.size, 1);
+    release();
+    await Promise.all([...supervisor.stateWriteCleanups.values()]);
+    assert.equal(supervisor.tunnel, null);
+  } finally {
+    release();
+    await Promise.allSettled([...supervisor.recoveryTasks]);
+    supervisor.stopTunnelMonitor();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const previous of [
+  { pid: 101, exitCode: null, signalCode: null, managed: true },
+  { pid: 202, exitCode: 0, signalCode: null, managed: true },
+  { pid: 202, exitCode: null, signalCode: null, managed: false },
+]) test(`healthy polling acquires a new identity for ${JSON.stringify(previous)}`, async () => {
+  const { root, supervisor } = fixture();
+  supervisor.tunnel = previous;
+  supervisor.readTunnelHealth = async () => ({ ready: true, pid: 202 });
+  try {
+    await supervisor.waitForTunnel({ mode: "full" });
+    assert.notEqual(supervisor.tunnel, previous);
+    assert.deepEqual(supervisor.tunnel, { pid: 202, exitCode: null, signalCode: null, managed: true });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
