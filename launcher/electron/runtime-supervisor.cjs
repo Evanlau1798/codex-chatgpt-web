@@ -369,6 +369,7 @@ class RuntimeSupervisor {
     this.tunnelMonitorGeneration = 0;
     this.tunnelHealthBaseUrl = null;
     this.recoveryTasks = new Set();
+    this.stateWriteCleanups = new Map();
     this.expectedExits = new WeakSet();
     this.restartableChildren = new WeakSet();
     this.lastChildFailure = { daemon: null, tunnel: null };
@@ -459,6 +460,39 @@ class RuntimeSupervisor {
           clearTimeout(this.restartTimers[name]);
           this.restartTimers[name] = null;
         }
+      }
+      this.stopTunnelMonitor();
+      // Only in-memory owned children authorize cleanup; a marker PID does not.
+      // Coalesce each live generation, not every failure for this supervisor's lifetime.
+      for (const name of ["daemon", "tunnel"]) {
+        const child = this[name];
+        if (!child || child.exitCode !== null || child.signalCode !== null
+          || this.stateWriteCleanups.has(child)) continue;
+        const cleanup = (async () => {
+          try {
+            if (name === "tunnel" && child.managed) {
+              const config = this.readConfig();
+              if (!config) throw new Error("Owned tunnel cleanup requires its runtime configuration");
+              await this.stopTunnelGracefully(config);
+            } else {
+              await this.stopChild(name);
+            }
+          } catch (cleanupError) {
+            this.logger.error("runtime.state_write_cleanup_failed", {
+              name,
+              message: errorMessage(cleanupError),
+            });
+          } finally {
+            // A failed native stop normally restarts monitoring; persistence failure must not.
+            if (this.stopping) this.stopTunnelMonitor();
+          }
+        })();
+        this.stateWriteCleanups.set(child, cleanup);
+        this.recoveryTasks.add(cleanup);
+        void cleanup.finally(() => {
+          this.stateWriteCleanups.delete(child);
+          this.recoveryTasks.delete(cleanup);
+        });
       }
       this.logger.error("runtime.state_write_failed", { status, message });
       this.publishOperation?.({ name: "runtime-supervisor", status: "failed", message });
@@ -1085,9 +1119,9 @@ class RuntimeSupervisor {
       });
       if (this.tunnelMonitorFailures < TUNNEL_MONITOR_FAILURE_THRESHOLD) return;
       this.lastChildFailure.tunnel = message;
-      this.tunnel = null;
       this.stopTunnelMonitor();
       if (!this.tryWriteState("degraded", message)) return;
+      this.tunnel = null;
       this.publishOperation?.({ name: "runtime-recovery", status: "running", message });
       this.scheduleRecovery("tunnel");
     };
@@ -1183,6 +1217,7 @@ class RuntimeSupervisor {
 
   async startIfConfigured() {
     if (this.stopPromise) await this.stopPromise;
+    if (this.stateWriteCleanups.size > 0) await Promise.all([...this.stateWriteCleanups.values()]);
     if (this.startPromise) return this.startPromise;
     this.startPromise = this.startConfigured();
     try {
@@ -1381,6 +1416,7 @@ class RuntimeSupervisor {
   }
 
   async cleanupFailedStart(config) {
+    if (this.stateWriteCleanups.size > 0) await Promise.all([...this.stateWriteCleanups.values()]);
     if (this.daemon) {
       const child = this.daemon;
       const healthy = Number.isInteger(child.pid) && await this.proxyHealth(config, 2_000, child.pid);
@@ -1572,7 +1608,7 @@ class RuntimeSupervisor {
       this.startTunnelMonitor(config);
       throw error;
     }
-    this.tunnel = null;
+    if (this.tunnel === managed) this.tunnel = null;
   }
 
   async adoptConfiguredTunnelForStop(config) {
@@ -1933,7 +1969,7 @@ class RuntimeSupervisor {
       this.logger.warn(`runtime.${name}_forced_stop`, { message: errorMessage(gracefulError) });
     }
     terminateOwnedProcessTree(child, "SIGKILL");
-    this[name] = null;
+    if (this[name] === child) this[name] = null;
   }
 
   async stopForSetup() {
