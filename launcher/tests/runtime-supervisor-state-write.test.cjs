@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
+const childProcess = require("node:child_process");
 const { once } = require("node:events");
 const { RuntimeSupervisor } = require("../electron/runtime-supervisor.cjs");
 const { DETACH_OWNED_CHILD, processRunning, terminateOwnedProcessTree } = require("../electron/process-tree.cjs");
@@ -37,19 +38,44 @@ test("ownership write failure stops each owned daemon generation without touchin
     cwd: root, detached: DETACH_OWNED_CHILD, stdio: "ignore", windowsHide: true,
   });
   await once(foreign, "spawn");
-  const writeState = supervisor.writeState.bind(supervisor);
+  const writeState = supervisor.writeState.bind(supervisor), stopChild = supervisor.stopChild.bind(supervisor);
+  let idle = false, healthy = true, forcedStops = 0;
+  supervisor.stopChild = (...args) => { forcedStops++; return stopChild(...args); };
+  supervisor.readConfig = () => ({ mode: "full", tunnel: { alias: "owned-fixture" } });
+  supervisor.proxyHealth = async () => healthy;
+  supervisor.waitForPortRelease = async () => {};
+  supervisor.control = async (_config, action) => {
+    if (action === "shutdown") { supervisor.daemon.kill(); return { status: "ok" }; }
+    return { accepting_turns: false, active_http_turns: idle ? 0 : 1, active_browser_turns: 0 };
+  };
+  supervisor.runTunnelStopCommand = async () => { assert(idle); assert.equal(supervisor.daemon, null); return { code: 0 }; };
+  supervisor.waitForTunnelStopped = async () => ({ state: "stopped", processRunning: false });
   try {
     for (let generation = 0; generation < 2; generation += 1) {
-      // A later explicit start must not be exempted by a lifetime cleanup latch.
       supervisor.stopping = false;
       supervisor.writeState = writeState;
       const child = supervisor.spawnChild("daemon", {
         executable: process.execPath, args: ["-e", "setInterval(() => {}, 1000)"], cwd: root,
       });
       await once(child, "spawn");
+      idle = false;
+      healthy = generation === 0;
+      supervisor.tunnel = { pid: null, exitCode: null, signalCode: null, managed: true };
       failWrites(supervisor);
       supervisor.restartTimers.daemon = setTimeout(() => assert.fail("recovery must stay stopped"), 30_000);
       assert.equal(supervisor.tryWriteState("ready"), false);
+      assert.equal(forcedStops, 0, "persistence failure must not synchronously force-stop a serving daemon");
+      if (!healthy) {
+        await Promise.all([...supervisor.stateWriteCleanups.values()]);
+        await assert.rejects(supervisor.cleanupFailedStart(supervisor.readConfig()), /matching health/);
+        assert(processRunning(child.pid) && supervisor.tunnel, "unverified health must preserve owned processes");
+        healthy = true;
+        supervisor.tryWriteState("ready");
+      }
+      await new Promise(resolve => setImmediate(resolve));
+      assert(processRunning(child.pid), "active turns must retain their daemon and tunnel");
+      assert(supervisor.tunnel);
+      idle = true;
       assert.equal(supervisor.stopping, true);
       assert.equal(supervisor.restartTimers.daemon, null);
       await until(() => child.exitCode !== null || child.signalCode !== null, "owned daemon must exit after persistence fails");
@@ -152,15 +178,15 @@ for (const entry of ["stopForSetup", "forceStopOwnedRuntime"]) {
       };
       failWrites(supervisor);
       try {
-        if (entry === "stopForSetup") {
-          await assert.rejects(supervisor.stopForSetup(), /synthetic native/);
-        } else {
-          assert.equal((await supervisor.forceStopOwnedRuntime(new Error("test shutdown"))).status, "forced-partial");
-        }
+        let settled = false;
+        const stopping = entry === "stopForSetup" ? supervisor.stopForSetup() : supervisor.forceStopOwnedRuntime(new Error("test shutdown"));
+        const result = stopping.then(() => { settled = true; return null; }, error => { settled = true; return error; });
+        await until(() => stops === 2, "ownership persistence failure must initiate native cleanup");
         assert.equal(stops, 2, "ownership persistence failure must retry through production native stop");
-        assert.equal(supervisor.stopping, false, "outer stop must settle before cleanup is released");
+        assert.equal(settled, entry === "stopForSetup", "forced shutdown must await terminal proof");
         assert.equal(supervisor.stateWriteCleanups.has(managed), true);
         release();
+        assert.match((await result)?.message || "", /synthetic native/);
         await Promise.all([...supervisor.stateWriteCleanups.values()]);
         assert.equal(supervisor.tunnel, managed, "failed native stop must retain the owned generation");
         assert.equal(terminalChecks, failure === "terminal unproven" ? 2 : 0);
@@ -431,7 +457,10 @@ for (const restart of [false, true]) test(`overlapping recovery cleans late owne
   supervisor.readTunnelHealth = async () => ({ ready: true, pid: null });
   supervisor.waitForTunnelMcpTransport = async () => {};
   supervisor.waitForProxy = async () => new Promise(resolve => setImmediate(resolve));
-  supervisor.proxyHealth = async () => false;
+  supervisor.proxyHealth = async () => true;
+  supervisor.acquireDrain = async () => true;
+  supervisor.control = async () => { supervisor.daemon.kill(); return { status: "ok" }; };
+  supervisor.waitForPortRelease = async () => {};
   supervisor.runtimeCommand = () => ({ executable: process.execPath,
     args: ["-e", "setInterval(() => {}, 1000)"], cwd: root });
   supervisor.writeState = (status, detail) => {
@@ -467,6 +496,102 @@ for (const restart of [false, true]) test(`overlapping recovery cleans late owne
     if (supervisor.tunnel) await supervisor.stopTunnelGracefully(config).catch(() => {});
     supervisor.stopTunnelMonitor();
     t.mock.timers.reset();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("startup cannot commit ready after a transient monitored ownership failure", async t => {
+  const { root, supervisor, operations } = fixture();
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const config = { mode: "full", releaseVersion: "0.2.0", tunnel: { alias: "owned-fixture" } };
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const write = supervisor.writeState.bind(supervisor);
+  supervisor.readConfig = () => config;
+  supervisor.proxyHealth = async () => false;
+  supervisor.observeTunnelForMonitor = async () => ({ statusKnown: true, ready: false, fatal: true, detail: "controlled monitor failure" });
+  supervisor.startTunnel = async () => {
+    supervisor.tunnel = { pid: null, exitCode: null, signalCode: null, managed: true };
+    supervisor.startTunnelMonitor(config);
+  };
+  supervisor.startDaemon = async () => {
+    supervisor.spawnChild("daemon", { executable: process.execPath, args: ["-e", "setInterval(() => {}, 1000)"], cwd: root });
+    await gate;
+  };
+  supervisor.writeState = (status, detail) => {
+    if (status === "degraded") throw new Error("transient ownership failure");
+    return write(status, detail);
+  };
+  const starting = supervisor.startConfigured();
+  try {
+    await until(() => Boolean(supervisor.daemon), "startup must reach the acquired daemon boundary");
+    t.mock.timers.tick(10_000);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(supervisor.stopping, true);
+    await Promise.all([...supervisor.stateWriteCleanups.values()]);
+    release();
+    await assert.rejects(starting, /startup was stopped/);
+    assert.equal(supervisor.readState().status, "failed");
+    assert(!operations.some(operation => operation.status === "completed"));
+  } finally {
+    release();
+    await starting.catch(() => {});
+    await Promise.allSettled([...supervisor.recoveryTasks]);
+    await supervisor.stopChild("daemon");
+    supervisor.stopTunnelMonitor();
+    t.mock.timers.reset();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const refused of [false, true]) test(`control timeout awaits asynchronous tree termination (refused=${refused})`, async t => {
+  const { root, supervisor } = fixture();
+  const pidFile = path.join(root, "control.pid");
+  let releaseKill, releaseProof, requests = 0, nativeFinished = false, settled = false;
+  const killGate = new Promise(resolve => { releaseKill = resolve; });
+  const proofGate = new Promise(resolve => { releaseProof = resolve; });
+  const execFile = childProcess.execFile;
+  if (process.platform === "win32") t.mock.method(childProcess, "execFile", (file, args, options, callback) => {
+    requests++;
+    assert.equal(path.basename(file).toLowerCase(), "taskkill.exe");
+    assert.deepEqual(args.slice(2), ["/T", "/F"]);
+    assert.equal(options.windowsHide, true);
+    assert.equal(options.timeout, 10_000);
+    void killGate.then(() => {
+      const finish = (...result) => { nativeFinished = true; void proofGate.then(() => callback(...result)); };
+      if (refused) finish(new Error("controlled tree termination refusal"));
+      else execFile(file, args, options, finish);
+    });
+    return {};
+  });
+  const running = supervisor.runTunnelCommand({ tunnel: { binaryPath: process.execPath, profileDir: root } },
+    ["-e", `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000)`],
+    1_000, "Owned cleanup probe").then(value => { settled = true; return value; }, error => { settled = true; return error; });
+  let pid;
+  try {
+    await until(() => fs.existsSync(pidFile), "owned control process must publish its identity");
+    pid = Number(fs.readFileSync(pidFile, "utf8"));
+    if (process.platform === "win32") {
+      await until(() => requests === 1, "timeout must use the nonblocking native termination boundary");
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(settled, false, "event loop must progress while termination is pending");
+      assert(processRunning(pid));
+      releaseKill();
+      await until(() => nativeFinished, "native termination must complete");
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(settled, false, "process exit alone must not outrun the termination result");
+      releaseProof();
+    }
+    const result = await running;
+    assert.match(result.message || "", /Owned cleanup probe timed out/);
+    if (process.platform === "win32" && refused) {
+      assert.match(result.message, /controlled tree termination refusal/);
+      assert(processRunning(pid), "refused termination must not be reported as terminal proof");
+    } else await until(() => !processRunning(pid), "the owned control process must be gone");
+  } finally {
+    releaseKill(); releaseProof();
+    await running;
+    if (pid && processRunning(pid)) terminateOwnedProcessTree({ pid, exitCode: null, signalCode: null });
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

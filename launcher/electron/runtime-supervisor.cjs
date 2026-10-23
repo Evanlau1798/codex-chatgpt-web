@@ -9,6 +9,7 @@ const {
   DETACH_OWNED_CHILD,
   processRunning,
   terminateOwnedProcessTree,
+  terminateOwnedProcessTreeAsync,
 } = require("./process-tree.cjs");
 const { runtimeInvocation } = require("./runtime-command.cjs");
 const { windowsTrustEnvironment } = require("./windows-trust.cjs");
@@ -370,6 +371,7 @@ class RuntimeSupervisor {
     this.tunnelHealthBaseUrl = null;
     this.recoveryTasks = new Set();
     this.stateWriteCleanups = new Map();
+    this.stateWriteCleanupFailures = new WeakSet();
     this.expectedExits = new WeakSet();
     this.restartableChildren = new WeakSet();
     this.lastChildFailure = { daemon: null, tunnel: null };
@@ -464,20 +466,40 @@ class RuntimeSupervisor {
       this.stopTunnelMonitor();
       // Only in-memory owned children authorize cleanup; a marker PID does not.
       // Coalesce each live generation, not every failure for this supervisor's lifetime.
+      const ownedDaemon = this.daemon;
       for (const name of ["daemon", "tunnel"]) {
         const child = this[name];
         if (!child || child.exitCode !== null || child.signalCode !== null
           || this.stateWriteCleanups.has(child)) continue;
         const cleanup = (async () => {
           try {
-            if (name === "tunnel" && child.managed) {
-              const config = this.readConfig();
-              if (!config) throw new Error("Owned tunnel cleanup requires its runtime configuration");
-              await this.stopTunnelGracefully(config);
+            const config = this.readConfig();
+            if (!config) throw new Error("Owned runtime cleanup requires its runtime configuration");
+            if (name === "daemon") {
+              if (!Number.isInteger(child.pid) || !await this.proxyHealth(config, 2_000, child.pid)) {
+                throw new Error("Owned daemon cleanup requires matching health evidence");
+              }
+              let drained = false;
+              try {
+                drained = await this.acquireDrain(config);
+                if (this.daemon !== child) throw new Error("Owned daemon generation changed during cleanup");
+                await this.shutdownDaemon(config);
+              } catch (failure) {
+                if (drained && this.daemon === child) {
+                  try { await this.control(config, "resume"); }
+                  catch (resumeError) { throw new Error(appendFailure(errorMessage(failure), "daemon resume compensation failed", resumeError)); }
+                }
+                throw failure;
+              }
             } else {
-              await this.stopChild(name);
+              const daemonCleanup = this.stateWriteCleanups.get(ownedDaemon);
+              if (daemonCleanup) await daemonCleanup;
+              if (this.tunnel !== child) return;
+              if (ownedDaemon && this.daemon === ownedDaemon) throw new Error("Owned daemon must stop safely before tunnel cleanup");
+              await this.stopTunnelGracefully(config);
             }
           } catch (cleanupError) {
+            this.stateWriteCleanupFailures.add(child);
             this.logger.error("runtime.state_write_cleanup_failed", {
               name,
               message: errorMessage(cleanupError),
@@ -1321,6 +1343,7 @@ class RuntimeSupervisor {
       if (!tunnelOnly) await this.startDaemon(config);
       this.restartHistory.daemon = [];
       this.restartHistory.tunnel = [];
+      if (this.stopping) throw new Error("Runtime startup was stopped before ownership could be committed");
       this.writeState("ready");
       this.publishOperation?.({
         name: "runtime-start",
@@ -1439,6 +1462,7 @@ class RuntimeSupervisor {
           throw error;
         }
       } else {
+        if (this.stateWriteCleanupFailures.has(child)) throw new Error("Owned daemon cleanup requires matching health evidence");
         await this.stopChild("daemon");
       }
     }
@@ -1676,17 +1700,20 @@ class RuntimeSupervisor {
       let timeoutError = null;
       let terminationTimeout = null;
       let forceTimeout = null;
+      let termination = null;
       const clearTimers = () => {
         clearTimeout(timeout);
         if (terminationTimeout) clearTimeout(terminationTimeout);
         if (forceTimeout) clearTimeout(forceTimeout);
       };
-      const timeout = setTimeout(() => {
+      const timeout = setTimeout(async () => {
         if (settled) return;
         timeoutError = new Error(`${label} timed out after ${timeoutMs}ms`);
         try {
-          terminateOwnedProcessTree(child);
+          termination = terminateOwnedProcessTreeAsync(child);
+          await termination;
         } catch (error) {
+          if (settled) return;
           settled = true;
           clearTimers();
           reject(new Error(
@@ -1694,11 +1721,14 @@ class RuntimeSupervisor {
           ));
           return;
         }
-        terminationTimeout = setTimeout(() => {
+        if (settled) return;
+        terminationTimeout = setTimeout(async () => {
           if (settled) return;
           try {
-            terminateOwnedProcessTree(child, "SIGKILL");
+            termination = terminateOwnedProcessTreeAsync(child, "SIGKILL");
+            await termination;
           } catch (error) {
+            if (settled) return;
             settled = true;
             clearTimers();
             reject(new Error(
@@ -1706,6 +1736,7 @@ class RuntimeSupervisor {
             ));
             return;
           }
+          if (settled) return;
           forceTimeout = setTimeout(() => {
             if (settled) return;
             settled = true;
@@ -1716,13 +1747,17 @@ class RuntimeSupervisor {
       }, timeoutMs);
       child.stdout.on("data", (chunk) => capture(stdout, chunk, "stdout"));
       child.stderr.on("data", (chunk) => capture(stderr, chunk, "stderr"));
-      const onOutputError = (stream) => (error) => {
+      const onOutputError = (stream) => async (error) => {
         if (settled) return;
         settled = true;
         clearTimers();
         try {
-          terminateOwnedProcessTree(child);
-        } catch {}
+          if (!termination) termination = terminateOwnedProcessTreeAsync(child);
+          await termination;
+        } catch (cleanupError) {
+          reject(new Error(`${label} ${stream} pipe failed: ${appendFailure(errorMessage(error), "control process tree termination failed", cleanupError)}`));
+          return;
+        }
         reject(new Error(`${label} ${stream} pipe failed: ${errorMessage(error)}`));
       };
       child.stdout.once("error", onOutputError("stdout"));
@@ -1735,13 +1770,14 @@ class RuntimeSupervisor {
           ? new Error(`${timeoutError.message}; termination failed: ${error.message}`)
           : error);
       });
-      child.once("exit", (code) => {
+      child.once("exit", async (code) => {
         if (settled) return;
         settled = true;
         clearTimers();
         if (timeoutError) {
           try {
-            terminateOwnedProcessTree(child, "SIGKILL");
+            await termination;
+            await terminateOwnedProcessTreeAsync(child, "SIGKILL");
             reject(timeoutError);
           } catch (error) {
             reject(new Error(
@@ -2127,7 +2163,11 @@ class RuntimeSupervisor {
         failures.push(`daemon: ${errorMessage(error)}`);
       }
       if (failures.length === 0) this.clearState();
-      else this.tryWriteState("failed", failures.join("; "));
+      else {
+        this.tryWriteState("failed", failures.join("; "));
+        await Promise.all([...this.stateWriteCleanups.values()]);
+        if (this.daemon || this.tunnel) throw new Error(`Forced shutdown could not prove termination: ${failures.join("; ")}`);
+      }
       this.logger.warn("runtime.forced_shutdown_completed", {
         message: errorMessage(reason),
         failures,
