@@ -86,7 +86,7 @@
     "fast-uri": "3.1.8",
     "proxy-addr": "2.0.8",
     "hono": "4.13.12",
-    "ip-address": "10.7.2",
+    "ip-address": "10.7.4",
     "qs": "6.16.0",
     "zod-to-json-schema": "3.25.1"
   },

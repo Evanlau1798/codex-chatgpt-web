@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["bun"],
+    "typeRoots": ["../../node_modules/@types"]
+  },
+  "include": ["gateway.ts", "backend.ts", "preload.ts", "dashboard.ts"]
+}

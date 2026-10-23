@@ -88,6 +88,8 @@ async function main(): Promise<void> {
     await run(["run", "check-version"]);
     await run(["run", "audit"]);
     await run(["run", "launcher:audit"]);
+    // Electron 42 installs on first require; download outside each test's deadline.
+    await run(["run", "--cwd", "launcher", "prepare:electron"]);
     await run(["run", "typecheck"]);
     const passedRootTests = await runRootTests();
     await run(["run", "launcher:typecheck"]);
