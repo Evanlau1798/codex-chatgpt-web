@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
 import { runInNewContext } from "node:vm";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import { registerOwnedChatGptWorkPage, recoverOwnedTemporaryPersonalization } from "../src/adapters/chatgpt-web/owned-personalization";
 import { ensureChatGptPersonalizedConnectorAccess } from "../src/adapters/chatgpt-web/personalization";
 
@@ -128,4 +132,40 @@ test("an SDK probe failure falls through to the existing connector-access proof"
   expect(proofs).toBe(1);
   expect(f.notifications()).toBe(0);
   expect(f.client.getFeatureGate).toBe(f.descriptor!.value);
+});
+
+test("an absent control and failed connector proof report unavailability without waiting for a missing control", async () => {
+  const absent = { filter: () => absent, count: async () => 0 };
+  const page = { getByRole: () => absent, locator: () => absent } as any;
+  const diagnostics: string[] = [];
+  let proofs = 0;
+  await expect(ensureChatGptPersonalizedConnectorAccess(page,
+    async checkpoint => { diagnostics.push(checkpoint); },
+    async () => { proofs++; return false; }, undefined, async () => false,
+  )).rejects.toThrow("did not expose a personalization control or the configured connector");
+  expect(proofs).toBe(1);
+  expect(diagnostics).toEqual(["personalization-control-unavailable"]);
+});
+
+test("launcher service verification recovers its own page before selecting the connector", async () => {
+  const f = fixture();
+  f.page.locator = () => ({ evaluateAll: async () => [] });
+  const root = mkdtempSync(join(tmpdir(), "cgw-owned-personalization-"));
+  const stop = new Error("connector recovery verified; do not send a request");
+  const verify = (ChatGptBrowserWorker.prototype as any).verifyConnectorExclusive;
+  try {
+    await expect(verify.call({
+      config: { appName: "Codex Native2", browserDiagnosticsPath: root },
+      ensurePage: async () => f.page,
+      prepareChatSurface: async () => {},
+      selectConnector: async () => {
+        expect(await recoverOwnedTemporaryPersonalization(f.page)).toBeTrue();
+        throw stop;
+      },
+    }, "verify_owned_personalization")).rejects.toBe(stop);
+    expect(f.notifications()).toBe(1);
+  } finally {
+    if (dirname(resolve(root)) !== resolve(tmpdir())) throw new Error("Unexpected test cleanup path");
+    rmSync(root, { recursive: true, force: true });
+  }
 });

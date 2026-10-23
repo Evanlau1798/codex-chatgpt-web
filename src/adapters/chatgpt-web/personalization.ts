@@ -190,6 +190,10 @@ async function ensureWithinDeadline(
         await capture("personalization-already-enabled");
         return "already-personalized";
       }
+      if (await runChatGptMutationStep(() => page.locator(CONTROL_SELECTOR).filter({ visible: true }).count(), deadline, signal) === 0) {
+        await capture("personalization-control-unavailable");
+        throw unavailable("ChatGPT did not expose a personalization control or the configured connector in this Temporary Chat. Check that the connector is available in ChatGPT Plugins before retrying.");
+      }
       await capture("personalization-unpersonalized");
       const receipt = await toggleChoice(page, deadline, signal);
       let proofError: unknown;
