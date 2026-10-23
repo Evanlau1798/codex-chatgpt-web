@@ -1966,7 +1966,7 @@ test("browser helper operations fail closed when the configured connector name i
   assert.equal(helperCalls, 0);
 });
 
-test("connector verification is effort-independent and works while the browser surface is hidden", async () => {
+for (const useSavedChats of [false, true]) test(`hidden connector verification uses the selected chat mode (${useSavedChats}) without selecting effort`, async () => {
   const calls = [];
   const fixture = {
     helper: { executable: "/runtime/electron", script: "/runtime/browser-helper.cjs" },
@@ -1974,7 +1974,8 @@ test("connector verification is effort-independent and works while the browser s
     logger: { info: (event, detail) => calls.push(["log", event, detail]) },
     setState: (patch) => calls.push(["state", patch]),
     show: () => calls.push(["show"]),
-    refreshChatGptHomeDocument: async () => calls.push(["refresh"]),
+    getUseSavedChats: () => useSavedChats,
+    refreshChatGptHomeDocument: async (saved) => calls.push(["refresh", saved]),
     selectHighEffort: async () => {
       throw new Error("connector verification must not select an effort");
     },
@@ -1991,15 +1992,45 @@ test("connector verification is effort-independent and works while the browser s
   assert.deepEqual(
     calls.filter(([type]) => ["refresh", "helper"].includes(type)),
     [
-      ["refresh"],
+      ["refresh", useSavedChats],
       ["helper", {
         helper: fixture.helper,
         descriptorPath: fixture.descriptorPath,
         appName: "Codex Native2",
+        useSavedChats,
         logger: fixture.logger,
       }],
     ],
   );
+});
+
+for (const useSavedChats of [false, true]) test(`verification refresh and authentication preserve the selected chat mode (${useSavedChats})`, async () => {
+  const target = useSavedChats ? "https://chatgpt.com/" : "https://chatgpt.com/?temporary-chat=true";
+  for (const initial of [target, "https://chatgpt.com/c/existing", "about:blank",
+    useSavedChats ? "https://chatgpt.com/?temporary-chat=true" : "https://chatgpt.com/"]) {
+    const calls = [];
+    let currentUrl = initial;
+    const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+      state: { authenticated: false }, authenticationRevision: 0, manualOperation: "connector verification", turnTabs: new Map(),
+      setState(patch) { Object.assign(this.state, patch); }, snapshot() { return { ...this.state }; },
+      logger: { info() {} },
+      view: { webContents: {
+        ...scriptEvents(), isDestroyed: () => false,
+        getURL: () => currentUrl,
+        loadURL: async (url) => { currentUrl = url; calls.push(["navigate", url]); },
+        executeJavaScript: async () => {
+          calls.push(["authenticate"]);
+          return { sessionAuthenticated: true, composer: true, temporary: !useSavedChats,
+            url: currentUrl, readyState: "complete" };
+        },
+      } },
+      hardRefreshHome: async () => calls.push(["refresh"]),
+    });
+    await fixture.refreshChatGptHomeDocument(useSavedChats);
+    assert.deepEqual(calls, [initial === target ? ["refresh"] : ["navigate", target], ["authenticate"]]);
+    assert.equal(fixture.state.authenticated, true);
+    assert.equal(currentUrl, target);
+  }
 });
 
 test("connector verification records the helper failure in launcher diagnostics", async () => {
@@ -2016,6 +2047,7 @@ test("connector verification records the helper failure in launcher diagnostics"
     },
     setState: (patch) => calls.push(["state", patch]),
     refreshChatGptHomeDocument: async () => calls.push(["refresh"]),
+    getUseSavedChats: () => true,
     verifyConnectorWithBrowserHelper: async () => { throw failure; },
   };
 
@@ -2051,7 +2083,7 @@ test("a live helper retains exclusive ownership of its running turn", async () =
   );
 });
 
-test("a replacement helper takes over only after the previous owner exited", async () => {
+test("a replacement helper cannot acquire a running turn as a fresh submission after its owner exits", async () => {
   const deadPid = 2_147_483_647;
   const tab = {
     id: "tab-dead-owner",
@@ -2082,13 +2114,14 @@ test("a replacement helper takes over only after the previous owner exited", asy
     logger: { info() {}, warn: (event, detail) => warnings.push([event, detail]) },
   });
 
-  const lease = await BrowserHost.prototype.beginTurn.call(fixture, tab.traceId, false, process.pid);
-
-  assert.deepEqual(lease, { surfaceId: tab.surfaceId, tabId: tab.id, reused: false });
-  assert.equal(tab.helperPid, process.pid);
-  assert.equal(warnings.length, 1);
-  assert.equal(warnings[0][0], "browser.stale_turn_owner_replaced");
-  assert.equal(warnings[0][1].previousHelperPid, deadPid);
+  await assert.rejects(() => BrowserHost.prototype.beginTurn.call(fixture, tab.traceId, false, process.pid), {
+    code: "turn_owner_lost",
+  });
+  assert.equal(tab.helperPid, deadPid);
+  assert.equal(tab.status, "running");
+  assert.equal(fixture.turnTabs.get(tab.id), tab);
+  assert.equal(fixture.selectedTabId, "home");
+  assert.equal(warnings.length, 0);
 });
 
 test("a live turn heartbeat refreshes its lease and rejects another helper", () => {
@@ -2196,6 +2229,99 @@ test("removing the final turn tab hides an uninitialized idle host instead of ex
   BrowserHost.prototype.removeTurnTab.call(fixture, tab, false);
 
   assert.deepEqual(calls, ["view-remove", "contents-close", "hide"]);
+});
+
+test("expired failed tabs finish cleanup when Electron has already released their webContents", async () => {
+  const { fixture, tab } = failedAutomaticTurnFixture();
+  await fixture.endTurn(tab.traceId, tab.helperPid, "failed", false);
+  const live = { id: "live-tab", traceId: "live-trace", helperPid: 778, status: "running" };
+  fixture.turnTabs.set(live.id, live);
+  tab.view.webContents = undefined;
+  const published = [], descriptors = [];
+  fixture.snapshot = () => ({ ids: [...fixture.turnTabs.keys()], selected: fixture.selectedTabId });
+  fixture.publishState = state => published.push(state);
+  fixture.writeDescriptor = () => descriptors.push([...fixture.turnTabs.keys()]);
+  const expiry = tab.failedAt + 30 * 60_000;
+  fixture.lastTurnSweepAt = expiry - 1;
+  await fixture.reapExpiredTurnTabs(expiry);
+  assert.equal(fixture.turnTabs.has(tab.id), false);
+  assert.equal(fixture.turnTabs.get(live.id), live);
+  assert.equal(live.status, "running");
+  assert.equal(fixture.selectedTabId, live.id);
+  assert.deepEqual(published, [{ ids: [live.id], selected: live.id }]);
+  assert.deepEqual(descriptors, [[live.id]]);
+});
+
+test("external webContents destruction retires only its owning turn and cannot leave a stale tab", () => {
+  for (const interactionMode of ["automatic", "manual"]) {
+    for (const status of ["running", "ready", "error"]) {
+      const { fixture, tab } = failedAutomaticTurnFixture();
+      const events = [], terminals = [], calls = [];
+      const contents = Object.assign(new EventEmitter(), {
+        setWindowOpenHandler() {}, isDestroyed: () => false,
+        close() { calls.push("close"); },
+      });
+      Object.assign(tab, { interactionMode, status, view: { webContents: contents } });
+      const live = { id: "live-tab", status: "running" };
+      fixture.turnTabs.set(live.id, live);
+      fixture.logger.warn = event => events.push(event);
+      const { ManualTurnController } = require("../electron/manual-turn-controller.cjs");
+      fixture.manualTurns = new ManualTurnController({ host: fixture, logger: fixture.logger });
+      tab.manualTerminalWaiters = new Set([state => terminals.push(state.status)]);
+      fixture.publishState = () => calls.push("publish");
+      fixture.writeDescriptor = () => calls.push("descriptor");
+      fixture.bindTurnContents(tab);
+      assert.equal(contents.listenerCount("destroyed"), 1);
+      // Real WebContentsView releases this property after an external CDP Page.close.
+      tab.view.webContents = undefined;
+      contents.isDestroyed = () => true;
+      contents.emit("destroyed");
+      assert.equal(fixture.turnTabs.has(tab.id), false);
+      assert.equal(fixture.turnTabs.get(live.id), live);
+      assert.equal(fixture.selectedTabId, live.id);
+      assert.deepEqual(fixture.closedTurnOwners.get(tab.traceId), status === "running"
+        ? { helperPid: tab.helperPid, remainingAcks: 2 } : undefined);
+      assert.deepEqual(terminals, interactionMode === "manual" ? ["failed"] : []);
+      assert.deepEqual(events, ["browser.tab_closed_externally"]);
+      assert.deepEqual(calls, ["publish", "descriptor"]);
+      contents.emit("destroyed");
+      assert.deepEqual(calls, ["publish", "descriptor"]);
+    }
+  }
+});
+
+test("destruction callbacks cannot repeat normal cleanup or remove a replacement owner", () => {
+  for (const scenario of ["normal-close", "host-teardown", "replacement-owner"]) {
+    const { fixture, tab } = failedAutomaticTurnFixture();
+    const events = [], calls = [];
+    const contents = Object.assign(new EventEmitter(), {
+      setWindowOpenHandler() {}, isDestroyed: () => false,
+      close() {
+        calls.push("close");
+        tab.view.webContents = undefined;
+        contents.isDestroyed = () => true;
+        contents.emit("destroyed");
+      },
+    });
+    tab.view.webContents = contents;
+    fixture.hide = () => {};
+    fixture.logger.warn = event => events.push(event);
+    fixture.publishState = () => calls.push("publish");
+    fixture.writeDescriptor = () => calls.push("descriptor");
+    fixture.bindTurnContents(tab);
+    const replacement = { ...tab, traceId: "replacement-trace" };
+    if (scenario === "normal-close") fixture.removeTurnTab(tab, false);
+    else {
+      if (scenario === "host-teardown") fixture.destroyed = true;
+      else fixture.turnTabs.set(tab.id, replacement);
+      contents.close();
+    }
+    assert.deepEqual(events, []);
+    assert.deepEqual(calls, scenario === "normal-close" ? ["close", "publish", "descriptor"] : ["close"]);
+    assert.equal(fixture.turnTabs.get(tab.id), scenario === "normal-close" ? undefined
+      : scenario === "host-teardown" ? tab : replacement);
+    assert.equal(fixture.closedTurnOwners.size, 0);
+  }
 });
 
 test("hard refresh accepts Chromium's completed loading cycle even without did-finish-load", async () => {

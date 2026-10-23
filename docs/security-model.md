@@ -100,6 +100,10 @@ continuation cache is private, expires, and exists only to implement Codex
 `previous_response_id` replay. ChatGPT Web context compaction remains inside the active browser
 response; the bridge does not fabricate or install a Codex history checkpoint.
 
+Task conversations use Temporary Chat by default. **Save chats in ChatGPT** is an explicit opt-in;
+existing choices are preserved when updating. Saved chats may use
+ChatGPT memory and custom instructions. Connector verification follows the same selected chat mode.
+
 ## Network exposure
 
 - Responses and health listeners bind to `127.0.0.1` only.

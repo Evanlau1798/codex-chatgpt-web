@@ -20,12 +20,13 @@ const PROBE_FALLBACK_DIR = join(PROBE_DIR, "fallback");
 const PROBE_FALLBACK_TTL_MS = 120_000;
 
 function observeProbe(nonce: string | undefined, phase: "expected" | "produced" | "consumed" | "query_rejected",
-  detail: { matched?: boolean; reason?: "pattern" | "revision"; reference?: string } = {}): void {
+  detail: { matched?: boolean; reason?: "pattern" | "revision"; reference?: string; query?: string } = {}): void {
   try {
     console.error(`[chatgpt-web] connector_probe=${JSON.stringify({ at: new Date().toISOString(), pid: process.pid,
       ...(nonce ? { nonce_hash: scopeHash(nonce) } : {}), root_hash: scopeHash(PROBE_DIR), phase,
       ...(detail.matched !== undefined ? { matched: detail.matched } : {}),
       ...(detail.reason ? { reason: detail.reason } : {}),
+      ...(detail.query !== undefined ? { query_hash: scopeHash(detail.query), query_chars: detail.query.length } : {}),
       ...(detail.reference && detail.reference.length <= 256 ? { reference_hash: scopeHash(detail.reference) } : {}) })}`);
   } catch { /* Diagnostics cannot change contract verification. */ }
 }
@@ -191,27 +192,25 @@ export async function verifyCurrentConnectorContract(
       : "";
     const prompt = contract === "safe"
       ? [
-          "Protocol verification: make a real function call to the connected MCP tool codex_turn_start exactly once with",
+          "Call codex_turn_start exactly once with",
           JSON.stringify({ request_id: currentReference }),
-          "Then make a real function call to codex_tool_inventory exactly once with",
-          JSON.stringify({ request_id: currentReference, query }),
-          "Do not claim either call in prose and do not answer before the inventory tool result is returned. Do not call any other tool. After the inventory call succeeds, reply briefly.",
+          "Then call codex_tool_inventory exactly once with",
+          JSON.stringify({ request_id: currentReference, query, include_schema: false }),
+          "Do not call any other tool. After the inventory call succeeds, reply briefly.",
         ].join(" ")
-      : currentReference ? [
+      : [
           "Do not send progress updates for this connector verification.",
-          "Call codex_tool_inventory exactly once with",
-          JSON.stringify({ turn_token: currentReference, query, include_schema: false }),
+          currentReference ? "Call codex_tool_inventory exactly once with these JSON arguments:"
+            : "Call codex_tool_inventory exactly once using the current turn_token from codex_native_turn_binding and these JSON arguments:",
+          "```json",
+          JSON.stringify({ ...(currentReference ? { turn_token: currentReference } : {}), query, include_schema: false }),
+          "```",
+          "Do not add Markdown escapes to argument strings; preserve their literal values.",
           retryInstruction,
           "Do not call any other work tool. After the inventory call succeeds, complete the brief final response through the bound output control if the transport requires it; otherwise reply briefly.",
-        ].filter(Boolean).join(" ") : [
-          "Do not send progress updates for this connector verification.",
-          "Call codex_tool_inventory exactly once using the current turn_token from codex_native_turn_binding, with",
-          JSON.stringify({ query, include_schema: false }),
-          retryInstruction,
-          "Do not call any other work tool. After the inventory call succeeds, complete the brief final response through the bound output control if the transport requires it; otherwise reply briefly.",
-        ].filter(Boolean).join(" ");
+        ].filter(Boolean).join("\n");
     discardConnectorContractProbeEvidence(nonce);
-    observeProbe(nonce, "expected");
+    observeProbe(nonce, "expected", { query });
     const fallbackArmed = contract === "native" && !!currentReference;
     if (fallbackArmed) armConnectorContractProbeFallback(currentReference!, nonce, contractRevision);
     try {

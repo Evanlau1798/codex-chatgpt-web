@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
+  activateDevProfileEnvironment,
   devLauncherEnvironment,
   installedLauncherCandidates,
   readDevChatExperimentalFeatures,
@@ -146,9 +147,27 @@ test("DEV launcher child cannot inherit production home or browser-profile overr
     KEEP_ME: "yes",
     CODEX_CHATGPT_WEB_HOME: paths.home,
     CODEX_HOME: "/Users/tester/production-codex",
+    CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES: '["/Users/tester/second-account"]',
     CODEX_WEB_GPT_LAUNCHER_DATA_DIR: "/Users/tester/production-launcher",
   })).toEqual({
     KEEP_ME: "yes",
     CODEX_WEB_GPT_DEV_HOME: paths.home,
   });
+});
+
+test("DEV chat activation removes shared production Codex homes", () => {
+  const keys = ["CODEX_WEB_GPT_DEV_HOME", "CODEX_CHATGPT_WEB_HOME", "CODEX_HOME", "CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES"];
+  const saved = keys.map(key => process.env[key]);
+  try {
+    process.env.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES = '["/Users/tester/production-account"]';
+    const paths = resolveDevProfilePaths({ environment: {}, homeDirectory: "/Users/tester" });
+    activateDevProfileEnvironment(paths);
+    expect(process.env.CODEX_HOME).toBe(paths.codexHome);
+    expect(process.env.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES).toBeUndefined();
+  } finally {
+    for (const [index, key] of keys.entries()) {
+      if (saved[index] === undefined) delete process.env[key];
+      else process.env[key] = saved[index];
+    }
+  }
 });

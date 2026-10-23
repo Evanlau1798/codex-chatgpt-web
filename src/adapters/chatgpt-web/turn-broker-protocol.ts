@@ -42,11 +42,14 @@ export interface BrokerTurnOutputEvent {
   nextMessagePrediction?: string | null;
 }
 
+export type BrokerOutputReceipt = { accepted: true; sequence: number; duplicate: boolean }
+  | { accepted: false; reason: "steering"; instruction: string };
+
 export interface BrokerRequest {
   failure?: BrokerRetirementFailure;
   id: string;
   method: "claim" | "resolve" | "release" | "invoke" | "read_context" | "submit_compaction_handoff" | "submit_recovery_checkpoint" | "submit_output"
-    | "owner_status" | "owner_register" | "owner_register_safe" | "owner_update" | "owner_safe_sent"
+    | "owner_status" | "owner_register" | "owner_register_safe" | "owner_update" | "owner_safe_sent" | "owner_observer_connected"
     | "owner_next" | "owner_complete" | "owner_safe_wait_start" | "owner_safe_wait_completion"
     | "owner_request_compaction" | "owner_compaction_delivery_count" | "safe_start" | "safe_complete"
     | "owner_completion_fence_begin" | "owner_completion_fence_commit" | "owner_next_output"
@@ -57,6 +60,7 @@ export interface BrokerRequest {
     | "start_agent_wait" | "read_agent_wait" | "read_output_control";
   waitId?: string;
   token?: string;
+  observerConnected?: boolean;
   bindingId?: string;
   wireName?: string;
   freeform?: boolean;

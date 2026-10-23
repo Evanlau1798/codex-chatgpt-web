@@ -751,6 +751,13 @@ class BrowserHost {
 
   bindTurnContents(tab) {
     const contents = tab.view.webContents;
+    contents.once("destroyed", () => {
+      // External page closure bypasses closeTab(); retire only this exact owner.
+      if (this.destroyed || this.turnTabs.get(tab.id) !== tab) return;
+      this.logger.warn("browser.tab_closed_externally", { tabId: tab.id, traceId: tab.traceId });
+      this.manualTurns?.removed(tab, "failed");
+      this.removeTurnTab(tab, true);
+    });
     contents.setWindowOpenHandler(({ url }) => {
       if (allowedAuthUrl(url)) {
         if (tab.interactionMode !== "manual") this.markTurnAuthenticationRequired(tab);
@@ -1124,14 +1131,15 @@ class BrowserHost {
     });
   }
 
-  async refreshChatGptHomeDocument() {
-    // A navigation from the idle host already creates a fresh ChatGPT document. Reload only an
-    // existing Temporary Chat document; doing both back-to-back races the helper against a second
-    // SPA bootstrap and is why first setup/verification attempts timed out while the retry worked.
-    if (isTemporaryChatUrl(this.view.webContents.getURL())) {
+  async refreshChatGptHomeDocument(useSavedChats = false) {
+    // One navigation establishes a fresh selected-mode document. Reload only the
+    // already-loaded matching home, avoiding two consecutive SPA bootstraps.
+    const targetUrl = useSavedChats ? `${CHATGPT_ORIGIN}/` : TEMPORARY_CHAT_URL;
+    const currentUrl = this.view.webContents.getURL();
+    if (currentUrl === targetUrl || (!useSavedChats && isTemporaryChatUrl(currentUrl))) {
       await this.hardRefreshHome();
     } else {
-      await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+      await this.view.webContents.loadURL(targetUrl);
     }
     await this.waitForAuthenticated(60_000);
   }
@@ -1663,7 +1671,7 @@ class BrowserHost {
   }
 
   removeTurnTab(tab, abortRunning) {
-    if (!this.turnTabs.has(tab.id)) return;
+    if (this.turnTabs.get(tab.id) !== tab) return;
     this.manualTurns?.removed(tab, abortRunning ? "cancelled" : "failed");
     this.turnTabs.delete(tab.id);
     this.syncPowerSaveBlocker();
@@ -1677,7 +1685,8 @@ class BrowserHost {
       if (!tab.interactionShield.webContents.isDestroyed()) tab.interactionShield.webContents.close();
     }
     try { this.window.contentView.removeChildView(tab.view); } catch {}
-    if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
+    const contents = tab.view.webContents;
+    if (contents && !contents.isDestroyed()) contents.close();
     if (this.selectedTabId === tab.id) {
       // A preparing standby may have an open picker on its never-presented renderer.
       this.selectedTabId = [...this.turnTabs.values()]
@@ -2041,13 +2050,12 @@ class BrowserHost {
         if (processRunning(existing.helperPid)) {
           throw new Error(`ChatGPT browser turn ${traceId} is owned by another helper process`);
         }
-        this.logger.warn("browser.stale_turn_owner_replaced", {
-          tabId: existing.id,
-          traceId,
-          previousHelperPid: existing.helperPid,
-          helperPid,
-          evidence: "previous helper exited",
-        });
+        // The old helper may already have submitted this message. Its process
+        // exit supplies no proof of the current response or submission boundary.
+        // Never hand its running document to the fresh-prompt path.
+        const error = new Error("The browser helper exited while this ChatGPT turn was running. Check the existing ChatGPT tab before retrying; the message may already have been submitted.");
+        error.code = "turn_owner_lost";
+        throw error;
       }
       if (startupPrepared && sameTrace?.failedAt !== undefined) this.removeTurnTab(sameTrace, false);
       if (startupPrepared) this.rememberClosedTurnOwner(existing.traceId, existing.helperPid);
@@ -2637,7 +2645,8 @@ class BrowserHost {
     requireAutomaticBrowserInspection(this, "ChatGPT connector verification");
     const connectorName = validateConnectorName(appName);
     this.setState({ status: "testing", message: "Checking ChatGPT connector" });
-    await this.refreshChatGptHomeDocument();
+    const useSavedChats = this.getUseSavedChats();
+    await this.refreshChatGptHomeDocument(useSavedChats);
     try {
       const brokerSocketPath = typeof this.getBrokerSocketPath === "function"
         ? this.getBrokerSocketPath()
@@ -2649,6 +2658,7 @@ class BrowserHost {
         ...(typeof brokerSocketPath === "string" && brokerSocketPath.trim()
           ? { brokerSocketPath: brokerSocketPath.trim() }
           : {}),
+        useSavedChats,
         logger: this.logger,
       });
       this.logger.info("connector.verified", { status: "completed" });
@@ -2817,7 +2827,8 @@ class BrowserHost {
         if (!tab.interactionShield.webContents.isDestroyed()) tab.interactionShield.webContents.close();
       }
       try { this.window.contentView.removeChildView(tab.view); } catch {}
-      if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
+      const contents = tab.view.webContents;
+      if (contents && !contents.isDestroyed()) contents.close();
     }
     this.turnTabs.clear();
     if (this.view && !this.view.webContents.isDestroyed()) this.view.webContents.close();

@@ -25,6 +25,21 @@ test("prediction setting defaults off and preserves the explicit preference", ()
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test("saved chats default off for new or missing settings and preserve explicit choices", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-saved-chat-state-"));
+  const file = path.join(root, "state.json");
+  try {
+    assert.equal(createStateStore(file).read().useSavedChats, false);
+    fs.writeFileSync(file, JSON.stringify({ version: 1 }));
+    const store = createStateStore(file);
+    assert.equal(store.read().useSavedChats, false);
+    store.update({ useSavedChats: true });
+    assert.equal(createStateStore(file).read().useSavedChats, true);
+    store.update({ useSavedChats: false });
+    assert.equal(createStateStore(file).read().useSavedChats, false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("launcher state persists onboarding, language, and autostart atomically", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-launcher-state-"));
   const file = path.join(root, "state.json");

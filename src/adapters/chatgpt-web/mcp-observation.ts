@@ -52,10 +52,16 @@ export function observeMcpToolCalls(
           ? { output_kind: kind } as const : {};
         const reference = args && typeof args === "object"
           ? ("turn_token" in args ? args.turn_token : "request_id" in args ? args.request_id : undefined) : undefined;
+        const query = args && typeof args === "object" && "query" in args ? args.query : undefined;
         const correlation = {
           ...(String(message.id).length <= 256 ? { request_hash: scopeHash(`${typeof message.id}:${message.id}`) } : {}),
           ...(typeof reference === "string" && reference.length > 0 && reference.length <= 256
             ? { reference_hash: scopeHash(reference) } : {}),
+          ...(tool === "codex_tool_inventory" ? {
+            inventory_query_kind: query === undefined ? "missing" : typeof query === "string" ? "string" : "unrecognized",
+            ...(typeof query === "string" ? { query_chars: query.length,
+              ...(query.length <= 500 ? { query_hash: scopeHash(query) } : {}) } : {}),
+          } : {}),
         };
         const call = { call: ++sequence, tool, started: performance.now(), ...output, ...correlation };
         pending.set(message.id, call);

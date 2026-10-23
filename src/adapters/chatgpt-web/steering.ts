@@ -2,7 +2,7 @@ import type { CodexParsedRequest } from "../../types";
 import { isChatGptWebZeroRiskBackendModel } from "../../chatgpt-web-models";
 import { currentTurnUserRevision, priorAbortedTurnIds } from "./turn-user-revision";
 import { historicalClaudeGuidance } from "../../messages/claude-steering-history";
-import { extractChatGptTurnIdentity, extractChatGptTurnUserRevision, extractChatGptTurnUserText } from "./environment";
+import { chatGptTurnUserRevisionHistory, extractChatGptTurnIdentity, extractChatGptTurnUserRevision, extractChatGptTurnUserText } from "./environment";
 import type { BrokerToolRequest, TurnBroker } from "./turn-broker";
 import { claudeBrowserSessionGroup, claudeRootSessionThreadId, normalizeClaudeToolRequests } from "./claude-subagent";
 import { claudeAdditiveSteeringInstruction } from "./tool-result-delivery";
@@ -136,7 +136,11 @@ export async function sessionForChatGptRequest(
   );
   const settled = session.settledOutcome();
   const activeClaudeRoot = Boolean(claudeRootThreadId && !settled);
-  if (!session.canAcceptUserRevision(revision, text, !activeClaudeRoot)) {
+  const detachedRevision = session.observerHandoff.detachedRevision();
+  const provenContinuation = detachedRevision === undefined || (parsed._canonicalContextComplete === true
+    && chatGptTurnUserRevisionHistory(parsed).some(item => JSON.stringify({ content: item.content,
+      ...(item.itemId ? { itemId: item.itemId } : {}) }) === detachedRevision));
+  if (!provenContinuation || !session.observerHandoff.canAttach(revision) || !session.canAcceptUserRevision(revision, text, !activeClaudeRoot)) {
     const completedClaudeSteering = session.completedClaudeSteering();
     await sessions.retireAndWait(key, replacementConversationKey, signal);
     session = await sessions.getOrCreateAfterConversationRetirement(

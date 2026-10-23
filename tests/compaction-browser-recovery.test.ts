@@ -52,7 +52,7 @@ test.each([
   let freshChatPreparations = 0;
   let rejectionAbortedWait = false;
   const frame = {};
-  const page = Object.assign(new EventEmitter(), { mainFrame: () => frame, evaluate: async () => ({}), isClosed: () => false,
+  const page = Object.assign(new EventEmitter(), { mainFrame: () => frame, evaluateHandle: async () => ({ evaluate: async () => false, dispose: async () => {} }), evaluate: async () => ({}), isClosed: () => false,
     getByText: () => ({}),
     keyboard: { press: async () => {} },
     locator: (selector: string) => selector === CHATGPT_USER_TURN_SELECTOR
@@ -177,7 +177,7 @@ test.each([
           else signal.addEventListener("abort", onAbort, { once: true });
         });
       }
-      return {};
+      return { identity: `stage:${actions.length}` };
     },
     waitForMultipartAcknowledgement: async () => { actions.push("ack"); return { identity: `stage:${actions.length}` }; },
   });

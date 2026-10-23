@@ -366,6 +366,18 @@ test("an effort-control observation failure cannot become a Luna-only detection"
   })).rejects.toThrow("Ambiguous effort controls");
 });
 
+test("cancelling a missing model-control probe does not return Luna capabilities", async () => {
+  const fixture = reasoningPicker();
+  fixture.control.isVisible = async () => false;
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 10);
+  try {
+    const failure = await detectChatGptAccountCapabilities(fixture.page as never, { signal: abort.signal })
+      .then(() => undefined, (error: unknown) => error);
+    expect(failure).toMatchObject({ name: "AbortError" });
+  } finally { clearTimeout(timer); }
+});
+
 test.each([0, 50])("capabilities wait for the visible container and read its hidden semantic input (delay=%s)", async delay => {
   const fixture = reasoningPicker({ delay });
   await expect(detectChatGptAccountCapabilities(fixture.page as never)).resolves.toEqual({ solAvailable: true, extraHighAvailable: true, proAvailable: true });

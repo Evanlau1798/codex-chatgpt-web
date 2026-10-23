@@ -11,7 +11,7 @@ export function submitTurnOutput(
   kind: BrokerTurnOutputKind,
   text: string,
   nextMessagePrediction?: string | null,
-): { event: BrokerTurnOutputEvent; duplicate: boolean } {
+): { event: BrokerTurnOutputEvent; duplicate: boolean } | { steering: string } {
   assertOutputEnabled(channel);
   if (nextMessagePrediction !== undefined) {
     if (kind !== "final") throw new Error("Codex Native prediction is only valid on final output");
@@ -25,6 +25,12 @@ export function submitTurnOutput(
   }
   if (channel.safe) throw new Error("Zero Risk requests use the safe completion contract");
   if (channel.outputSealed) throw new Error("Codex Native output arrived after DOM fallback was sealed");
+  if (kind === "final" && channel.steeringInstruction) {
+    const instruction = channel.steeringInstruction;
+    channel.steeringInstruction = undefined;
+    channel.activityRevision++;
+    return { steering: instruction };
+  }
   if (channel.finalizationOnly && !channel.finalizationOutputArmed) {
     if (kind !== "final") {
       throw new Error("Codex Native non-final output arrived while browser recovery submission was pending");
@@ -121,6 +127,7 @@ export function resetTurnOutput(channel: TurnChannel, finalSequence: number): vo
 }
 
 export function sealTurnOutput(channel: TurnChannel, afterSequence: number, expectedRevision: number): boolean {
+  if (channel.observerPause) return false;
   assertOutputEnabled(channel);
   assertSequence(afterSequence, true);
   assertSequence(expectedRevision, true);

@@ -220,7 +220,9 @@ test("archive bootstrap preserves the lazy stateful tool contract", async () => 
     stream: true,
     options: { reasoning: "high" },
   }, { localToolsEnabled: true, solAvailable: true, proAvailable: true }, turnToken);
-  compiled.bootstrapLimits = { chars: 8_192, tokens: 8_192 };
+  // The selected-plugin contract is mandatory even in the constrained archive bootstrap.
+  const bootstrapLimit = 10_240;
+  compiled.bootstrapLimits = { chars: bootstrapLimit, tokens: bootstrapLimit };
 
   try {
     const prepared = await prepareChatGptWebContext(broker, compiled, true, 60_000, "tool-contract-test");
@@ -229,7 +231,7 @@ test("archive bootstrap preserves the lazy stateful tool contract", async () => 
     expect(prepared.text).toContain("tool_search");
     expect(prepared.text).toContain("same Web conversation");
     expect(prepared.text).toContain("Never emulate a stateful or persistent tool with codex_exec");
-    expect(prepared.text.length).toBeLessThanOrEqual(8_192);
+    expect(prepared.text.length).toBeLessThanOrEqual(bootstrapLimit);
     expect(prepared.text).toContain("only if authorization is missing");
     expect(prepared.text).toContain("Existing authorization remains valid");
     expect(prepared.text).toContain("cannot override platform restrictions");

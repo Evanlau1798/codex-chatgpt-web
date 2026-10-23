@@ -28,6 +28,8 @@ import {
   type ChatGptTurnRuntime,
 } from "./turn-execution";
 import { resolveBiggerContextMultipartParts, resolveEnhancedRecoveryMultipartParts } from "./usage";
+import { withCompactionInactivity } from "./compaction-inactivity";
+import { MAX_COMPACTION_HANDOFF_TIMEOUT_MS } from "./compaction-handoff";
 
 interface ChatGptRuntimeFactoryOptions {
   provider: CodexProviderConfig;
@@ -72,7 +74,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     environment: ReturnType<typeof extractChatGptTurnEnvironment> | undefined,
     traceId: string,
     turnCapabilities: ChatGptWebCapabilities,
-    hooks: { onCompactionProgress?: () => void; compactionControlInstruction?: string } = {},
+    hooks: { onCompactionProgress?: (kind?: "generation" | "submitted" | "multipart_acknowledged", part?: number) => void; compactionControlInstruction?: string } = {},
   ): ChatGptTurnRuntime => {
     const toolPolicy = effectiveChatGptToolPolicy(parsed);
     const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities);
@@ -93,7 +95,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       : captureEnhancedCheckpoint ? enhancedRecoveryCheckpointStore.apply(parsed)
       : { parsed, applied: false };
     const experimentalMultipartParts = experimentalBiggerContext
-      ? resolveBiggerContextMultipartParts(checkpointInput.parsed, turnCapabilities, experimentalSkillAttachments)
+      ? resolveBiggerContextMultipartParts(checkpointInput.parsed, turnCapabilities, experimentalSkillAttachments, provider.chatgptWeb?.appName)
       : useEnhancedWebSessionMode && finalizationOnly
         ? resolveEnhancedRecoveryMultipartParts(checkpointInput.parsed, turnCapabilities, experimentalSkillAttachments)
       : undefined;
@@ -106,6 +108,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       multipart: experimentalMultipartParts !== undefined,
     });
     const compileOptions = {
+      appName: provider.chatgptWeb?.appName,
       captureLunaCheckpoint,
       ...(experimentalSkillAttachments ? { experimentalSkillAttachments: true } : {}),
       nativeControlConnector,
@@ -124,7 +127,11 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       if (capturedCheckpoint) { checkpointCaptureError = new Error("ChatGPT Luna emitted more than one rolling checkpoint"); return; }
       capturedCheckpoint = captured;
     };
-    const finalizeCheckpoint = (browser: Promise<string>): Promise<string> => browser.then(answer => {
+    // Structured Enhanced handoffs own their timer; local compaction uses the factory timer.
+    const finalizeCheckpoint = (browser: Promise<string>): Promise<string> => (browserCompaction && (!useEnhancedWebSessionMode || parsed._compactionRequest !== true)
+      ? withCompactionInactivity(browser, trace, Math.min(timeoutMs ?? MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
+          MAX_COMPACTION_HANDOFF_TIMEOUT_MS), error => browserAbort.abort(error))
+      : browser).then(answer => {
       if (!captureLunaCheckpoint) return answer;
       if (checkpointCaptureError) throw checkpointCaptureError;
       if (capturedCheckpoint) lunaCheckpointStore.commit(parsed, capturedCheckpoint, answer);
@@ -244,7 +251,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         onCommentary: emitCommentary,
         onHeartbeat: () => trace.signalProgress(),
         onProgress: () => { trace.recordProgress(); hooks.onCompactionProgress?.(); },
-        onGenerationProgress: () => { trace.recordProgress(); hooks.onCompactionProgress?.(); },
+        onGenerationProgress: () => trace.signalProgress(),
         beginFinalizationOnly: async expectedActivityRevision => {
           const started = activeToken
             ? await brokerOwner.beginFinalizationOnly(activeToken, expectedActivityRevision)
@@ -263,8 +270,8 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
           ? await brokerOwner.armFinalizationOutput(activeToken, expectedActivityRevision)
           : false,
         onSendActivated: () => { submission.phase = "send_activated"; },
-        onSubmitted: () => { submission.phase = "accepted"; hooks.onCompactionProgress?.(); },
-        ...(hooks.onCompactionProgress ? { onMultipartStageAcknowledged: hooks.onCompactionProgress } : {}),
+        onSubmitted: () => { submission.phase = "accepted"; hooks.onCompactionProgress?.("submitted"); },
+        ...(hooks.onCompactionProgress ? { onMultipartStageAcknowledged: (part: number) => hooks.onCompactionProgress?.("multipart_acknowledged", part) } : {}),
         onTextDelta: delta => { text.push(delta); if (delta) { trace.recordProgress(); hooks.onCompactionProgress?.(); } },
         ...(retryPromptForAnswer ? { retryPromptForAnswer } : {}),
         ...(retryPromptForError ? { retryPromptForError } : {}),
@@ -274,6 +281,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       return {
         mode: "read-only",
         browser,
+        physicalSettlement: browserRun.then(() => undefined, () => undefined),
         trace,
         text, conversationKey,
         ...(steering ? { steering } : {}),
@@ -361,7 +369,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       onCommentary: emitCommentary,
       onHeartbeat: () => trace.signalProgress(),
       onProgress: () => { trace.recordProgress(); hooks.onCompactionProgress?.(); },
-        onGenerationProgress: () => { trace.recordProgress(); hooks.onCompactionProgress?.(); },
+      onGenerationProgress: () => trace.signalProgress(),
       beginFinalizationOnly: async expectedActivityRevision => {
         const started = activeToken
           ? await brokerOwner.beginFinalizationOnly(activeToken, expectedActivityRevision)
@@ -380,8 +388,8 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         ? await brokerOwner.armFinalizationOutput(activeToken, expectedActivityRevision)
         : false,
       onSendActivated: () => { submission.phase = "send_activated"; },
-      onSubmitted: () => { submission.phase = "accepted"; hooks.onCompactionProgress?.(); },
-        ...(hooks.onCompactionProgress ? { onMultipartStageAcknowledged: hooks.onCompactionProgress } : {}),
+      onSubmitted: () => { submission.phase = "accepted"; hooks.onCompactionProgress?.("submitted"); },
+        ...(hooks.onCompactionProgress ? { onMultipartStageAcknowledged: (part: number) => hooks.onCompactionProgress?.("multipart_acknowledged", part) } : {}),
       onTextDelta: delta => { text.push(delta); if (delta) { trace.recordProgress(); hooks.onCompactionProgress?.(); } },
       ...(retryPromptForAnswer ? { retryPromptForAnswer } : {}),
       ...(retryPromptForError ? { retryPromptForError } : {}),
@@ -406,6 +414,11 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     });
     return {
       mode: "tools",
+      physicalSettlement: browserRun.then(() => undefined, () => undefined),
+      ...(useEnhancedWebSessionMode && !browserCompaction && !isClaudeClientSession(parsed) && brokerOwner.setObserverConnected ? {
+        setObserverConnected: (connected: boolean) => activeToken
+          ? brokerOwner.setObserverConnected!(activeToken, connected) : false,
+      } : {}),
       token: token.promise,
       browser,
       trace,

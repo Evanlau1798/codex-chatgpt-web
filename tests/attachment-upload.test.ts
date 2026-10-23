@@ -15,6 +15,24 @@ async function fixture(run:(browser:Browser,base:string)=>Promise<void>,handler:
 }
 const prompt={text:'original message',images:[{ref:'codex-input-image-1',imageUrl:'data:image/png;base64,'+Buffer.from('test').toString('base64')}]};
 
+test.skipIf(!executable)('saved-chat uploads use the active composer while the hidden home composer remains mounted',async()=>{
+ let uploads=0;
+ await fixture(async(browser,base)=>{
+  const page=await browser.newPage();await page.goto(base);
+  await page.evaluate(()=>{
+   const hidden=document.createElement('form');hidden.hidden=true;hidden.dataset.chatgptComposer='';hidden.dataset.composerPlacement='home';
+   hidden.innerHTML='<div contenteditable="true" id="prompt-textarea">hidden draft</div><input data-testid="upload-photos-input" type="file" multiple>';
+   document.body.append(hidden);
+  });
+  const worker=Object.create(ChatGptBrowserWorker.prototype) as any;
+  await worker.attachFiles(page,prompt,AbortSignal.timeout(3000));
+  expect(uploads).toBe(1);
+  expect(await page.locator('form[hidden] input').evaluate((input:any)=>input.files.length)).toBe(0);
+  expect(await page.locator('form:not([hidden]) input').evaluate((input:any)=>input.files.length)).toBe(1);
+  expect(await page.evaluate(()=> (window as any).sends)).toBe(0);
+ },()=>{uploads++;return new Response(JSON.stringify({event:'file.processing.completed'})+'\n',{headers:{'content-type':'application/x-ndjson'}});});
+},10000);
+
 for (const phase of ['creation','processing']) test.skipIf(!executable)(`an owned ${phase} upload limit stops attachment preparation without sending or retrying`,async()=>{
  let requests=0;
  await fixture(async(browser,base)=>{

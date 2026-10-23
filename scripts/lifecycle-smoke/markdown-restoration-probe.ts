@@ -20,6 +20,7 @@ import { CHATGPT_CONNECTOR_MENTION_ROW_SELECTOR, CHATGPT_SELECTED_CONNECTOR_SELE
 import { insertChatGptPromptText } from "../../src/adapters/chatgpt-web/prompt-insertion";
 import { readChatGptPromptText } from "../../src/adapters/chatgpt-web/prompt-text";
 import { ensureChatGptPersonalizedConnectorAccess } from "../../src/adapters/chatgpt-web/personalization";
+import { recoverOwnedTemporaryPersonalization } from "../../src/adapters/chatgpt-web/owned-personalization";
 
 export const MARKDOWN_RESTORATION_PROBE_CHARS = 96_000;
 export const STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS = 94_534;
@@ -212,7 +213,7 @@ export async function runMarkdownRestorationProbe(
           clearChatGptComposerInput(await activeComposer(page, cleanupSignal), cleanupSignal));
       }
       return accessible;
-    }, abortSignal);
+    }, abortSignal, () => recoverOwnedTemporaryPersonalization(page));
     for (let run = 0; run < 3; run += 1) {
       composer = await selectConnector(page, appName, abortSignal);
       const connectors = await connectorState(composer);

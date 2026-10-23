@@ -339,14 +339,28 @@ class BrowserControlServer {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn("browser.control_rejected", { message });
       const cancelled = error?.code === "turn_cancelled";
-      const timedOut = error?.code === "manual_turn_timed_out";
+      const retainedUnavailable = error?.code === "retained_conversation_unavailable";
+      const ownerLost = error?.code === "turn_owner_lost";
+      const manualInspectionDisabled = error?.code === "manual_browser_inspection_disabled";
+      const manualOwnerLost = error?.code === "manual_turn_owner_lost";
       const manualFailed = error?.code === "manual_turn_failed";
-      writeJson(response, cancelled || manualFailed ? 409 : timedOut ? 408 : 400, {
+      const manualTimedOut = error?.code === "manual_turn_timed_out";
+      writeJson(
+        response,
+        cancelled || retainedUnavailable || ownerLost || manualInspectionDisabled || manualOwnerLost || manualFailed
+          ? 409
+          : manualTimedOut ? 408 : 400,
+        {
         error: message,
         ...(cancelled ? { code: "turn_cancelled" } : {}),
-        ...(timedOut ? { code: "manual_turn_timed_out" } : {}),
+        ...(retainedUnavailable ? { code: "retained_conversation_unavailable" } : {}),
+        ...(ownerLost ? { code: "turn_owner_lost" } : {}),
+        ...(manualInspectionDisabled ? { code: "manual_browser_inspection_disabled" } : {}),
         ...(manualFailed ? { code: "manual_turn_failed" } : {}),
-      });
+        ...(manualOwnerLost ? { code: "manual_turn_owner_lost" } : {}),
+        ...(manualTimedOut ? { code: "manual_turn_timed_out" } : {}),
+        },
+      );
     }
   }
 

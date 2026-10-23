@@ -237,7 +237,7 @@ test.each(["commentary", "reasoning"] as const)("the broker preserves whitespace
     completionCommitted: false,
     activityRevision: 0,
   };
-  expect(submitTurnOutput(channel as never, kind, " ").event).toMatchObject({ kind, text: " " });
+  expect(submitTurnOutput(channel as never, kind, " ")).toMatchObject({ event: { kind, text: " " } });
 });
 
 test("broker seal rejects a tool that starts after the browser's last observation", () => {

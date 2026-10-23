@@ -66,6 +66,16 @@ test("current connector verification uses reserved inventory semantics without a
   expect(observedRevision).toBe(NATIVE2_CONTRACT_REVISION);
 });
 
+test.each([undefined, "turn_0123456789abcdef0123456789abcdef"])("native probe carries literal query arguments in JSON code (reference=%s)", async reference => {
+  await verifyCurrentConnectorContract("Codex Native2", "native", async probe => {
+    const json = /```json\n([^\n]+)\n```/.exec(probe.prompt);
+    expect(json).not.toBeNull();
+    expect(JSON.parse(json![1]!)).toEqual({ ...(reference ? { turn_token: reference } : {}), query: probe.query, include_schema: false });
+    expect(probe.prompt).toContain("Do not add Markdown escapes to argument strings");
+    recordConnectorContractProbeQuery(probe.query, "native");
+  }, reference);
+});
+
 test("Native2 retries only when ChatGPT completed without dispatching the inventory call", async () => {
   const attempts: number[] = [];
   const queries: string[] = [];

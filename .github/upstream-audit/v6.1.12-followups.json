@@ -1,0 +1,8 @@
+[
+  {
+    "path": "tests/launcher-browser-host.test.ts",
+    "baselineSha256": "dc07e13ca713392a405ddafe4ee81a0cb2263665c0dbb3a6d997cd7e37c9e124",
+    "currentSha256": "403118970ffae4920842215e293c8859b8036282adfc3ccb8fed2eb240099dbb",
+    "reason": "Add owner-lost409 plus startup cleanup regression while preserving all existing upstream assertions; immutable original target anchors remain retained in targetBlobs and this correction archive."
+  }
+]

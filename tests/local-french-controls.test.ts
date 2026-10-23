@@ -215,14 +215,15 @@ test.each(["Autoriser", "Autoriser une fois"])("French one-shot tool approval ac
   expect(fixture.pressed).toEqual([`${allowLabel}:click`]);
 });
 
-test("French tool approval preserves manual handling, refusal and the exact connector identity", async () => {
+test("French tool approval preserves manual handling, timeout guidance and the exact connector identity", async () => {
   const options = { title: "Autoriser ChatGPT à utiliser Codex Native ?", allowLabel: "Autoriser une fois", denyLabel: "Refuser" };
   const manual = toolConfirmationPage({ ...options, disappearAfterReads: 3 });
   expect(await resolveChatGptToolConfirmation(manual.page, "Codex Native", false, undefined, 100)).toBeTrue();
   expect(manual.pressed).toEqual([]);
   const expired = toolConfirmationPage(options);
-  expect(await resolveChatGptToolConfirmation(expired.page, "Codex Native", false, undefined, 1)).toBeTrue();
-  expect(expired.pressed).toEqual(["Refuser:click"]);
+  await expect(resolveChatGptToolConfirmation(expired.page, "Codex Native", false, undefined, 1))
+    .rejects.toMatchObject({ status: 403, code: "chatgpt_tool_approval_required", retryable: false });
+  expect(expired.pressed).toEqual([]);
   for (const appName of ["Codex Other", "Codex Native.*", "Codex (Native)"]) {
     const unrelated = toolConfirmationPage(options);
     expect(await resolveChatGptToolConfirmation(unrelated.page, appName, true)).toBeFalse();

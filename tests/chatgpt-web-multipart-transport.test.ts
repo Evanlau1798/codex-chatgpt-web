@@ -123,7 +123,7 @@ test("large Bigger Context stage reaches the verified direct attachment route by
       stages.push({ text, direct });
     },
     sendAttachedPrompt: async () => "user_turn",
-    waitForNewAssistantTurn: async () => ({}),
+    waitForNewAssistantTurn: async () => ({ identity: "multipart_stage" }),
     waitForMultipartAcknowledgement: async () => {},
     attachPromptWithCompactionRetry: async (...args: unknown[]) => {
       final = { text: args[1] as string, direct: args[10] as boolean };

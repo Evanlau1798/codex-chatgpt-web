@@ -27,6 +27,19 @@ export function readChatGptUserMessage(
       return "";
     }
     if (node.tagName === "BR") return "\n";
+    // ChatGPT auto-links bare URLs. Only accept links whose complete label is
+    // the URL itself; formatted labels and link chrome cannot replace source text.
+    if (node instanceof HTMLAnchorElement) {
+      try {
+        const label = node.textContent ?? "";
+        const url = new URL(label);
+        if (!["https:", "http:"].includes(url.protocol) || url.href !== node.href) {
+          unsupported = true;
+          return "";
+        }
+      } catch { unsupported = true; return ""; }
+      return [...node.childNodes].map(text).join("");
+    }
     if (node.matches('pre[data-markdown-copy="code-block"]')) {
       const code = node.querySelector('code[data-markdown-copy-content="true"][data-language]');
       if (!code || node.children.length !== 1) { unsupported = true; return ""; }

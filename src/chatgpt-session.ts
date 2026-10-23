@@ -49,7 +49,7 @@ export function parseChatGptModelAnnouncement(text: string): {
 } | undefined {
   const normalized = normalizeChatGptModelAnnouncement(text);
   // The current picker repeats the version in the effort caption below the family name.
-  const match = /^(?:GPT[-\s]?)?(\d+(?:\.\d+)?)(?:\s+(Sol|Astra))?\s+(?:\1\s+)?([^\p{P}]+)(?:\p{P}|$)/iu.exec(normalized);
+  const match = /^(?:GPT[-\s]?)?(\d+(?:\.\d+)?)(?:\s+(Sol|Astra))?\s+(?:(?:GPT[-\s]?)?\1\s+)?([^\p{P}]+)(?:\p{P}|$)/iu.exec(normalized);
   if (!match) return undefined;
   return { version: match[1]!, ...(match[2] ? { name: match[2].toLowerCase() } : {}), mode: match[3]!.trim() };
 }
@@ -150,12 +150,29 @@ export function isTemporaryChatGptTurnUrl(value: string): boolean {
   }
 }
 
+export function isSelectedChatGptTurnUrl(value: string, useSavedChats = false): boolean {
+  if (!useSavedChats) return isTemporaryChatGptTurnUrl(value);
+  try {
+    const url = new URL(value);
+    return url.origin === "https://chatgpt.com"
+      && (url.pathname === "/" || /^\/c\/[^/]+$/.test(url.pathname))
+      && url.searchParams.get("temporary-chat") !== "true";
+  } catch { return false; }
+}
+
 /** The new renderer groups both roles under the user's stable turn key. */
-export function chatGptAssistantTurnSelector(identity: string): string {
+export function chatGptTurnContainerSelector(identity: string): string {
   const prefix = "group:assistant:";
   return identity.startsWith(prefix)
-    ? `[data-turn-key=${JSON.stringify(identity.slice(prefix.length))}]:has([data-conversation-role="assistant"], [data-chatgpt-agent-turn-start])`
+    ? `[data-turn-key=${JSON.stringify(identity.slice(prefix.length))}]`
     : `[data-turn-id=${JSON.stringify(identity)}]`;
+}
+
+export function chatGptAssistantTurnSelector(identity: string): string {
+  const container = chatGptTurnContainerSelector(identity);
+  return identity.startsWith("group:assistant:")
+    ? `${container}:has([data-conversation-role="assistant"], [data-chatgpt-agent-turn-start])`
+    : container;
 }
 
 export interface ChatGptEffortSliderState {
@@ -417,10 +434,16 @@ export async function ensureChatGptTemporaryChatPersonalized(
   }
 }
 
-export async function detectChatGptAccountCapabilities(
+type ChatGptCapabilityProbeOptions = {
+  selectorTimeoutMs?: number;
+  stableAbsenceMs?: number;
+  signal?: AbortSignal;
+};
+
+export async function waitForChatGptEffortControl(
   page: Page,
-  options: { selectorTimeoutMs?: number; stableAbsenceMs?: number } = {},
-): Promise<ChatGptWebAccountCapabilities & { extraHighAvailable: boolean }> {
+  options: ChatGptCapabilityProbeOptions = {},
+): Promise<Locator | undefined> {
   const composers = page.locator(CHATGPT_COMPOSER_SELECTOR).filter({ visible: true });
   const composer = composers;
   const composerForm = composer.locator("xpath=ancestor::form[1]");
@@ -430,11 +453,13 @@ export async function detectChatGptAccountCapabilities(
   let absenceSince: number | undefined;
   let presenceObservations = 0;
   while (true) {
+    options.signal?.throwIfAborted();
     const effortVisible = await effortButton.isVisible();
+    options.signal?.throwIfAborted();
     if (effortVisible) {
       presenceObservations += 1;
       absenceSince = undefined;
-      if (presenceObservations >= 2) break;
+      if (presenceObservations >= 2) return effortButton;
       await new Promise(resolveSleep => setTimeout(resolveSleep, 100));
       continue;
     }
@@ -451,13 +476,36 @@ export async function detectChatGptAccountCapabilities(
       // ChatGPT can mount a usable composer before the account's model list arrives.
       // A short absence is not a capability result; use the complete inspection budget.
       if (absenceSince !== undefined && Date.now() - absenceSince >= stableAbsenceMs) {
-        return { solAvailable: false, extraHighAvailable: false, proAvailable: false,
-          modelCapabilities: { observedAt: Date.now(), families: {} } };
+        options.signal?.throwIfAborted();
+        return undefined;
       }
       throw new Error("ChatGPT account capability probe did not reach a stable composer state");
     }
     await new Promise(resolveSleep => setTimeout(resolveSleep, 100));
   }
+}
+
+export async function readChatGptEffortCapabilities(
+  { sliderContainer, slider }: Pick<ChatGptEffortActivation, "sliderContainer" | "slider">,
+  options: Pick<ChatGptCapabilityProbeOptions, "selectorTimeoutMs" | "signal"> = {},
+): Promise<ChatGptWebAccountCapabilities & { extraHighAvailable: boolean }> {
+  options.signal?.throwIfAborted();
+  const timeout = options.selectorTimeoutMs ?? 70_000;
+  // Model radio rows can hydrate before the effort control. They carry no evidence
+  // of the account's reasoning range, so an absent slider must fail, not cache false.
+  await sliderContainer.waitFor({ state: "visible", timeout, signal: options.signal });
+  await slider.waitFor({ state: "attached", timeout, signal: options.signal });
+  const { available } = await readChatGptEffortSnapshot(sliderContainer);
+  options.signal?.throwIfAborted();
+  return { solAvailable: true, extraHighAvailable: available[3] === true, proAvailable: available[4] === true };
+}
+
+export async function detectChatGptAccountCapabilities(
+  page: Page,
+  options: ChatGptCapabilityProbeOptions = {},
+): Promise<ChatGptWebAccountCapabilities & { extraHighAvailable: boolean }> {
+  const effortButton = await waitForChatGptEffortControl(page, options);
+  if (!effortButton) return { solAvailable: false, extraHighAvailable: false, proAvailable: false, modelCapabilities: { observedAt: Date.now(), families: {} } };
   const menu = page.locator(CHATGPT_EFFORT_MENU_SELECTOR).filter({ visible: true }).last();
   try {
     const { sliderContainer, slider } = chatGptEffortSlider(page);
@@ -470,8 +518,8 @@ export async function detectChatGptAccountCapabilities(
       }
       try {
         const timeout = options.selectorTimeoutMs ?? 70_000;
-        await sliderContainer.waitFor({ state: "visible", timeout });
-        await slider.waitFor({ state: "attached", timeout });
+        await sliderContainer.waitFor({ state: "visible", timeout, signal: options.signal });
+        await slider.waitFor({ state: "attached", timeout, signal: options.signal });
         break;
       } catch (error) {
         if (attempt === 1) throw error;
@@ -502,6 +550,7 @@ export async function detectChatGptAccountCapabilities(
     const reopen = () => activateChatGptEffortMenu(page, effortButton);
     try {
       for (const family of present) {
+        options.signal?.throwIfAborted();
         // Family changes can replace the menu node; reacquire the composer-owned menu.
         current = await reopen();
         current = await selectChatGptModelFamily(current, family, reopen);

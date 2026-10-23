@@ -34,7 +34,7 @@ test("tool_choice none removes the local tool bridge from the prompt", () => {
 
   expect(compiled.turnToken).toBeUndefined();
   expect(compiled.text).not.toContain("tool_wire_names");
-  expect(compiled.text).toContain("with no Codex Native bridge");
+  expect(compiled.text).toContain("with no local Codex bridge attached to this response");
 });
 
 test("named tool_choice advertises only the selected tool and rejects other tool calls", () => {

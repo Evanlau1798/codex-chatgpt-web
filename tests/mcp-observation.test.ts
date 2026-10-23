@@ -33,6 +33,21 @@ test("overlapping MCP calls retain private cross-layer correlation through out-o
   for (const secret of [token, "private-answer", "private-reply"]) expect(JSON.stringify(events)).not.toContain(secret);
 });
 
+test("inventory observations correlate literal queries without disclosing their content", () => {
+  const events: Array<Record<string, unknown>> = [];
+  const transport: Transport = { start: async () => {}, close: async () => {}, send: async () => {} };
+  observeMcpToolCalls(transport, new Set(["codex_tool_inventory"]), event => events.push(event));
+  const query = "private-inventory-query";
+  for (const [id, args] of [{ query }, {}, { query: { private: true } }, { query: query.repeat(100) }].entries()) {
+    transport.onmessage?.({ jsonrpc: "2.0", id, method: "tools/call", params: { name: "codex_tool_inventory", arguments: args } });
+  }
+  expect(events[0]).toMatchObject({ inventory_query_kind: "string", query_hash: scopeHash(query), query_chars: query.length });
+  expect(events[1]).toMatchObject({ inventory_query_kind: "missing" });
+  expect(events[2]).toMatchObject({ inventory_query_kind: "unrecognized" });
+  expect(events[3]).not.toHaveProperty("query_hash");
+  expect(JSON.stringify(events)).not.toContain("private");
+});
+
 test("subagent diagnostics distinguish an explicit model without exposing task arguments", () => {
   const privateText = "private task /Users/example/work sk-not-a-model";
   const args = { model: "chatgpt-web/gpt-5.6-sol", message: privateText, items: [{ text: privateText }] };

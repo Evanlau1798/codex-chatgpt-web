@@ -172,9 +172,9 @@ export function createZeroRiskRuntimeStarter(options: ZeroRiskRuntimeOptions) {
           traceId,
         );
         observeCapabilityRetirement(options.broker, activeToken, externalProgress, browserAbort, () => browserOwnerSettled);
-        const full = compileChatGptWebPrompt(parsed, options.capabilities, activeToken, { manualControl: true });
+        const full = compileChatGptWebPrompt(parsed, options.capabilities, activeToken, { manualControl: true, appName: options.provider.chatgptWeb?.appName });
         const suffix = resume
-          ? compileChatGptWebPrompt(resume, options.capabilities, activeToken, { manualControl: true })
+          ? compileChatGptWebPrompt(resume, options.capabilities, activeToken, { manualControl: true, appName: options.provider.chatgptWeb?.appName })
           : undefined;
         if (full.multipart || suffix?.multipart) {
           throw new ChatGptWebAdapterError("ChatGPT Zero Risk does not support multipart browser transport", {

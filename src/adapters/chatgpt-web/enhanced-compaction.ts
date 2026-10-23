@@ -1,3 +1,4 @@
+import { chatGptSuspensionClock, remainingStageBudgetMs } from "./browser-stage-lifecycle";
 import { createHash } from "node:crypto";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError } from "./adapter-error";
@@ -23,6 +24,7 @@ import { estimateChatGptWebUsage } from "./usage";
 import { extractChatGptTurnIdentity } from "./environment";
 
 interface EnhancedCompactionOptions {
+  appName?: string;
   worker: Pick<ChatGptBrowserWorker, "run">
     & Partial<Pick<ChatGptBrowserWorker, "requestPreemptiveRetry" | "armCompactionBoundaryRetention">>;
   parsed: CodexParsedRequest;
@@ -34,7 +36,7 @@ interface EnhancedCompactionOptions {
   abortSignal?: AbortSignal;
   timeoutMs?: number;
   requireAutomaticAdmission?: (traceId: string) => void;
-  startFallback: (traceId: string, signal: AbortSignal, onProgress: () => void,
+  startFallback: (traceId: string, signal: AbortSignal, onProgress: (kind?: "generation" | "submitted" | "multipart_acknowledged", part?: number) => void,
     retainOwnershipUntil: (settlement: Promise<void>) => void, controlInstruction: string) => Promise<string>;
   emit: (event: AdapterEvent) => void;
 }
@@ -77,13 +79,31 @@ export async function runEnhancedCompaction(
     let phase = "source_settlement";
     let timer: ReturnType<typeof setTimeout> | undefined;
     let fallbackTransaction: Awaited<ReturnType<TurnBroker["beginCompactionTransaction"]>> | undefined;
-    const armDeadline = (): void => {
+    const handoffStartedAt = performance.now();
+    let lastActivity = "started";
+    let acknowledgedParts = 0;
+    const armDeadline = (kind?: "generation" | "submitted" | "multipart_acknowledged", part?: number): void => {
+      if (kind === "generation") return; // Generation state is liveness, not observed content progress.
+      lastActivity = kind ?? "source_activity";
+      if (part !== undefined) acknowledgedParts = part;
       if (deadline.signal.aborted) return;
       if (timer) clearTimeout(timer);
-      timer = setTimeout(
-        () => deadline.abort(new ChatGptWebAdapterError(`ChatGPT compaction did not fully settle within ${handoffTimeoutMs}ms (phase=${phase})`, { status: 409, errorType: "invalid_request_error", code: "compaction_handoff_timeout", retryable: false })),
-        handoffTimeoutMs,
-      );
+      const activityAt = performance.now();
+      const suspendedAtActivity = chatGptSuspensionClock.suspendedMs();
+      const fireOrRearm = () => {
+        const suspendedMs = chatGptSuspensionClock.suspendedMs() - suspendedAtActivity;
+        const idleMs = performance.now() - activityAt;
+        const remaining = remainingStageBudgetMs(handoffTimeoutMs, idleMs, suspendedMs);
+        if (remaining > 0) { timer = setTimeout(fireOrRearm, remaining); timer.unref?.(); return; }
+        console.warn('[chatgpt-web] compaction_timeout ' + JSON.stringify({
+          traceId, phase, timeoutMs: handoffTimeoutMs, lastActivity, acknowledgedParts,
+          elapsedMs: Math.round(performance.now() - handoffStartedAt), idleMs: Math.round(idleMs),
+          suspendedMs: Math.round(suspendedMs), awakeIdleMs: Math.round(idleMs - suspendedMs),
+        }));
+        deadline.abort(new ChatGptWebAdapterError(          `ChatGPT compaction did not fully settle within ${handoffTimeoutMs}ms (phase=${phase})`,
+          { status: 409, errorType: 'invalid_request_error', code: 'compaction_handoff_timeout', retryable: false }));
+      };
+      timer = setTimeout(fireOrRearm, handoffTimeoutMs);
       timer.unref?.();
       if (fallbackTransaction) {
         broker.refreshCompactionTransaction(fallbackTransaction.token, MAX_COMPACTION_HANDOFF_TIMEOUT_MS);
@@ -117,7 +137,7 @@ export async function runEnhancedCompaction(
           AbortSignal.any([operationSignal, browserAbort.signal]),
           armDeadline,
           retainOwnershipUntil,
-          structuredCompactionHandoffInstruction(fallbackTransaction),
+          structuredCompactionHandoffInstruction(fallbackTransaction, options.appName),
         );
         const accepted = broker.waitForCompactionHandoff(fallbackTransaction.token, operationSignal);
         const browserWithoutHandoff = browser.then<never>(() => {
@@ -162,6 +182,7 @@ export async function runEnhancedCompaction(
           sourceTraceId && worker.armCompactionBoundaryRetention
             ? () => worker.armCompactionBoundaryRetention!(sourceTraceId)
             : undefined,
+          options.appName,
         );
         preserveFinal = !settled.compactionInstructionDelivered;
         raw = settled.handoff;

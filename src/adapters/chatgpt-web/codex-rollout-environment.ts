@@ -38,6 +38,14 @@ type CurrentTurnAnchor = {
   call_id?: unknown;
 };
 
+export interface CodexRolloutEnvironment {
+  environment: ChatGptTurnEnvironment;
+  workspaceRootsDeclared: boolean;
+  codexHome: string;
+  /** Native model-visible projection; never used to grant execution permissions. */
+  filesystemProfileXml?: string;
+}
+
 const CODEX_ID_SOURCE = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const CODEX_ID = new RegExp(`^${CODEX_ID_SOURCE}$`, "i");
 const ROLLOUT_READ_CHUNK_BYTES = 64 * 1024;
@@ -67,7 +75,7 @@ function canonicalRolloutName(name: string, threadId: string): boolean {
   ).test(name);
 }
 
-function configuredSqliteHome(codexHome: string, explicit?: string): string {
+function configuredSqliteHome(codexHome: string, explicit?: string, inheritEnvironment = true): string {
   if (explicit) return resolve(explicit);
 
   const configPath = join(codexHome, "config.toml");
@@ -83,7 +91,7 @@ function configuredSqliteHome(codexHome: string, explicit?: string): string {
     }
   }
 
-  const environmentValue = process.env.CODEX_SQLITE_HOME?.trim();
+  const environmentValue = inheritEnvironment ? process.env.CODEX_SQLITE_HOME?.trim() : undefined;
   return resolve(environmentValue ? expandUserPath(environmentValue) : codexHome);
 }
 
@@ -197,7 +205,7 @@ function firstRolloutRecord(fd: number, size: number): Record<string, unknown> {
   throw new Error("Codex rollout has no complete session metadata record");
 }
 
-function latestTurnContext(fd: number, size: number): Record<string, unknown> | undefined {
+function latestRolloutPayload(fd: number, size: number, type: "turn_context" | "compacted"): Record<string, unknown> | undefined {
   let position = size;
   let carry = Buffer.alloc(0);
   let firstSegmentAtEof = true;
@@ -226,7 +234,7 @@ function latestTurnContext(fd: number, size: number): Record<string, unknown> | 
         throw new Error("Codex rollout JSONL record exceeds the bounded record size");
       }
       const item = parseJsonLine(line);
-      if (item.type === "turn_context") return record(item.payload);
+      if (item.type === type) return record(item.payload);
     }
     carry = Buffer.from(data.subarray(0, lineEnd));
     if (carry.length > MAX_ROLLOUT_JSON_LINE_BYTES) {
@@ -235,7 +243,20 @@ function latestTurnContext(fd: number, size: number): Record<string, unknown> | 
   }
   if (carry.length === 0) return undefined;
   const item = parseJsonLine(carry);
-  return item.type === "turn_context" ? record(item.payload) : undefined;
+  return item.type === type ? record(item.payload) : undefined;
+}
+
+function verifyCompactedEnvironmentItems(fd: number, size: number, items: Record<string, unknown>[]): void {
+  const compacted = latestRolloutPayload(fd, size, "compacted");
+  const history = Array.isArray(compacted?.replacement_history) ? compacted.replacement_history : [];
+  let previousIndex = -1;
+  for (const item of items) {
+    const matches = history.flatMap((value, index) => record(value)?.id === item.id ? [{ value, index }] : []);
+    if (matches.length !== 1 || matches[0]!.index <= previousIndex || !isDeepStrictEqual(matches[0]!.value, item)) {
+      throw new Error("Environment message or checkpoint differs from the latest native compaction");
+    }
+    previousIndex = matches[0]!.index;
+  }
 }
 
 function validateSessionMeta(
@@ -380,9 +401,59 @@ function verifyCurrentTurnAnchor(
   throw new Error("Codex rollout has no authenticated current-turn anchor boundary");
 }
 
+/**
+ * Codex's model-visible projection, after environmentFromTurnContext validates execution policy.
+ * See codex-rs/core/src/context/environment_context.rs (rust-v0.154.0): expand project roots,
+ * deduplicate full entries, omit missing_path_behavior, and mark deny entries non-escalatable.
+ * Comparing the whole projection keeps calendar updates from introducing different permissions.
+ */
+function renderFilesystemProfile(value: unknown, roots: string[]): string | undefined {
+  const profile = record(value);
+  if (profile?.type === "disabled") {
+    return '<permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile>';
+  }
+  const fs = record(profile?.file_system);
+  if (profile?.type !== "managed" || fs?.type !== "restricted" || !Array.isArray(fs.entries)) return undefined;
+  const entries: Record<string, unknown>[] = [];
+  for (const raw of fs.entries) {
+    const entry = record(raw);
+    const path = record(entry?.path);
+    if (!entry || !path) return undefined;
+    const special = path.type === "special" ? record(path.value) : undefined;
+    const expanded = special?.kind === "project_roots"
+      ? roots.map(root => ({ ...entry, path: { type: "path", path: typeof special.subpath === "string" ? join(root, special.subpath) : root } }))
+      : [entry];
+    for (const candidate of expanded) {
+      if (!entries.some(prior => isDeepStrictEqual(prior, candidate))) entries.push(candidate);
+    }
+  }
+  const xml = (text: string): string => text.replace(/[&<>"']/g, char => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;",
+  })[char]!);
+  const rendered: string[] = [];
+  for (const entry of entries) {
+    const path = record(entry.path)!;
+    let tag: string;
+    let text: unknown;
+    if (path.type === "path") { tag = "path"; text = path.path; }
+    else if (path.type === "glob_pattern") { tag = "glob"; text = path.pattern; }
+    else if (path.type === "special") {
+      tag = "special";
+      const special = record(path.value);
+      if (!special || !["root", "minimal", "tmpdir", "slash_tmp"].includes(String(special.kind))) return undefined;
+      text = `:${special.kind}`;
+    } else return undefined;
+    if (typeof text !== "string") return undefined;
+    rendered.push(`<entry access="${entry.access}"${entry.access === "deny" ? ' escalatable="false"' : ""}><${tag}>${xml(text)}</${tag}></entry>`);
+  }
+  const depth = fs.glob_scan_max_depth === undefined ? "" : ` glob_scan_max_depth="${fs.glob_scan_max_depth}"`;
+  return `<permission_profile type="managed"><file_system type="restricted"${depth}>${rendered.join("")}</file_system></permission_profile>`;
+}
+
 function validateMetadataConsistency(
   lineage: RolloutIdentity,
   environment: ChatGptTurnEnvironment,
+  workspaceRootsDeclared: boolean,
 ): void {
   // Request sandbox/workspace fields are diagnostic only. They narrow a rollout-derived authority
   // here and never create or expand it.
@@ -396,7 +467,8 @@ function validateMetadataConsistency(
     && !lineage.workspaceRoots.some(root => contains(root, environment.cwd))) {
     throw new Error(`ChatGPT Web ${owner} workspace metadata does not contain its Codex rollout cwd`);
   }
-  if (lineage.workspaceRoots.some(root => !environment.roots.some(rolloutRoot => (
+  if ((workspaceRootsDeclared || environment.sandboxPolicy.type !== "dangerFullAccess")
+    && lineage.workspaceRoots.some(root => !environment.roots.some(rolloutRoot => (
     contains(rolloutRoot, root) || contains(root, rolloutRoot)
   )))) {
     throw new Error(`ChatGPT Web ${owner} workspace metadata conflicts with its Codex rollout roots`);
@@ -405,6 +477,7 @@ function validateMetadataConsistency(
 
 export function resolveCurrentCodexRolloutEnvironment(options: {
   codexHome: string;
+  additionalCodexHomes?: readonly string[];
   sqliteHome?: string;
   lineage: RolloutIdentity;
   turnId: string;
@@ -412,7 +485,8 @@ export function resolveCurrentCodexRolloutEnvironment(options: {
   tools?: readonly CodexTool[];
   historicalEnvironmentMessages?: ChatGptUnattributedEnvironmentMessage[];
   currentTurnAnchor?: CurrentTurnAnchor;
-}): ChatGptTurnEnvironment | undefined {
+  compactedEnvironmentItems?: Record<string, unknown>[];
+}): CodexRolloutEnvironment | undefined {
   const { codexHome, lineage, turnId, tools, compactionSourceTurnId } = options;
   const nativeThreadId = CODEX_ID.test(lineage.threadId);
   const nativeTurnId = CODEX_ID.test(turnId);
@@ -422,39 +496,51 @@ export function resolveCurrentCodexRolloutEnvironment(options: {
     throw new Error("Codex thread metadata contains an invalid native identifier");
   }
 
-  const indexed = indexedRollout(configuredSqliteHome(codexHome, options.sqliteHome), lineage);
-  const candidates = indexed.kind === "found"
-    ? [indexed.path]
-    : scanCanonicalRollouts(codexHome, lineage.threadId);
-  if (candidates.length === 0) {
+  // Establish one home before interpreting its permissions. Even a stale copy of
+  // the same thread in another registered home makes ownership ambiguous.
+  const owners = [codexHome, ...(options.additionalCodexHomes ?? [])].map((home, index) => {
+    const indexed = indexedRollout(configuredSqliteHome(
+      home, index === 0 ? options.sqliteHome : undefined, index === 0,
+    ), lineage);
+    const candidates = indexed.kind === "found" ? [indexed.path] : scanCanonicalRollouts(home, lineage.threadId);
+    return { home, indexed, candidates };
+  }).filter(owner => owner.candidates.length > 0);
+  if (owners.length > 1) throw new Error("Codex thread exists in multiple trusted homes");
+  const owner = owners[0];
+  if (!owner) {
     throw new Error(`Codex has no canonical rollout for the requested ${"parentThreadId" in lineage ? "subagent" : "root"} thread`);
   }
 
-  const matching: ChatGptTurnEnvironment[] = [];
-  for (const candidate of candidates) {
-    const rolloutPath = validateRolloutPath(codexHome, candidate, lineage.threadId);
+  const matching: CodexRolloutEnvironment[] = [];
+  for (const candidate of owner.candidates) {
+    const rolloutPath = validateRolloutPath(owner.home, candidate, lineage.threadId);
     const fd = openSync(rolloutPath, "r");
     try {
       const size = fstatSync(fd).size;
       if (!Number.isSafeInteger(size) || size <= 0) throw new Error("Codex rollout is empty");
       validateSessionMeta(firstRolloutRecord(fd, size), lineage);
-      const latest = latestTurnContext(fd, size);
+      const latest = latestRolloutPayload(fd, size, "turn_context");
       if (!latest) throw new Error("Codex rollout has no complete turn context");
       if (latest.turn_id !== turnId && (compactionSourceTurnId === undefined || latest.turn_id !== compactionSourceTurnId)) {
-        if (indexed.kind === "found") {
+        if (owner.indexed.kind === "found") {
           throw new Error("Latest Codex rollout turn context does not belong to the requested turn");
         }
         continue;
       }
       const environment = environmentFromTurnContext(latest, latest.turn_id as string, tools);
-      validateMetadataConsistency(lineage, environment);
+      const workspaceRootsDeclared = latest.workspace_roots !== undefined;
+      validateMetadataConsistency(lineage, environment, workspaceRootsDeclared);
       if (options.historicalEnvironmentMessages) {
         verifyHistoricalEnvironmentMessages(fd, size, turnId, options.historicalEnvironmentMessages);
       }
       if (options.currentTurnAnchor) {
         verifyCurrentTurnAnchor(fd, size, turnId, options.currentTurnAnchor);
       }
-      matching.push(environment);
+      if (options.compactedEnvironmentItems) {
+        verifyCompactedEnvironmentItems(fd, size, options.compactedEnvironmentItems);
+      }
+      const filesystemProfileXml = renderFilesystemProfile(latest.permission_profile, environment.roots);
+      matching.push({ environment, workspaceRootsDeclared, filesystemProfileXml, codexHome: owner.home });
     } finally {
       closeSync(fd);
     }

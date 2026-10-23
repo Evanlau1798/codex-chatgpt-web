@@ -14,11 +14,14 @@ import { ChatGptPromptOperation } from "../src/adapters/chatgpt-web/prompt-opera
 import { chatGptPromptPreservesLeading, planChatGptPromptInsertion } from "../src/adapters/chatgpt-web/prompt-insertion-plan";
 import { chatGptPromptAttachmentTimeoutMs } from "../src/adapters/chatgpt-web/prompt-attachment-budget";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
+import { estimateTokens } from "../src/lib/token-estimate";
+import { skillFileTokens } from "../src/adapters/chatgpt-web/skill-attachments";
 import {
   CHATGPT_ASSISTANT_TURN_SELECTOR,
   CHATGPT_COMPOSER_SELECTOR,
   CHATGPT_SEND_BUTTON_SELECTOR,
   CHATGPT_USER_TURN_SELECTOR,
+  chatGptTurnContainerSelector,
 } from "../src/chatgpt-session";
 import { activateChatGptSendControl, submitChatGptSendControl, activateOwnedChatGptSendControl, readChatGptAssistantTurnState } from "../src/adapters/chatgpt-web/response-turn-boundary";
 import { ChatGptViewportReadinessError, chatGptSuspensionClock } from "../src/adapters/chatgpt-web/browser-stage-lifecycle";
@@ -642,8 +645,10 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap", "fi
   const progress = new ChatGptExternalTurnProgress();
   const dependencies = {
     usageSubmission: async () => undefined, recordFinalUsage: undefined,
+    estimateTokens, skillFileTokens, estimatedInputTokens: 1,
     generation: { active: () => false, progress() {} },
     submissionRejection: {
+      captureAlertBaseline: async () => {},
       begin() {},
       activate() {},
       ownedSubmissionRequestObserved: () => false,
@@ -652,6 +657,7 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap", "fi
     first, next, initial, events, ChatGptPromptOperation, connectorAttemptBudget: { remaining: 3 },
     turn: {
       traceId: `production-${lane}-rebind`, externalProgress: progress,
+      capabilities: { proAvailable: true },
       onSendActivated: () => { events.push("activated"); progress.recordBrokerActivity(); },
       onSubmitted: () => { events.push("submitted"); },
     },
@@ -663,7 +669,7 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap", "fi
     diagnostics: { capture: async () => {} },
     settleChatGptUi: async () => {},
     CHATGPT_SEND_ENABLE_GRACE_MS: 5_000,
-    CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_SEND_BUTTON_SELECTOR, CHATGPT_USER_TURN_SELECTOR,
+    CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_SEND_BUTTON_SELECTOR, CHATGPT_USER_TURN_SELECTOR, chatGptTurnContainerSelector,
     CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, browserStageTimeouts, chatGptSuspensionClock,
     chatGptPromptAttachmentTimeoutMs, chatGptPromptPreservesLeading, planChatGptPromptInsertion,
     throwIfChatGptSessionFailureAlert, throwIfChatGptRateLimitDialog,
@@ -717,7 +723,7 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap", "fi
     }
   } else {
     expect(events).toEqual(["attach", "verify:stage", "send", "rebind", "ack"]);
-    expect(next.selected).toEqual(["conversation-turn-new"]);
+    expect(next.selected).toEqual(["conversation-turn-new", "conversation-turn-new"]);
   }
 });
 

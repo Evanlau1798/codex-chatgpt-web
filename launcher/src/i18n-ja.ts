@@ -259,7 +259,7 @@ export const ja: Record<keyof Copy, string> = {
   autoApproveToolsBody: "ChatGPT が選択した Codex プラグインの使用を求めたときに「今回のみ許可」をクリックします。Codex の権限設定は引き続き適用されます。初期設定はオフです。",
   manualAutoApproveUnavailable: "Zero Risk モードではツールの自動承認は利用できません。",
   toolApprovalNeeded: "ChatGPT が承認を待っています",
-  toolApprovalPendingBody: "このチャットを開き、「今回のみ許可」または「拒否」を選んでください。1 分間応答がないリクエストは拒否されます。",
+  toolApprovalPendingBody: "このチャットを開き、「今回のみ許可」または「拒否」を選んでください。すべてのツールを許可するには、ChatGPT のプラグイン設定 → Permissions → Allow all actions を開いてください。1 分間選択がない場合、ボタンを押さずにタスクを停止します。",
   lockBrowserDuringTurns: "ターン中にブラウザーを保護",
   lockBrowserDuringTurnsBody: "Codex または Claude Code が会話を操作している間、ChatGPT の直接操作をブロックします。",
   language: "言語",

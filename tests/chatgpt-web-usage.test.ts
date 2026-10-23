@@ -1,3 +1,4 @@
+import { claudeSteeringMarker } from "../src/adapters/chatgpt-web/tool-result-delivery";
 import { estimateTokens } from "../src/lib/token-estimate";
 import { assertChatGptWebMultipartInputWithinLimits, resolveChatGptWebMultipartStagingMode } from "../src/adapters/chatgpt-web/multipart-browser-transport";
 import { expect, test } from "bun:test";
@@ -18,6 +19,20 @@ function request(text: string): CodexParsedRequest {
     options: { reasoning: "high" },
   };
 }
+
+test("usage counts the configured plugin name carried by the submitted prompt", () => {
+  const parsed = request("Inspect the repository.");
+  const caps = { ...capabilities, localToolsEnabled: true };
+  parsed.context.tools = [{ name: "Read", description: "Read", parameters: {} }];
+  const appName = `Codex ${"測試_".repeat(16)}`;
+  const token = `turn_${"0".repeat(32)}`;
+  const compiled = compileChatGptWebPrompt(parsed, caps, token, { appName });
+  const expected = estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId, [token, claudeSteeringMarker(token)]);
+  expect(expected).not.toBe(estimateChatGptWebInputTokens(parsed, caps));
+  for (const biggerContext of [false, true]) {
+    expect(estimateChatGptWebUsage(parsed, {}, caps, biggerContext, { appName }).inputTokens).toBe(expected);
+  }
+});
 
 test.each([
   ["highly compressible", "a".repeat(480_000)],

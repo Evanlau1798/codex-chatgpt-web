@@ -4,21 +4,25 @@ import { closeLauncherBrowserConnection } from "../../launcher-browser-connectio
 
 export class ChatGptSuspensionClock {
   private suspendedTotalMs = 0;
-  private lastTickAt = Date.now();
+  private lastTickAt: number;
   private timer: ReturnType<typeof setInterval> | undefined;
 
   constructor(
     private readonly tickIntervalMs = 1_000,
     private readonly gapThresholdMs = 5_000,
-  ) {}
+    private readonly now: () => number = () => performance.now(),
+  ) {
+    this.lastTickAt = this.now();
+  }
 
   start(): void {
     if (this.timer) return;
-    this.lastTickAt = Date.now();
-    this.timer = setInterval(() => this.tick(Date.now()), this.tickIntervalMs);
+    this.lastTickAt = this.now();
+    this.timer = setInterval(() => this.tick(this.now()), this.tickIntervalMs);
     this.timer.unref?.();
   }
 
+  /** Exposed for tests; production ticks come from the interval above. */
   tick(now: number): void {
     const gap = now - this.lastTickAt;
     this.lastTickAt = now;
@@ -26,6 +30,9 @@ export class ChatGptSuspensionClock {
   }
 
   suspendedMs(): number {
+    // An expired deadline can run before the interval's first tick after resume.
+    // Observe that gap here, using the same monotonic clock as the stage budgets.
+    this.tick(this.now());
     return this.suspendedTotalMs;
   }
 }

@@ -1,3 +1,21 @@
+export class LauncherBrowserTurnCancelledError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LauncherBrowserTurnCancelledError";
+  }
+}
+
+export class LauncherRetainedConversationUnavailableError extends Error {
+  constructor(message: string) { super(message); this.name = "LauncherRetainedConversationUnavailableError"; }
+}
+
+export class LauncherBrowserTurnOwnerLostError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LauncherBrowserTurnOwnerLostError";
+  }
+}
+
 export interface LauncherBrowserConnectionStages<TBrowser, TResult> {
   ready(timeoutMs: number): Promise<void>;
   connect(timeoutMs: number): Promise<TBrowser>;

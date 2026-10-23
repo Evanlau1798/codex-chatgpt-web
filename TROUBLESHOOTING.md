@@ -19,6 +19,15 @@ editing Codex configuration, or opening a new issue.
 Do not repeatedly press setup actions after they report success. The exact error and a fresh safe
 log are more useful than another reinstall.
 
+### Browser diagnostic retention
+
+Browser checkpoints are stored under `~/.codex-chatgpt-web/diagnostics/browser-turns/`.
+Failed captures are retained for up to three days within a 100 MB budget for finished captures.
+Newer failures take priority over older failures and the ten most recent successful captures.
+Active captures are never removed by cleanup. A burst of failures can exhaust the disk budget,
+so copy any specifically requested checkpoint files before continuing a long investigation.
+The safe-log export is separate and does not include these browser checkpoint files.
+
 ## Models do not appear, or setup remains on step 3
 
 ### Web models are blocked by "out of Codex and Work usage"
@@ -128,6 +137,32 @@ integration journal to bypass the check. If you have no suitable backup, or the 
 journal, use **Activity → Export safe log** and open an issue with the exact error. Do not upload your
 whole config file; it may contain credentials.
 
+## A second `CODEX_HOME` fails with `missing network access in trusted Codex environment context`
+
+The bridge normally reads native task permissions from its own `CODEX_HOME`. A CLI using a
+different home stores its task records elsewhere. Its filesystem-only environment message does
+not provide enough information to recover network permissions.
+
+To share one bridge across your local Codex homes, set `CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES`
+**in the environment that starts the bridge or launcher**. Its value is a JSON array of up to seven
+additional absolute local directories. For example, in PowerShell:
+
+```powershell
+$env:CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES = '["C:\\Codex\\second-home"]'
+& "$env:LOCALAPPDATA\Programs\Codex Web GPT\Codex Web GPT.exe"
+```
+
+Finish active tasks and quit the existing launcher before starting it with the new environment.
+Replace the example paths with your actual home and launcher locations. Each home still needs its
+own Codex integration setup; this setting registers where the shared bridge may read native task
+records. Directories must already exist and must not themselves be symbolic links. The bridge
+canonicalizes directory aliases and rejects a thread found in more than one registered home.
+
+Each turn must match its current native thread, permissions, and turn ID. Shared-home mode does not
+reuse the single-home permission cache. A secondary home's custom SQLite location must be set in
+that home's `config.toml` as `sqlite_home`; the bridge's `CODEX_SQLITE_HOME` applies only to its
+primary home. DEV commands keep their isolated home and discard this production setting.
+
 ## Native models stop after closing the launcher
 
 While the integration is installed, native Codex models also use the local bridge. Keep the launcher
@@ -202,6 +237,15 @@ are lost in long Free-account chats, turn Bigger Context off and restart Codex.
 
 ## Personalization or connector controls are not found
 
+If the connector is missing in Temporary Chat but available in a regular ChatGPT chat, enable
+**Launcher → Settings → Save chats in ChatGPT**. Finish active tasks, restart the launcher and
+Codex, then try a new task. This keeps task conversations in your ChatGPT history; ChatGPT
+memory and custom instructions may apply. Saved chats are opt-in in Enhanced; updating preserves
+your existing choice.
+
+In **6.1.10**, **Verify runtime** still checks Temporary Chat even with saved chats enabled;
+test an actual task on that version. **6.1.11 and later** verify the selected chat mode.
+
 In ChatGPT, open **Settings → General → Language** and choose **English** explicitly, then reload
 ChatGPT inside the launcher and retry once. Some browser controls depend on English labels;
 changing the launcher language does not change the ChatGPT website language.
@@ -228,6 +272,13 @@ Browser-only mode needs no connector. Full harness mode requires all of the foll
 - the connector and Tunnel on the same OpenAI account as the ChatGPT workspace;
 - **Allow all actions** under the connector's permissions; and
 - **Connect harness** completed before **Verify runtime**.
+
+If a turn reports **ChatGPT is waiting for plugin permission**, open the plugin's settings
+in ChatGPT and choose **Permissions → Allow all actions**, then retry the turn. A visible
+**Allow ChatGPT to use …?** card means ChatGPT is waiting for a permission decision. If
+all actions are already allowed, open the ChatGPT tab and check the request; saved chats
+can still ask for one-time approval. Wait for the Stop button to disappear before approving.
+The launcher leaves unanswered requests untouched when the turn stops.
 
 If ChatGPT says **MCP endpoint not found**, keep the launcher running and complete
 **Connect harness** before creating the plugin. Use the same Tunnel ID in both places and
@@ -257,6 +308,15 @@ After updating, refresh **Codex Native2** in ChatGPT's plugin settings to load i
 descriptions. This updates the compaction tool contract; it does not remove safety restrictions.
 If compaction ends without a submitted summary, the launcher reports that failure and preserves
 the existing task history.
+
+### A tool reports an invalid or expired turn token
+
+A turn token identifies one active Codex turn. If ChatGPT changes or omits a character when copying
+it into a tool call, the call is rejected. Tokens from finished turns are also rejected.
+
+Copy the complete current token unchanged; do not guess it or reuse one from an earlier turn.
+The Enhanced connector ABI is unchanged and does not require a connector refresh. If the error continues,
+attach **Activity → Export safe log** and the failure time. Do not include the token itself.
 
 ### Tools disappear on follow-up messages
 
