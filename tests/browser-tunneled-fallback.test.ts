@@ -68,6 +68,7 @@ async function runFixture(options: {
   lateDomFinalBeforeRecoverySend?: boolean;
   lateDomFinalAfterFinalizationCas?: boolean;
   finalizationRevisionChanged?: boolean;
+  finalizationCancellations?: number;
   generationResumesBeforeRecoveryInsertion?: boolean;
   generationResumesAtRecoveryInsertion?: boolean;
   draftDuringFinalization?: boolean;
@@ -145,6 +146,7 @@ async function runFixture(options: {
   let recoveryDecisionAgeMs: number | undefined;
   let resumedGenerationChecks = 0;
   let finalizationStarted = false;
+  let finalizationCancellations = options.finalizationCancellations ?? 0;
   let finalAnswerAdmissionSealed = false;
   let recoveryGuardNonce: string | undefined;
   let recoveryGuardSent = false;
@@ -529,6 +531,7 @@ async function runFixture(options: {
     },
     beginFinalizationOnly: async revision => {
       actions.push(`finalization-only:${revision}`);
+      if (finalizationCancellations > 0) { finalizationCancellations--; return false; }
       if (options.draftDuringFinalization) {
         composerText = "User draft during CAS";
         actions.push("user-draft-during-cas");
@@ -1023,6 +1026,55 @@ test("a late Native final cancels an attached recovery prompt before send and re
   expect(result.actions).toContain("finalization-only:1");
   expect(result.actions.filter(action => action === "send")).toHaveLength(1);
   expect(result.actions).toContain("clear");
+});
+
+test.each([
+  [{ lateFinalBeforeRecoverySend: true }, "finalization_cas_rejected", undefined],
+  [{ lateDomFinalBeforeRecoverySend: true, settledPreToolProjection: true }, "before_cas_guard_rejected", "response_changed"],
+  [{ lateDomFinalAfterFinalizationCas: true, settledPreToolProjection: true }, "after_cas_guard_rejected", "response_changed"],
+  [{ generationResumesAtRecoveryInsertion: true }, "insertion_guard_rejected", "generation_running"],
+  [{ toolBatchAtRecoveryInsertion: true }, "insertion_guard_rejected", "tool_work_in_flight"],
+] as const)("cancelled worker recovery reports its boundary without asserting send acceptance (%j)", async (options, reason, guardReason) => {
+  const root = mkdtempSync(join(tmpdir(), "cancelled-recovery-diagnostics-"));
+  try {
+    const result = await runFixture({ emptyStopped: true, diagnosticsRoot: root, ...options });
+    expect(result.error).toBeUndefined();
+    expect(result.answer).toBe(FINAL);
+    expect(result.actions.filter(action => action === "submitted")).toHaveLength(1);
+    const checkpoints = readdirSync(root).flatMap(name => readdirSync(join(root, name)));
+    expect(checkpoints.filter(name => /^\d+-send-accepted\.json$/.test(name))).toHaveLength(1);
+    expect(result.logs.filter(line => line.includes("recovery_cancelled "))).toEqual([
+      `info:[chatgpt-web] browser turn boole_fallback_fixture recovery_cancelled reason=${reason}`
+        + (guardReason ? ` guardReason=${guardReason}` : ""),
+    ]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("production retry preserves its submission budget across repeated worker CAS cancellations", async () => {
+  const session = new ChatGptTurnSession({ mode: "tools", token: Promise.resolve("turn_cancelled_budget"),
+    browser: new Promise<string>(() => {}), trace: new ChatGptTraceFeed(), text: new ChatGptTextFeed(), cancel: () => {} });
+  session.observeCanonicalRequest({ modelId: "chatgpt-web/high", stream: true,
+    context: { tools: [], messages: [] }, options: {}, _canonicalContextComplete: true });
+  const find = spyOn(chatGptTurnSessions, "find").mockImplementation(() => session);
+  const root = mkdtempSync(join(tmpdir(), "cancelled-recovery-budget-"));
+  try {
+    const errorRecovery = createChatGptSameSurfaceRetry({ traceId: "cancelled_budget", executionKey: "cancelled_budget",
+      enhancedMode: true, outputTunnel: true, turnToken: () => "turn_cancelled_budget", abortSignal: new AbortController().signal });
+    const result = await runFixture({ emptyStopped: true, diagnosticsRoot: root, finalizationCancellations: 2, errorRecovery });
+    expect(result.error).toBeUndefined();
+    expect(result.answer).toBe(FINAL);
+    expect(result.actions.filter(action => action === "send")).toHaveLength(2);
+    expect(result.actions.filter(action => action === "submitted")).toHaveLength(2);
+    expect(result.logs.filter(line => line.includes("recovery_cancelled reason=finalization_cas_rejected"))).toHaveLength(2);
+    const checkpoints = readdirSync(root).flatMap(name => readdirSync(join(root, name)));
+    expect(checkpoints.filter(name => /^\d+-send-accepted\.json$/.test(name))).toHaveLength(2);
+    const bounded = await runFixture({ emptyStopped: true, finalizationCancellations: 100, turnTimeoutMs: 1_200_000,
+      errorRecovery: createChatGptSameSurfaceRetry({ traceId: "bounded_cancellations", executionKey: "cancelled_budget",
+        enhancedMode: true, outputTunnel: true, turnToken: () => "turn_cancelled_budget", abortSignal: new AbortController().signal }) });
+    expect(bounded.error).toMatchObject({ message: "ChatGPT web turn timed out" });
+    expect(bounded.actions.filter(action => action === "submitted")).toHaveLength(1);
+    expect(bounded.logs.filter(line => line.includes("recovery_cancelled reason=finalization_cas_rejected")).length).toBeGreaterThan(1);
+  } finally { find.mockRestore(); rmSync(root, { recursive: true, force: true }); }
 });
 
 test("a late Native final after finalization CAS is buffered until the submission fence reopens", async () => {

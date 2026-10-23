@@ -5039,9 +5039,12 @@ export class ChatGptBrowserWorker {
       let recoveryObservationBaseline: ChatGptAssistantTurnState | undefined;
       let recoveryCompletionTracker: ChatGptCompletionTracker | undefined;
       let recoveryInsertionCancelled = false;
+      let recoveryGuardReason: "binding_changed" | "response_missing" | "response_changed" | "stopped_thinking"
+        | "generation_running" | "tool_work_in_flight" | "steering_pending" | "aborted" | "response_html_changed" | undefined;
       for (let responseAttempt = 1; ; responseAttempt += 1) {
         if (submissionIdentity && !responsePrompt.includes(submissionIdentity)) responsePrompt += `\n${submissionIdentity}`;
         recoveryInsertionCancelled = false;
+        recoveryGuardReason = undefined;
         if (responseAttempt > 1 && mode.selection && mode.selection.url !== page.url()) {
           // A submitted home may acquire /c/<id>. Re-prove the same
           // selection there; never transfer it between existing conversations.
@@ -5099,7 +5102,11 @@ export class ChatGptBrowserWorker {
           this.finalizingRuns.delete(turn.traceId);
           recoveryFinalizationActivated = false;
         };
-        const resumeRecoveryObservation = (): void => {
+        const resumeRecoveryObservation = (reason: "insertion_guard_rejected" | "before_cas_guard_rejected"
+          | "composer_changed" | "finalization_cas_rejected" | "admission_seal_rejected"
+          | "after_cas_guard_rejected" | "atomic_send_rejected"): void => {
+          console.info(`[chatgpt-web] browser turn ${turn.traceId} recovery_cancelled reason=${reason}`
+            + (recoveryGuardReason ? ` guardReason=${recoveryGuardReason}` : ""));
           recoveryObservationOnly = true;
           // No new response was sent: retain the original post-tool projection proof.
           completionTracker = recoveryCompletionTracker ?? completionTracker;
@@ -5216,7 +5223,7 @@ export class ChatGptBrowserWorker {
             await diagnostics.capture(page, "connector-catalog-refreshed");
           }
         }
-        if (recoveryInsertionCancelled) resumeRecoveryObservation();
+        if (recoveryInsertionCancelled) resumeRecoveryObservation("insertion_guard_rejected");
         if (!recoveryObservationOnly) await diagnostics.capture(page, "prompt-attachment-complete");
         if (!recoveryObservationOnly) {
         if (responseAttempt === 1) {
@@ -5273,17 +5280,17 @@ export class ChatGptBrowserWorker {
           }
           if (!await activateRecoverySubmission?.(composer)) {
             await clearOwnedChatGptComposerControl(composer, responsePrompt, stageSignal);
-            resumeRecoveryObservation();
+            resumeRecoveryObservation("before_cas_guard_rejected");
             return;
           }
           if ((await this.attachedPromptText(page, stageSignal)) !== responsePrompt) {
-            resumeRecoveryObservation();
+            resumeRecoveryObservation("composer_changed");
             return;
           }
           const activated = await turn.beginFinalizationOnly?.(recoveryExpectedActivityRevision) === true;
           if (!activated) {
             await clearOwnedChatGptComposerControl(composer, responsePrompt, stageSignal);
-            resumeRecoveryObservation();
+            resumeRecoveryObservation("finalization_cas_rejected");
             return;
           }
           this.finalizingRuns.add(turn.traceId);
@@ -5291,7 +5298,7 @@ export class ChatGptBrowserWorker {
           if (!admissionSealed) {
             await cancelRecoveryFinalization();
             await clearOwnedChatGptComposerControl(composer, responsePrompt, stageSignal);
-            resumeRecoveryObservation();
+            resumeRecoveryObservation("admission_seal_rejected");
             return;
           }
           try {
@@ -5303,7 +5310,7 @@ export class ChatGptBrowserWorker {
           if (!recoverySubmissionGuard) {
             await cancelRecoveryFinalization();
             await clearOwnedChatGptComposerControl(composer, responsePrompt, stageSignal);
-            resumeRecoveryObservation();
+            resumeRecoveryObservation("after_cas_guard_rejected");
             return;
           }
           recoveryFinalizationActivated = true;
@@ -5352,7 +5359,7 @@ export class ChatGptBrowserWorker {
               throw chatGptWebSurfaceError("ChatGPT recovery composer changed at submission", false);
             }
             await clearOwnedChatGptComposerControl(composer, responsePrompt, stageSignal);
-            resumeRecoveryObservation();
+            resumeRecoveryObservation("atomic_send_rejected");
             return;
           }
           let workResumed = false;
@@ -5404,7 +5411,7 @@ export class ChatGptBrowserWorker {
           },
           turn.abortSignal,
         );
-        await diagnostics.capture(page, "send-accepted");
+        if (!recoveryObservationOnly) await diagnostics.capture(page, "send-accepted");
         }
 
         const responseProgress = new ChatGptResponseProgressTracker();
@@ -5522,8 +5529,12 @@ export class ChatGptBrowserWorker {
                 const progress = turn.externalProgress?.snapshot();
                 const pendingSteering = this.takePreemptiveRetry(turn.traceId);
                 if (pendingSteering) preemptiveRetryPrompt ??= pendingSteering;
-                if (snapshot.visibleText !== recoveryText || snapshot.stoppedThinkingVisible || running
-                  || chatGptExternalToolCallsAreInFlight(progress) || pendingSteering) {
+                recoveryGuardReason = snapshot.visibleText !== recoveryText ? "response_changed"
+                  : snapshot.stoppedThinkingVisible ? "stopped_thinking"
+                  : running ? "generation_running"
+                  : chatGptExternalToolCallsAreInFlight(progress) ? "tool_work_in_flight"
+                  : pendingSteering ? "steering_pending" : undefined;
+                if (recoveryGuardReason) {
                   recoveryInsertionCancelled = true;
                   return false;
                 }
@@ -5539,16 +5550,19 @@ export class ChatGptBrowserWorker {
                 const confirmedResponseHtml = await response.evaluate(element => element.innerHTML);
                 const pendingSteering = this.takePreemptiveRetry(turn.traceId);
                 if (pendingSteering) preemptiveRetryPrompt ??= pendingSteering;
-                return latest.lastId === current.lastId && latest.count === current.count
-                  && snapshot.responsePresent && snapshot.visibleText === recoveryText && !snapshot.stoppedThinkingVisible
-                  && !running && !pendingSteering && turn.abortSignal?.aborted !== true
-                  && responseHtml === confirmedResponseHtml
-                  ? {
+                recoveryGuardReason = latest.lastId !== current.lastId || latest.count !== current.count ? "binding_changed"
+                  : !snapshot.responsePresent ? "response_missing"
+                  : snapshot.visibleText !== recoveryText ? "response_changed"
+                  : snapshot.stoppedThinkingVisible ? "stopped_thinking"
+                  : running ? "generation_running"
+                  : pendingSteering ? "steering_pending"
+                  : turn.abortSignal?.aborted === true ? "aborted"
+                  : responseHtml !== confirmedResponseHtml ? "response_html_changed" : undefined;
+                return recoveryGuardReason ? undefined : {
                       responseSelector: chatGptAssistantTurnSelector(binding.id),
                       responseHtml: confirmedResponseHtml,
                       stopButtonSelector: CHATGPT_STOP_BUTTON_SELECTOR,
-                    }
-                  : undefined;
+                    };
               };
               return typeof retry === "string" ? { text: retry } : retry;
             },
