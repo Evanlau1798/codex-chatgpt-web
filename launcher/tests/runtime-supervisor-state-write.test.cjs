@@ -414,3 +414,59 @@ for (const previous of [
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+for (const restart of [false, true]) test(`overlapping recovery cleans late ownership (explicit restart: ${restart})`, async t => {
+  const { root, supervisor } = fixture();
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const config = { mode: "full", tunnel: { alias: "owned-fixture" } };
+  let release, starting, connecting = false, failed = false, stops = 0, starts = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const write = supervisor.writeState.bind(supervisor);
+  supervisor.readConfig = () => config;
+  supervisor.assertTunnelClientReady = () => {};
+  supervisor.waitForKnownTunnelStatus = async () => ({ state: "stopped", ready: false });
+  supervisor.runTunnelStopCommand = async () => { stops++; return { code: 0 }; };
+  supervisor.waitForTunnelStopped = async () => ({ state: "stopped", processRunning: false });
+  supervisor.runTunnelConnectCommand = async () => { connecting = true; await gate; return { code: 0 }; };
+  supervisor.readTunnelHealth = async () => ({ ready: true, pid: null });
+  supervisor.waitForTunnelMcpTransport = async () => {};
+  supervisor.waitForProxy = async () => new Promise(resolve => setImmediate(resolve));
+  supervisor.proxyHealth = async () => false;
+  supervisor.runtimeCommand = () => ({ executable: process.execPath,
+    args: ["-e", "setInterval(() => {}, 1000)"], cwd: root });
+  supervisor.writeState = (status, detail) => {
+    if (status === "failed" && !failed) { failed = true; throw new Error("transient ownership failure"); }
+    return write(status, detail);
+  };
+  try {
+    supervisor.scheduleRecovery("tunnel");
+    await until(() => connecting, "production tunnel recovery must reach the connect boundary");
+    supervisor.scheduleRecovery("daemon");
+    await until(() => supervisor.stopping, "overlapping daemon recovery must observe the write failure");
+    await Promise.all([...supervisor.stateWriteCleanups.values()]);
+    assert.equal(supervisor.daemon, null);
+    if (restart) {
+      supervisor.startConfigured = async () => { starts++; supervisor.stopping = false; return { status: "ready" }; };
+      starting = supervisor.startIfConfigured();
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(starts, 0, "explicit restart must join the in-flight acquisition first");
+    }
+    release();
+    await Promise.all([...supervisor.recoveryTasks]);
+    if (starting) assert.deepEqual(await starting, { status: "ready" });
+    assert.equal(supervisor.tunnel, null, "late acquisition must not survive the failed ownership boundary");
+    assert.equal(supervisor.tunnelMonitorTimer, null);
+    assert.equal(stops, 2, "late managed ownership must use the native stop contract");
+  } finally {
+    supervisor.stopping = true;
+    release();
+    await starting;
+    for (const timer of Object.values(supervisor.restartTimers)) clearTimeout(timer);
+    await Promise.allSettled([...supervisor.recoveryTasks]);
+    await supervisor.stopChild("daemon").catch(() => {});
+    if (supervisor.tunnel) await supervisor.stopTunnelGracefully(config).catch(() => {});
+    supervisor.stopTunnelMonitor();
+    t.mock.timers.reset();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

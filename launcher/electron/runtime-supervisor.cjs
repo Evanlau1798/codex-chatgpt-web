@@ -1221,6 +1221,7 @@ class RuntimeSupervisor {
   async startIfConfigured() {
     if (this.stopPromise) await this.stopPromise;
     if (this.stateWriteCleanups.size > 0) await Promise.all([...this.stateWriteCleanups.values()]);
+    if (this.stopping && this.recoveryTasks.size > 0) await Promise.allSettled([...this.recoveryTasks]);
     if (this.startPromise) return this.startPromise;
     this.startPromise = this.startConfigured();
     try {
@@ -1386,36 +1387,35 @@ class RuntimeSupervisor {
     if (!config) return;
     this.publishOperation?.({ name: "runtime-recovery", status: "running", message: `Restarting ${name}` });
     const tunnelOnly = this.launcherProfile === "development";
-    if (name === "tunnel") {
-      await this.startTunnel(config, "runtime-recovery", { forceRestart: true });
-    }
-    else if (tunnelOnly) throw new Error("DEV runtime cannot recover a Responses daemon");
-    else await this.startDaemon(config);
-    if (!tunnelOnly && !this.daemon) throw new Error("Responses proxy is unavailable after runtime recovery");
-    if (config.mode === "full" && !this.tunnel) {
-      throw new Error("Tunnel runtime is unavailable after runtime recovery");
-    }
-    if (!tunnelOnly) await this.waitForProxy(config);
-    if (config.mode === "full") {
-      await this.waitForTunnel(config, TUNNEL_START_TIMEOUT_MS, "runtime-recovery");
-    }
-    if (!this.tryWriteState("ready")) {
-      let cleanupError;
+    try {
+      if (name === "tunnel") {
+        await this.startTunnel(config, "runtime-recovery", { forceRestart: true });
+      }
+      else if (tunnelOnly) throw new Error("DEV runtime cannot recover a Responses daemon");
+      else await this.startDaemon(config);
+      if (!tunnelOnly && !this.daemon) throw new Error("Responses proxy is unavailable after runtime recovery");
+      if (config.mode === "full" && !this.tunnel) {
+        throw new Error("Tunnel runtime is unavailable after runtime recovery");
+      }
+      if (!tunnelOnly) await this.waitForProxy(config);
+      if (config.mode === "full") {
+        await this.waitForTunnel(config, TUNNEL_START_TIMEOUT_MS, "runtime-recovery");
+      }
+      if (this.stopping) throw new Error("Runtime recovery was stopped before ownership could be committed");
+      if (!this.tryWriteState("ready")) throw new Error("Recovered runtime could not persist launcher ownership");
+      this.publishOperation?.({ name: "runtime-recovery", status: "completed", message: `${name} recovered` });
+    } catch (error) {
+      if (!this.stopping) throw error;
+      this.stopTunnelMonitor();
       try {
         await this.cleanupFailedStart(config);
-      } catch (caught) {
-        cleanupError = caught;
+      } catch (cleanupError) {
+        throw new Error(appendFailure(errorMessage(error), "runtime recovery cleanup failed", cleanupError));
+      } finally {
+        if (this.stopping) this.stopTunnelMonitor();
       }
-      const message = cleanupError
-        ? appendFailure(
-            "Recovered runtime could not persist launcher ownership",
-            "runtime recovery cleanup failed",
-            cleanupError,
-          )
-        : "Recovered runtime could not persist launcher ownership";
-      throw new Error(message);
+      throw error;
     }
-    this.publishOperation?.({ name: "runtime-recovery", status: "completed", message: `${name} recovered` });
   }
 
   async cleanupFailedStart(config) {
