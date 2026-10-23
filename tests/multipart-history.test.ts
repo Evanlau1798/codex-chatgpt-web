@@ -9,6 +9,24 @@ const group = (key: string, text: string | undefined, answer: string, complete =
     <div data-content-search-unit-key="${key}:assistant"><div data-conversation-role="assistant"></div><div data-markdown-text-style="assistant-message"><p>${escape(answer)}</p></div></div>
     ${complete ? '<div class="turn-action-controls"><button>Copy</button></div>' : ""}</div>`;
 
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("a previously acknowledged but unmounted stage cannot acknowledge the next Send when it returns", async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  try {
+    const page = await browser.newPage();
+    const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+    const stage = { ...formatChatGptWebMultipartStage('{"context":"Earlier context"}', `ctx_${"f".repeat(32)}`, 1, 6),
+      identities: ["group:assistant:earlier"] };
+    await page.setContent("<main></main>");
+    const baseline = await worker.captureSubmissionBaseline(page, "Next context part", [stage]);
+    await page.locator("main").evaluate((node, html) => { node.innerHTML = html; }, group("earlier", stage.text, stage.acknowledgement));
+    expect(await worker.currentSubmissionEvidence(page, baseline)).toBeUndefined();
+    expect(baseline.acceptedUserIdentity).toBeUndefined();
+    await page.locator("main").evaluate((node, html) => { node.insertAdjacentHTML("beforeend", html); }, group("next", "Next context part", "", false));
+    expect(await worker.currentSubmissionEvidence(page, baseline)).toBe("user_turn");
+    expect(baseline.acceptedUserIdentity).toBe("group:user:next");
+  } finally { await browser.close(); }
+});
+
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("a new multipart user message is accepted before ChatGPT mounts its assistant area", async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
   try {
@@ -32,6 +50,52 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("a new multipart user message
     expect(baseline.acceptedUserIdentity).toBe("group:user:final");
     await page.locator('[data-turn-key="final"]').evaluate((node, html) => { node.outerHTML = html; }, group("final", prompt, "Answer"));
     expect((await worker.waitForNewAssistantTurn(page, baseline, Date.now() + 1000)).identity).toBe("group:assistant:final");
+  } finally { await browser.close(); }
+}, 15_000);
+
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("pending multipart submissions do not expand their transient user bubble while earlier stages remain accounted for", async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  try {
+    const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+    for (const total of [2, 6]) {
+      const page = await browser.newPage();
+      try {
+        const stages = Array.from({ length: total === 6 ? 4 : 1 }, (_, index) => ({
+          ...formatChatGptWebMultipartStage(JSON.stringify({ context: `part ${index + 1}` }), `ctx_${"e".repeat(32)}`, index + 1, total),
+          identities: [`group:assistant:stage-${index}`],
+        }));
+        await page.setContent(`<main>${stages.map((stage, index) => group(`stage-${index}`, stage.text, stage.acknowledgement)).join("")}</main>`);
+        const prompt = "Next context message.\n" + "inert history\n".repeat(15_000);
+        const baseline = await worker.captureSubmissionBaseline(page, prompt, stages);
+        // The saved-chat virtualizer can remove an entire earlier group, not just
+        // its message section, as a large next part is submitted.
+        await page.locator('[data-turn-key="stage-0"]').evaluate(node => node.remove());
+        await page.locator("main").evaluate((node, html) => { node.insertAdjacentHTML("beforeend", html); }, group("pending", prompt.slice(0, 10_240), "", false));
+        await page.locator('[data-turn-key="pending"] [data-user-message-bubble]').evaluate(bubble => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.setAttribute("aria-expanded", "false");
+          button.setAttribute("data-thread-find-skip", "true");
+          button.setAttribute("data-markdown-copy", "exclude");
+          button.textContent = "Show more";
+          // ChatGPT replaces the just-submitted bubble with Activity while starting
+          // its answer. Waiting for this control to expand cannot establish Send.
+          button.onclick = () => {
+            bubble.closest("[data-turn-key]")!.innerHTML = '<span hidden data-chatgpt-agent-turn-start></span>';
+          };
+          bubble.append(button);
+        });
+        expect(await worker.currentSubmissionEvidence(page, baseline, AbortSignal.timeout(1_500))).toBe("user_turn");
+        expect(baseline.acceptedUserIdentity).toBe("group:user:pending");
+        expect(await page.locator('[data-turn-key="pending"] button').getAttribute("aria-expanded")).toBe("false");
+        // The ordinary turn-binding path owns the subsequent Activity replacement.
+        await page.locator('[data-turn-key="pending"]').evaluate(node => {
+          node.setAttribute("data-turn-key", "fallback");
+          node.innerHTML = '<span hidden data-chatgpt-agent-turn-start></span>';
+        });
+        expect((await worker.waitForNewAssistantTurn(page, baseline, Date.now() + 1_000)).identity).toBe("group:assistant:fallback");
+      } finally { await page.close(); }
+    }
   } finally { await browser.close(); }
 }, 15_000);
 
@@ -137,6 +201,10 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("rekeyed multipart stages ver
           button.setAttribute("data-markdown-copy", "exclude");
           button.textContent = "Показать ещё";
           button.onclick = () => {
+            if (button.getAttribute("aria-expanded") === "true") {
+              button.setAttribute("aria-expanded", "false");
+              return;
+            }
             bubble.querySelector("[data-search-result-target]")!.textContent = data.text;
             button.setAttribute("aria-expanded", "true");
             if (data.duplicate) {
@@ -157,7 +225,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("rekeyed multipart stages ver
         if (scenario === "complete") {
           expect(result).toEqual({ value: undefined });
           expect(baseline.acknowledgedStages[0].identities).toContain("group:assistant:persisted");
-          expect(await page.locator('[aria-expanded="true"]').count()).toBe(1);
+          expect(await page.locator('[aria-expanded="true"]').count()).toBe(0);
         } else expect(result.error).toBeInstanceOf(Error);
       } finally { await page.close(); }
     }

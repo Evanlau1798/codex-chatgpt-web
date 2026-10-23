@@ -193,6 +193,10 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("collapsed plugin messages re
       if (scenario === "wrong-plugin") expanded = expanded.replace("Clew review", "Other plugin");
       await page.locator('button').evaluate((button, { html, competing }) => {
         button.addEventListener('click', () => {
+          if (button.getAttribute('aria-expanded') === 'true') {
+            button.setAttribute('aria-expanded', 'false');
+            return;
+          }
           button.setAttribute('aria-expanded', 'true');
           button.parentElement!.querySelector('[data-search-result-target]')!.innerHTML = html;
           if (competing) document.querySelector('main')!.insertAdjacentHTML('beforeend', '<div data-turn-key="other"><div data-user-message-bubble>Another task</div></div>');
@@ -206,6 +210,57 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("collapsed plugin messages re
     }
   } finally { await browser.close(); }
 }, 20_000);
+
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("auto-linked URLs preserve exact prompt text and reject changed labels or destinations", async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  try {
+    const page = await browser.newPage();
+    const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+    const url = "https://example.com/report?q=one&lang=en";
+    const prompt = `Keep  spaces\n${url}\nEnd.`;
+    for (const scenario of ["exact", "changed-label", "changed-destination", "extra-content"]) {
+      await page.setContent('<div id="group"><div data-user-message-bubble><div data-search-result-target></div></div></div>');
+      await page.locator('[data-search-result-target]').evaluate((node, { url, scenario }) => {
+        node.append("Keep  spaces\n");
+        const link = document.createElement("a");
+        link.href = scenario === "changed-destination" ? "https://example.org/other" : url;
+        link.setAttribute("data-search-result-target", "");
+        link.textContent = scenario === "changed-label" ? "report" : url;
+        node.append(link, scenario === "extra-content" ? " extra\nEnd." : "\nEnd.");
+      }, { url, scenario });
+      expect(await worker.userMessageMatchesSubmission(page.locator('#group'), prompt)).toBe(scenario === "exact");
+    }
+  } finally { await browser.close(); }
+});
+
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("reading a collapsed message restores the viewport and remounts its virtualized active answer", async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  try {
+    const page = await browser.newPage();
+    const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+    const text = "Large history\n".repeat(2000);
+    await page.setContent('<div id="scroll" style="height:300px;overflow:auto"><div id="group"><div data-user-message-bubble>'
+      + '<div data-search-result-target style="white-space:pre-wrap">Preview</div>'
+      + '<button type="button" aria-expanded="false" data-thread-find-skip="true" data-markdown-copy="exclude">Show more</button>'
+      + '</div></div><div style="height:1000px"></div><div id="answer">Active answer</div></div><input id="composer">');
+    await page.locator('button').evaluate((button, text) => {
+      const answer = document.querySelector('#answer')!;
+      button.addEventListener('click', () => {
+        const open = button.getAttribute('aria-expanded') !== 'true';
+        button.setAttribute('aria-expanded', String(open));
+        button.parentElement!.querySelector('[data-search-result-target]')!.textContent = open ? text : "Preview";
+        if (open) answer.remove(); else document.querySelector('#scroll')!.append(answer);
+      });
+    }, text);
+    await page.locator('#composer').focus();
+    await page.locator('#scroll').evaluate(node => { node.scrollTop = node.scrollHeight; });
+    expect(await worker.userMessageMatchesSubmission(page.locator('#group'), text)).toBeTrue();
+    expect(await page.locator('button').getAttribute('aria-expanded')).toBe('false');
+    expect(await page.locator('#answer').count()).toBe(1);
+    expect(await page.locator('#scroll').evaluate(node => node.scrollHeight - node.clientHeight - node.scrollTop)).toBeLessThanOrEqual(1);
+    expect(await page.locator('#composer').evaluate(node => document.activeElement === node)).toBeTrue();
+  } finally { await browser.close(); }
+});
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("plain user code blocks preserve the full submitted code and whitespace", async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
@@ -242,6 +297,10 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("rich-text rebind requires th
         : scenario === "duplicate" ? `${token} ${token}` : scenario === "token-prefix" ? `${token}extra` : token;
       await page.locator('button').evaluate((button, { displayed, competing }) => {
         button.addEventListener('click', () => {
+          if (button.getAttribute('aria-expanded') === 'true') {
+            button.setAttribute('aria-expanded', 'false');
+            return;
+          }
           button.setAttribute('aria-expanded', 'true');
           button.parentElement!.querySelector('[data-search-result-target]')!.append(' Pass turn_token ' + displayed);
           if (competing) document.querySelector('main')!.insertAdjacentHTML('beforeend', '<div data-turn-key="other"><div data-user-message-bubble>Other task</div></div>');

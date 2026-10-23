@@ -1406,7 +1406,7 @@ test("connector verification persists ordered browser checkpoints when selection
   }
 });
 
-test("successful connector verification clears the proven selection before releasing the page", async () => {
+for (const useSavedChats of [false, true]) test(`connector verification prepares the selected chat mode (${useSavedChats}) and clears its selection`, async () => {
   const diagnosticsRoot = mkdtempSync(join(tmpdir(), "cgw-connector-verification-success-"));
   const socket = defaultBrokerEndpoint(diagnosticsRoot);
   const broker = TurnBroker.forSocket(socket);
@@ -1427,9 +1427,10 @@ test("successful connector verification clears the proven selection before relea
 
   try {
     const result = await verifyConnectorExclusive.call({
-      config: { appName: "Codex Native2 DEV", browserDiagnosticsPath: diagnosticsRoot, brokerSocketPath: socket },
+      config: { appName: "Codex Native2 DEV", browserDiagnosticsPath: diagnosticsRoot, brokerSocketPath: socket, useSavedChats },
       ensurePage: async () => page,
-      prepareChatSurface: async (_page: unknown, capture: (checkpoint: string) => Promise<void>) => {
+      prepareChatSurface: async (_page: unknown, capture: (checkpoint: string) => Promise<void>, saved: boolean) => {
+        expect(saved).toBe(useSavedChats);
         calls.push("prepare");
         await capture("composer-ready");
       },
@@ -1644,6 +1645,7 @@ test("image attachment readiness uses exact file tiles and not localized remove-
     },
     locator: (selector: string) => {
       if (selector.startsWith(".composer-attachment-surface")) return {};
+      if (selector === 'input[data-testid="upload-photos-input"], input[type="file"][multiple]:not([accept])') return input;
       expect(selector).toBe(CHATGPT_SEND_BUTTON_SELECTOR);
       return send;
     },
@@ -1675,7 +1677,6 @@ test("image attachment readiness uses exact file tiles and not localized remove-
         : method === "Network.streamResourceContent" ? { bufferedData: Buffer.from(JSON.stringify({ event: "file.processing.completed" }) + "\n").toString("base64") } : {},
     }) }),
     locator: (selector: string) => {
-      if (selector === 'input[data-testid="upload-photos-input"], form[data-chatgpt-composer] input[type="file"][multiple]:not([accept])') return input;
       if (selector === '[role="alert"]') {
         return { allInnerTexts: async () => [] };
       }
@@ -2280,7 +2281,8 @@ test("effort menu waiting stops when ChatGPT reports an expired session", async 
 
 test("terminal model errors are scoped to the new assistant turn instead of global page alerts", () => {
   const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
-  expect(workerSource).toContain("throwIfChatGptTerminalErrorAlert(responseTurn)");
+  expect(workerSource).toContain("chatGptTurnContainerSelector(responseTurnBinding.id)");
+  expect(workerSource).toContain("await throwIfChatGptTerminalErrorAlert(responseTurnBinding");
   expect(workerSource).not.toContain("throwIfChatGptTerminalErrorAlert(page)");
 });
 
@@ -2372,6 +2374,7 @@ function toolConfirmationPage(options: {
     : '[role="dialog"]';
   const hiddenDialog = {
     filter: () => hiddenDialog,
+    last: () => hiddenDialog,
     count: async () => 0,
     isVisible: async () => false,
   };
@@ -2399,13 +2402,15 @@ test("manual ChatGPT connector approval pauses and resumes the same browser turn
   expect(fixture.pressed).toEqual([]);
 });
 
-test("an unanswered ChatGPT connector approval is denied instead of aborting the turn", async () => {
+test("an unanswered ChatGPT connector approval explains the permission setting without choosing Deny", async () => {
   const fixture = toolConfirmationPage();
   const pending: boolean[] = [];
-  expect(await resolveChatGptToolConfirmation(fixture.page, "Codex Native", false, undefined, 2,
-    undefined, async value => { pending.push(value); })).toBeTrue();
+  await expect(resolveChatGptToolConfirmation(fixture.page, "Codex Native", false, undefined, 2,
+    undefined, async value => { pending.push(value); })).rejects.toMatchObject({
+      code: "chatgpt_tool_approval_required", retryable: false,
+    });
   expect(pending).toEqual([true, false]);
-  expect(fixture.pressed).toEqual(["Deny:click"]);
+  expect(fixture.pressed).toEqual([]);
 });
 
 test("explicit connector auto-approval still selects Allow once", async () => {
@@ -3472,6 +3477,26 @@ test("stale MCP progress stops suppressing DOM health without penalising long ac
   )).toBeFalse();
 });
 
+test("multipart observation surfaces Stopped thinking on its first observation even with live MCP work", async () => {
+  const absent = { last() { return this; }, filter() { return this; }, isVisible: async () => false,
+    getByText() { return this; }, getByTestId() { return this; } };
+  const page = { isClosed: () => false, locator: () => absent };
+  const binding = { identity: "group:assistant:current", locator: absent };
+  const snapshot = { responsePresent: true, stoppedThinkingVisible: true, visibleText: "", completionActionVisible: false };
+  let observations = 0;
+  let acknowledged = false;
+  const progress = {
+    snapshot: () => ({ revision: 1, lastToolBatchRevision: 1, activeToolCalls: 1, lastProgressAt: Date.now() }),
+    acknowledgeToolBatch: async () => { acknowledged = true; },
+  };
+  const observe = (ChatGptBrowserWorker.prototype as any).waitForMultipartAcknowledgement;
+  await expect(observe.call({ responseDomSnapshot: async () => { observations += 1; return snapshot; } },
+    page, binding.locator, { acknowledgement: "ack" }, Date.now() + 1_000, undefined, progress,
+  )).rejects.toMatchObject({ code: "chatgpt_stopped_thinking", retryable: false });
+  expect(observations).toBe(1);
+  expect(acknowledged).toBeFalse();
+});
+
 test("the shipped commentary classifier separates answer Markdown from reasoning in a real DOM", () => {
   // The classifier runs inside page.evaluate, so it cannot be imported. Extract and execute the
   // exact shipped source instead of a copy, which is what lets this test detect a regression in
@@ -3677,14 +3702,18 @@ test("visible Stop keeps assistant DOM grace alive while reasoning has no mounte
 });
 
 test("the suspension clock charges only tick gaps that mean the process was frozen", () => {
-  const clock = new ChatGptSuspensionClock(1_000, 5_000);
-  clock.tick(1_000);
-  clock.tick(2_000);
-  clock.tick(3_100);
+  let now = 0;
+  const clock = new ChatGptSuspensionClock(1_000, 5_000, () => now);
+  clock.tick(now = 1_000);
+  clock.tick(now = 2_000);
+  clock.tick(now = 3_100);
   expect(clock.suspendedMs()).toBe(0);
 
   // Fifteen minutes without a tick is a sleep; the ordinary interval is refunded from the charge.
-  clock.tick(3_100 + 15 * 60_000);
+  now = 3_100 + 15 * 60_000;
+  // The deadline reads before the delayed interval gets a chance to tick.
+  expect(clock.suspendedMs()).toBe(15 * 60_000 - 1_000);
+  clock.tick(now);
   expect(clock.suspendedMs()).toBe(15 * 60_000 - 1_000);
 });
 
@@ -3763,6 +3792,7 @@ test("two-part saved chats re-prove unchanged effort after the first message cre
     isEditable: async () => true };
   const page = Object.assign(new EventEmitter(), {
     url: () => url, isClosed: () => false,
+    evaluateHandle: async () => ({ evaluate: async () => false, dispose: async () => {} }),
     evaluate: async () => { throw new Error("No real browser in the transport fixture"); },
     locator: (selector: string) => ({ page: () => page, count: async () => sends, nth() { return this; }, last() { return this; },
       filter() { return this; }, isVisible: async () => false,
@@ -3786,7 +3816,7 @@ test("two-part saved chats re-prove unchanged effort after the first message cre
     assertPromptAttached: async () => {},
     waitForSubmissionAccepted: async () => { throw finished; },
     attachPrompt: async () => {}, attachPromptWithCompactionRetry: async () => {}, attachFiles: async () => {},
-    waitForNewAssistantTurn: async () => ({}), waitForMultipartAcknowledgement: async () => {},
+      waitForNewAssistantTurn: async () => ({ identity: "saved_stage" }), waitForMultipartAcknowledgement: async () => {},
     sendAttachedPrompt: async (_page: unknown, _baseline: unknown, _initial: unknown, _capture: unknown,
       _signal: unknown, onSendActivated: () => Promise<void>) => {
       await onSendActivated();

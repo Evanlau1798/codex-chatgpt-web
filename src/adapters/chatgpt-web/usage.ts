@@ -55,7 +55,7 @@ export function estimateChatGptWebInputTokens(
   parsed: CodexParsedRequest,
   capabilities: ChatGptWebCapabilities,
   options: Pick<CompileChatGptWebPromptOptions,
-    "nativeControlConnector" | "useEnhancedOutputTunnel" | "experimentalMultipartParts" | "experimentalSkillAttachments" | "captureLunaCheckpoint"> = {},
+    "nativeControlConnector" | "useEnhancedOutputTunnel" | "experimentalMultipartParts" | "experimentalSkillAttachments" | "captureLunaCheckpoint" | "appName"> = {},
 ): number {
   const manual = isChatGptWebZeroRiskBackendModel(parsed.modelId);
   const mode = manual
@@ -89,6 +89,7 @@ export function resolveBiggerContextMultipartParts(
   parsed: CodexParsedRequest,
   capabilities: ChatGptWebCapabilities,
   experimentalSkillAttachments = false,
+  appName?: string,
 ): ChatGptWebMultipartPartCount | undefined {
   if (isChatGptWebZeroRiskBackendModel(parsed.modelId)) {
     throw new Error("Bigger Context is unavailable for ChatGPT Zero Risk");
@@ -110,7 +111,7 @@ export function resolveBiggerContextMultipartParts(
     parsed,
     capabilities,
     mode.localTools && effectiveChatGptToolPolicy(parsed).tools.length > 0 ? ESTIMATE_TURN_TOKEN : undefined,
-    { experimentalMultipartParts: parts, experimentalSkillAttachments, captureLunaCheckpoint: false },
+    { appName, experimentalMultipartParts: parts, experimentalSkillAttachments, captureLunaCheckpoint: false },
   );
   const inline = compile();
   const inputTokens = estimateCompiledChatGptWebInputTokens(inline, parsed.modelId);
@@ -236,13 +237,13 @@ export function estimateChatGptWebUsage(
   capabilities: ChatGptWebCapabilities,
   experimentalBiggerContext = false,
   promptOptions: Pick<CompileChatGptWebPromptOptions,
-    "nativeControlConnector" | "useEnhancedOutputTunnel" | "experimentalSkillAttachments"> = {},
+    "nativeControlConnector" | "useEnhancedOutputTunnel" | "experimentalSkillAttachments" | "appName"> = {},
 ): CodexUsage {
   const inputTokens = estimateChatGptWebInputTokens(parsed, capabilities, {
     ...promptOptions,
     ...(experimentalBiggerContext ? { captureLunaCheckpoint: false } : {}),
     experimentalMultipartParts: experimentalBiggerContext
-      ? resolveBiggerContextMultipartParts(parsed, capabilities, promptOptions.experimentalSkillAttachments)
+      ? resolveBiggerContextMultipartParts(parsed, capabilities, promptOptions.experimentalSkillAttachments, promptOptions.appName)
       : undefined,
   });
   const outputTokens = conservativeTextTokens(roundEvidenceText(evidence), parsed.modelId);

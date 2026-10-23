@@ -42,11 +42,11 @@ export function codexToolResultToBrokerResult(message: CodexToolResultMessage): 
   };
 }
 
-function interruptedByActiveCompaction(transaction: CompactionTransactionHandle): BrokerToolResult {
+function interruptedByActiveCompaction(transaction: CompactionTransactionHandle, appName?: string): BrokerToolResult {
   return {
     content: [{
       type: "text",
-      text: activeCompactionToolResultInstruction(transaction),
+      text: activeCompactionToolResultInstruction(transaction, appName),
     }],
     isError: true,
   };
@@ -124,6 +124,7 @@ export async function settleActiveCompactionSource(
   signal?: AbortSignal,
   timeoutMs = MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
   armCompactionBoundaryRetention?: () => Promise<boolean>,
+  appName?: string,
 ): Promise<{ answer: string; compactionInstructionDelivered: boolean; handoff?: string }> {
   return source.runExclusive(async () => {
     if (signal?.aborted) { source.cancel(abortReason(signal)); throw abortReason(signal); }
@@ -174,7 +175,7 @@ export async function settleActiveCompactionSource(
         );
       }
       source.runtime.compactionRequested = true;
-      broker.requestCompaction(token, interruptedByActiveCompaction(transaction), () => {
+      broker.requestCompaction(token, interruptedByActiveCompaction(transaction, appName), () => {
         compactionInstructionDelivered = true;
         console.info("[chatgpt-web] active compaction boundary action=request_checkpoint_in_current_response");
       });
@@ -322,14 +323,20 @@ export function runStructuredCompactionOnce(
     if (abort.signal.aborted) throw abortReason(abort.signal);
     return start(abort.signal, settlement => { physicalSettlements.push(settlement); });
   });
-  // Report failure promptly, but keep admission and cancellation bound to physical cleanup.
-  const ownerSettlement = promise.then(() => false, () => true).then(async failed => {
+  // Return a deadline failure promptly, while its physical browser owner still blocks retries
+  // and cancel-all completion. A cancelled queued run must also retain its predecessor's gate.
+  const ownerSettlement = promise.then(() => false, error => {
+    // Native retries of the identical oversized input cannot fix a size rejection. Replay that
+    // terminal result under the existing cache lifetime; reduced input/model changes get a new key.
+    return !(error instanceof ChatGptWebAdapterError
+      && error.code === "context_length_exceeded" && !error.retryable);
+  }).then(async evict => {
     await Promise.allSettled(physicalSettlements);
     run.active = false;
     if (structuredCompactionOwners.get(owner.ownerKey) === ownerSettlement) {
       structuredCompactionOwners.delete(owner.ownerKey);
     }
-    if (failed && structuredCompactionRuns.get(key) === run) structuredCompactionRuns.delete(key);
+    if (evict && structuredCompactionRuns.get(key) === run) structuredCompactionRuns.delete(key);
   });
   const run: CachedCompactionRun = {
     createdAt: Date.now(),

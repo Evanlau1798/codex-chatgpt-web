@@ -76,6 +76,7 @@ const launchEnvironment = {
 };
 process.env.CODEX_CHATGPT_WEB_HOME = CORE_HOME;
 process.env.CODEX_HOME = LAUNCHER_PROFILE.codexHome;
+if (IS_DEV_PROFILE) delete process.env.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES;
 app.setName(LAUNCHER_PROFILE.displayName);
 if (process.platform === "win32") {
   app.setAppUserModelId(IS_DEV_PROFILE ? "dev.codexwebgpt.launcher.dev" : "dev.codexwebgpt.launcher");
@@ -1083,6 +1084,9 @@ function registerIpc({ logger, stateStore }) {
       zeroRiskProEnabled: runtimeHost.runtimeConfigSnapshot().config?.zeroRiskProEnabled === true,
       experimentalFreshConversationPerTurn: runtimeHost.runtimeConfigSnapshot().config?.experimentalFreshConversationPerTurn === true,
       useSavedChats: runtimeHost.runtimeConfigSnapshot().config?.useSavedChats === true,
+      autoApproveToolCalls: runtimeHost.runtimeConfigSnapshot().config?.autoApproveToolCalls === true,
+      coreSetupComplete: true,
+      codexCatalogVerified: IS_DEV_PROFILE,
       mcpRuntimeInstalled: true,
       mcpSetupComplete: false,
       mcpGuideStep: 2,

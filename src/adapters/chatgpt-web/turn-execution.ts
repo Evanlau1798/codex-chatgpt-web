@@ -4,6 +4,7 @@ import { ChatGptSteeringFeed, steeringFingerprint, type ClaudeSteeringDelivery }
 import { ChatGptTextFeed, ChatGptTraceFeed } from "./turn-feeds";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import type { ChatGptExternalTurnProgress } from "./turn-progress";
+import { NativeObserverHandoff } from "./native-observer-handoff";
 export { chatGptConversationKey, chatGptTurnTraceId } from "./conversation-key";
 export {
   chatGptCompactionSourceExecutionKey,
@@ -19,6 +20,7 @@ export type ChatGptBrowserOutcome =
   | { type: "final"; answer: string }
   | { type: "error"; error: Error };
 interface ChatGptTurnRuntimeBase {
+  setObserverConnected?: (connected: boolean) => boolean | Promise<boolean>;
   nativeIdentity?: { threadId: string; turnId: string };
   browser: Promise<string>;
   physicalSettlement?: Promise<void>;
@@ -43,6 +45,8 @@ export type ChatGptTurnRuntime =
   | (ChatGptTurnRuntimeBase & { mode: "read-only" });
 
 export class ChatGptTurnSession {
+  readonly observerHandoff = new NativeObserverHandoff();
+  userRevisionKey(): string { return this.userRevision ?? ""; }
   readonly createdAt = Date.now();
   private lastTouchedAt = this.createdAt;
   readonly browserOutcome: Promise<ChatGptBrowserOutcome>;
@@ -380,5 +384,5 @@ export class ChatGptTurnSession {
     }
   }
 
-  cancel(reason?: Error): void { this.runtime.cancel(reason); }
+  cancel(reason?: Error): void { this.observerHandoff.cancel(); this.runtime.cancel(reason); }
 }

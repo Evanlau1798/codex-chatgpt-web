@@ -221,6 +221,7 @@ test("a stopped Responses observer revokes its Zero Risk binding and releases th
 
 test("Zero Risk offers only the new Codex suffix when the launcher reuses its retained ChatGPT chat", async () => {
   const config = provider("incremental-resume");
+  config.chatgptWeb!.appName = "Codex Manual Work";
   const broker = TurnBroker.forSocket(config.chatgptWeb!.brokerSocketPath!);
   const input = request("turn_safe_incremental");
   input.context.messages.push(
@@ -254,6 +255,9 @@ test("Zero Risk offers only the new Codex suffix when the launcher reuses its re
     async start(_path, activity) {
       fullPrompt = activity.prompt;
       resumePrompt = activity.resumePrompt ?? "";
+      for (const prompt of [fullPrompt, resumePrompt]) {
+        expect(prompt).toContain('The selected local Codex plugin for this turn is "Codex Manual Work".');
+      }
       exactBinding = binding(resumePrompt);
     },
     async waitSent() {},

@@ -6,6 +6,7 @@ import type { BrokerRequest, BrokerToolRequest, BrokerToolResult, BrokerTurnOutp
 import { assertSurfaceNonce } from "./turn-broker-safe";
 
 export interface TurnBrokerOwner {
+  setObserverConnected?(token: string, connected: boolean): boolean | Promise<boolean>;
   register(
     environment: ChatGptTurnEnvironment,
     ttlMs?: number,
@@ -53,6 +54,11 @@ export function dispatchExternalOwnerRequest(
 ): unknown | Promise<unknown> {
   if (request.method === "owner_status") {
     return { protocolVersion: 10, acceptingExternalOwners: target.accepting() };
+  }
+  if (request.method === "owner_observer_connected") {
+    if (!request.token || typeof request.observerConnected !== "boolean") throw new Error("Invalid native observer state");
+    return Promise.resolve(target.setObserverConnected?.(request.token, request.observerConnected) ?? false)
+      .then(connected => ({ connected }));
   }
   if (request.method === "owner_register") {
     const environment = ownerEnvironment(request.environment);
@@ -368,6 +374,12 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
       throw new Error("DEV turn owner received an invalid completion fence result");
     }
     return response.committed;
+  }
+
+  async setObserverConnected(token: string, connected: boolean): Promise<boolean> {
+    const result = await callTurnBroker<{ connected: boolean }>(this.socketPath,
+      { method: "owner_observer_connected", token, observerConnected: connected });
+    return result.connected === true;
   }
 
   async beginFinalizationOnly(token: string, expectedActivityRevision: number): Promise<boolean> {

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { Page } from "playwright-core";
 import { chatGptResponseStructureLogEntries, chatGptResponseStructures } from "./browser-response-structure";
+import { chatGptInteractionState } from "./browser-interaction-state";
 import { atomicWriteFile, getConfigDir } from "../../config";
 import {
   CHATGPT_ASSISTANT_TURN_SELECTOR,
@@ -134,12 +135,23 @@ export class ChatGptBrowserDiagnostics {
       const responseStructure = await withChatGptBrowserObservationTimeout(
         Promise.resolve().then(() => page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR).evaluateAll(chatGptResponseStructures)),
       ).catch(() => undefined);
+      const failed = /turn-failed|response-stalled/.test(checkpoint);
+      // Verification remains content-free and normal captures avoid extra DOM work.
+      // Detailed actionability probes run only for a failing owned turn.
+      const interaction = failed && !this.contentFree
+        ? await withChatGptBrowserObservationTimeout(page.evaluate(chatGptInteractionState, {
+          selector: CHATGPT_EFFORT_CONTROL_SELECTOR,
+          sampleFrames: true,
+        })).catch(() => undefined)
+        : undefined;
+      const safeInteraction = interaction === undefined ? undefined : sanitizeChatGptBrowserDiagnosticState(interaction);
       const envelope: Record<string, unknown> = {
         version: 2,
         capturedAt,
         traceId: this.traceId,
         checkpoint,
         ...(responseStructure ? { responseStructure } : {}),
+        ...(safeInteraction !== undefined ? { interaction: safeInteraction } : {}),
         ...(error !== undefined ? { error: this.contentFree ? verificationFailure(error) : diagnosticError(error) } : {}),
         state: sanitizeChatGptBrowserDiagnosticState(state),
         ...(stateError ? { stateError } : {}),
@@ -147,9 +159,22 @@ export class ChatGptBrowserDiagnostics {
       const jsonPath = join(this.directory, `${stem}.json`);
       this.writeEnvelope(jsonPath, envelope);
 
-      if (responseStructure && /turn-failed|response-stalled/.test(checkpoint)) {
-        // Preserve the bounded, content-free tree when the failing renderer is replaced.
-        for (const entry of chatGptResponseStructureLogEntries(this.traceId, stem, responseStructure)) console.info(entry);
+      if (failed) {
+        console.info(`[chatgpt-web] page_state ${JSON.stringify({
+          traceId: this.traceId, checkpoint: stem,
+          ...(stateError ? { unavailable: true } : { state: sanitizeChatGptBrowserDiagnosticState(state) }),
+        }, (_key, value) => Array.isArray(value) && value.length > 40
+          ? { count: value.length, omitted: value.length - 40, recent: value.slice(-40) } : value)}`);
+        // Preserve bounded, content-free structural and actionability evidence
+        // when a failing renderer is replaced. Never log account or prompt text.
+        if (responseStructure) {
+          for (const entry of chatGptResponseStructureLogEntries(this.traceId, stem, responseStructure)) console.info(entry);
+        }
+        console.info(`[chatgpt-web] interaction_state ${JSON.stringify({
+          traceId: this.traceId,
+          checkpoint: stem,
+          ...(safeInteraction !== undefined ? { state: safeInteraction } : { unavailable: true }),
+        })}`);
       }
 
       if (!this.contentFree && browserDiagnosticIncludesScreenshot(checkpoint)) {

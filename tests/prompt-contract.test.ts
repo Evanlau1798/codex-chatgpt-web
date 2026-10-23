@@ -33,6 +33,37 @@ function toolRequest(reasoning: "low" | "medium" | "high" | "xhigh" | "max"): Co
   parsed.context.tools = [{ name: "Read", description: "Read a file", parameters: {} }];
   return parsed;
 }
+
+test.each([undefined, 6] as const)("Native final contract distinguishes unaccepted steering from terminal acceptance (parts=%s)", parts => {
+  const compiled = compileChatGptWebPrompt(toolRequest("high"),
+    { localToolsEnabled: true, solAvailable: true, proAvailable: true }, "turn_12345678901234567890123456789012",
+    { nativeControlConnector: true, useEnhancedOutputTunnel: true, ...(parts ? { experimentalMultipartParts: parts } : {}) });
+  const prompt = compiled.multipart ? formatChatGptWebMultipartCommit(compiled.multipart, `ctx_${"d".repeat(32)}`) : compiled.text;
+  expect(prompt).toContain("accepted=false");
+  expect(prompt).toContain("accepted=true");
+  expect(prompt).toContain("exactly one accepted final");
+});
+test.each([undefined, 6] as const)("Native work batching keeps separate operations and final settlement (parts=%s)", parts => {
+  const capabilities = { localToolsEnabled: true, solAvailable: true, proAvailable: true };
+  const parsed = toolRequest("high");
+  const options = { nativeControlConnector: true, useEnhancedOutputTunnel: true,
+    ...(parts ? { experimentalMultipartParts: parts } : {}) };
+  const compiled = compileChatGptWebPrompt(parsed, capabilities,
+    "turn_12345678901234567890123456789012", options);
+  const prompt = compiled.multipart
+    ? formatChatGptWebMultipartCommit(compiled.multipart, `ctx_${"d".repeat(32)}`) : compiled.text;
+  expect(prompt).toContain("Request independent tool calls together as separate invocations");
+  expect(prompt).toContain("one wire_name and its arguments or input per codex_tool_call");
+  expect(prompt).toContain("Do not concatenate unrelated shell commands");
+  expect(prompt).toContain("keep dependent calls sequential");
+  expect(prompt).toContain("wait for all work results before a separate final output call");
+  expect(prompt).toContain("Do not split, rephrase, or reroute a rejected action to bypass the restriction");
+
+  const readOnly = compileChatGptWebPrompt(request("high"), { ...capabilities, localToolsEnabled: false },
+    undefined, parts ? { experimentalMultipartParts: parts } : {});
+  expect(readOnly.text).not.toContain("Request independent tool calls together as separate invocations");
+});
+
 test("inline and staged history escape Markdown delimiters without changing decoded code", () => {
   const parsed = request("high");
   const code = '```ts\nconst value = "`key`";\n``` '.repeat(20) + '\\u0060 \\` [text](https://example.com) 中文';
@@ -100,8 +131,8 @@ test("tool-capable prompts pass one stable turn token directly to native actions
   expect(resume).toBeGreaterThan(envelopeEnd);
   expect(tokenMatches).toHaveLength(1);
   expect(compiled.text).toContain("[retired turn handle]");
-  expect(transportOnly).toContain("For local work required by the task, use the attached Codex Native tools directly according to their declared descriptions and schemas.");
-  expect(transportOnly).toContain("Use actual Codex Native results as evidence for local observations and effects.");
+  expect(transportOnly).toContain("For local work required by the task, use the selected plugin's tools directly according to their declared descriptions and schemas.");
+  expect(transportOnly).toContain("Use actual results from the selected plugin as evidence for local observations and effects.");
   expect(transportOnly).toContain("After a deterministic tool failure, update the working hypothesis from that result");
   expect(transportOnly).toContain("inspect the relevant repository or environment before choosing a different next action");
   expect(transportOnly).toContain("do not repeat the same call unless its inputs or observable state changed");
@@ -185,7 +216,7 @@ test("Pro preserves the same native Codex delegation contract as Extra High", ()
   const extraHigh = compileChatGptWebPrompt(toolRequest("xhigh"), capabilities, token);
 
   for (const compiled of [pro, extraHigh]) {
-    expect(compiled.text).toContain("For local work required by the task, use the attached Codex Native tools directly according to their declared descriptions and schemas.");
+    expect(compiled.text).toContain("For local work required by the task, use the selected plugin's tools directly according to their declared descriptions and schemas.");
     expect(compiled.text).toContain(`Pass this exact turn_token unchanged to every Codex Native call in this response`);
     expect(compiled.text).not.toContain("Complete this task directly in the current parent response.");
     expect(compiled.text).not.toContain("Do not create, spawn, delegate to, or wait on sub-agents");
@@ -700,7 +731,7 @@ test("uses the public Instant name without leaking the browser menu alias into t
     { localToolsEnabled: false, solAvailable: true, proAvailable: true },
   );
 
-  expect(compiled.text).toContain("This is ChatGPT Web Instant with no Codex Native bridge to the user's local computer");
+  expect(compiled.text).toContain("This is ChatGPT Web Instant with no local Codex bridge");
   expect(compiled.text).not.toContain("Instant 5.5");
 });
 
@@ -757,4 +788,26 @@ test("inline and multipart transports preserve code while escaping its Markdown 
     expect(() => JSON.parse(part)).not.toThrow();
   }
   expect(JSON.stringify(multipart.multipart!.parts.map(part => JSON.parse(part)))).toContain("```python");
+});
+
+test("custom plugin identity stays explicit in inline and multipart execution without rewriting task history", () => {
+  const capabilities = { localToolsEnabled: true, solAvailable: true, extraHighAvailable: true, proAvailable: true };
+  const parsed = request("high");
+  parsed.context.messages[1]!.content = "Compare Codex Native2 with the selected plugin.";
+  parsed.context.tools = [{ name: "Read", description: "Read", parameters: {} }];
+  for (const appName of ["Codex app", "Codex Native2 DEV", "Codex Робота"]) {
+    for (const parts of [undefined, 2, 6] as const) {
+      const compiled = compileChatGptWebPrompt(parsed, capabilities, "turn_12345678901234567890123456789012", {
+        appName, experimentalMultipartParts: parts,
+      });
+      const contract = compiled.multipart?.commit ?? compiled.text;
+      expect(contract).toContain(`The selected local Codex plugin for this turn is ${JSON.stringify(appName)}.`);
+      expect(contract).toContain("Do not substitute another plugin for this local connection");
+      expect(contract).not.toContain("attached Codex Native tools");
+      const history = compiled.multipart
+        ? compiled.multipart.parts.flatMap(part => JSON.parse(part).records).filter(record => record.kind === "message").map(record => record.message)
+        : JSON.parse(compiled.text.match(/<codex_context_json>\n(.+)\n<\/codex_context_json>/s)![1]!).messages;
+      expect(history[1].content).toBe(parsed.context.messages[1]!.content);
+    }
+  }
 });

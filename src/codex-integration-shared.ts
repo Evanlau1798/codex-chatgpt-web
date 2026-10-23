@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { AppConfig, SubagentProtocol } from "./config";
 import { atomicWriteFile, expandUserPath, getConfigDir } from "./config";
 
@@ -264,6 +264,33 @@ export interface CodexModelContextOverride {
 export function getCodexHome(): string {
   const configured = process.env.CODEX_HOME?.trim();
   return resolve(expandUserPath(configured || join(homedir(), ".codex")));
+}
+
+/** Explicit operator trust only; request paths can never register a Codex home. */
+export function getTrustedCodexHomes(primary = getCodexHome(), additional?: readonly string[]): string[] {
+  let registered: unknown = additional;
+  if (registered === undefined) {
+    const raw = process.env.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES?.trim();
+    if (!raw) return [primary];
+    if (raw.length > 4096) throw new Error("Trusted Codex homes configuration is too large");
+    try { registered = JSON.parse(raw); }
+    catch { throw new Error("CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES must be a JSON array of absolute directories"); }
+  }
+  if (!Array.isArray(registered) || registered.length > 7
+    || registered.some(path => typeof path !== "string" || !isAbsolute(path) || /^(?:\\\\|\/\/)/.test(path))) {
+    throw new Error("Trusted Codex homes must contain at most seven additional absolute local directories");
+  }
+  if (registered.length === 0) return [primary];
+  const homes = new Map<string, string>();
+  for (const configured of [primary, ...registered]) {
+    if (!isAbsolute(configured) || !existsSync(configured) || !lstatSync(configured).isDirectory()) {
+      throw new Error("A trusted Codex home is not an existing directory");
+    }
+    const path = realpathSync(configured);
+    const identity = process.platform === "win32" ? path.toLowerCase() : path;
+    homes.set(identity, path);
+  }
+  return [...homes.values()];
 }
 
 export function getCodexConfigPath(): string {

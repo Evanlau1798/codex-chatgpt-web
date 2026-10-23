@@ -233,6 +233,11 @@ describe("lightweight Web contract smoke", () => {
     expect(cooldownAt).toBeGreaterThan(-1);
     expect(leaseAt).toBeGreaterThan(cooldownAt);
     expect(probeAt).toBeGreaterThan(leaseAt);
+    const leaseGuardAt = script.indexOf('if (!lease.surfaceId)');
+    expect(leaseGuardAt).toBeGreaterThan(leaseAt);
+    const registrationAt = script.indexOf("registerOwnedChatGptWorkPage(connection.page)");
+    expect(registrationAt).toBeGreaterThan(leaseGuardAt);
+    expect(registrationAt).toBeLessThan(probeAt);
     expect(capabilityAt).toBeGreaterThan(probeAt);
     expect(script).not.toContain("verifyLauncherBrowserConnector");
     expect(script).not.toContain("inspectLauncherBrowserHost");
@@ -276,6 +281,7 @@ describe("lightweight Web contract smoke", () => {
     const firstSelectAt = probe.indexOf("composer = await selectConnector(page, appName, abortSignal)");
     expect(preflightAt).toBeGreaterThan(probe.indexOf("export async function runMarkdownRestorationProbe"));
     expect(preflightAt).toBeLessThan(firstSelectAt);
+    expect(probe).toContain("abortSignal, () => recoverOwnedTemporaryPersonalization(page)");
     expect(probe).toContain("async signal =>");
     expect(probe).toContain("runChatGptMutationCleanup(async cleanupSignal =>");
     expect(probe).toContain("clearChatGptComposerInput(await activeComposer(page, cleanupSignal), cleanupSignal)");

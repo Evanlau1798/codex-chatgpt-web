@@ -10,9 +10,11 @@ import { bindChatGptSubmissionIdentity } from "../src/adapters/chatgpt-web/submi
 const UUID = "01234567-89ab-4cde-8f01-23456789abcd";
 const IDENTITY_SUFFIX = "\ncodexsubmission:" + UUID.replaceAll("-", "");
 
-test("Native connector verification keeps its tokenless prompt unchanged", async () => {
+test.each([undefined, "turn_0123456789abcdef0123456789abcdef"])("Native connector preparation retains an ownership identity (turnToken=%s)", async turnToken => {
   const estimate = spyOn(tokenEstimate, "estimateTokens");
   const log = spyOn(console, "error").mockImplementation(() => {});
+  const uuid = spyOn(crypto, "randomUUID").mockReturnValue(UUID);
+  const text = "Exact connector probe" + (turnToken ? " " + turnToken : "");
   const stop = new Error("Stop before browser access");
   const worker: any = Object.create(ChatGptBrowserWorker.prototype);
   worker.config = {};
@@ -20,11 +22,11 @@ test("Native connector verification keeps its tokenless prompt unchanged", async
   try {
     const result = await worker.runBrowserTurn({ traceId: "connector-verification", modelId: CHATGPT_WEB_MODEL_ID,
       reasoning: "medium", capabilities: { solAvailable: true, proAvailable: true, localToolsEnabled: false },
-      nativeConnector: true, prepare: async () => ({ text: "Exact connector probe", images: [], release() {} }),
+      nativeConnector: true, prepare: async () => ({ text, images: [], ...(turnToken ? { turnToken } : {}), release() {} }),
     }).catch((error: unknown) => error);
     expect(result).toBe(stop);
-    expect(estimate.mock.calls.filter(([text]) => text === "Exact connector probe")).toHaveLength(1);
-  } finally { estimate.mockRestore(); log.mockRestore(); }
+    expect(estimate.mock.calls.filter(([value]) => value === text + (turnToken ? "" : IDENTITY_SUFFIX))).toHaveLength(1);
+  } finally { estimate.mockRestore(); log.mockRestore(); uuid.mockRestore(); }
 });
 
 test.each([undefined, "visible prompt", "canonical history"])("worker reuses only identical inline message estimates (canonical=%s)", async canonical => {

@@ -1,8 +1,30 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { candidateWebConfig } from "../scripts/smoke-candidate-web";
+import { candidateWebConfig, verifyLiveConnectorContract } from "../scripts/smoke-candidate-web";
+import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
+import { resolveLauncherHelperScript } from "../src/adapters/chatgpt-web/launcher-helper-process";
+import type { CodexProviderConfig } from "../src/types";
 import { defaultConfig } from "../src/config";
 import { VERSION } from "../src/version";
+
+test.each([false, true])("connector preflight binds the built candidate helper without changing chat mode (%s)", async useSavedChats => {
+  const current = Object.assign(defaultConfig("full"), { browserHost: "launcher" as const,
+    browserHostDescriptorPath: "launcher-browser.json", useSavedChats });
+  const builtHelper = "candidate/app/browser-helper.cjs";
+  const stopBeforeNetwork = new Error("captured before broker or browser access");
+  let captured: CodexProviderConfig | undefined;
+  const worker = spyOn(ChatGptBrowserWorker, "forProvider").mockImplementation(provider => {
+    captured = provider;
+    throw stopBeforeNetwork;
+  });
+  try {
+    await expect(verifyLiveConnectorContract(current, builtHelper)).rejects.toBe(stopBeforeNetwork);
+    expect(captured?.chatgptWeb?.browserHelperScriptPath).toBe(builtHelper);
+    expect(resolveLauncherHelperScript(captured?.chatgptWeb?.browserHelperScriptPath, "installed-old/browser-helper.cjs")).toBe(builtHelper);
+    expect(captured?.chatgptWeb?.useSavedChats).toBe(useSavedChats);
+    expect(current).not.toHaveProperty("browserHelperScriptPath");
+  } finally { worker.mockRestore(); }
+});
 
 test("candidate Web smoke isolates the built daemon while preserving the launcher browser host", () => {
   const current = Object.assign(defaultConfig("full"), {
@@ -35,7 +57,7 @@ test("candidate Web smoke isolates the built daemon while preserving the launche
 
 test("candidate Web smoke drains before shutdown and bounds the live subprocess", () => {
   const script = readFileSync(new URL("../scripts/smoke-candidate-web.ts", import.meta.url), "utf8");
-  const connectorVerifyAt = script.indexOf("await verifyLiveConnectorContract(current)");
+  const connectorVerifyAt = script.indexOf('await verifyLiveConnectorContract(current, join(dirname(join(runtimeRoot, manifest.entrypoint)), "browser-helper.cjs"))');
   const candidateRunAt = script.indexOf("await runWebContract(env)");
   const drainAt = script.indexOf('control(baseUrl, "drain"');
   const shutdownAt = script.indexOf('control(baseUrl, "shutdown"');

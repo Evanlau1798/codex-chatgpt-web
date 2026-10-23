@@ -4,7 +4,8 @@ export function chatGptResponseStructures(roots: Element[]) {
     const selected = root.querySelectorAll('.markdown, [data-markdown-text-style="assistant-message"], '
       + '[data-conversation-role], [data-message-author-role], [data-content-search-unit-key], '
       + '[data-streaming-response-status], [data-chatgpt-agent-turn-start], '
-      + 'button[data-testid="copy-turn-action-button"], .turn-action-controls');
+      + 'button[data-testid="copy-turn-action-button"], .turn-action-controls, '
+      + '[role="alert"], [data-testid="regenerate-thread-error-button"]');
     const nodes = new Set<Element>([root]);
     let truncated = selected.length > 64;
     for (const candidate of [...selected].slice(0, 64)) {
@@ -46,6 +47,8 @@ export function chatGptResponseStructures(roots: Element[]) {
           streamingStatus: node.hasAttribute("data-streaming-response-status"),
           activityStart: node.hasAttribute("data-chatgpt-agent-turn-start"),
           completionControl: node.matches('button[data-testid="copy-turn-action-button"], .turn-action-controls'),
+          alert: node.getAttribute("role") === "alert",
+          retryControl: node.getAttribute("data-testid") === "regenerate-thread-error-button",
         };
       }),
     };
@@ -61,7 +64,7 @@ export function chatGptResponseStructureLogEntries(
     truncated: turn.truncated,
     nodes: turn.nodes.map(node => [node.parent, node.tag, ...[
       node.rendered, node.assistant, node.user, node.searchUnit, node.markdown,
-      node.streamingStatus, node.activityStart, node.completionControl,
+      node.streamingStatus, node.activityStart, node.completionControl, node.alert, node.retryControl,
     ].map(Number)]),
   }));
   // All three bounded trees together can exceed the launcher's 16 KiB string limit.
@@ -69,7 +72,7 @@ export function chatGptResponseStructureLogEntries(
   return (turns.length ? turns.map(turn => [turn]) : [[]]).map((part, turnIndex) => (
     `[chatgpt-web] response_structure ${JSON.stringify({
       traceId, checkpoint, turnIndex, turnCount: turns.length,
-      columns: ["parent", "tag", "rendered", "assistant", "user", "searchUnit", "markdown", "streamingStatus", "activityStart", "completionControl"],
+      columns: ["parent", "tag", "rendered", "assistant", "user", "searchUnit", "markdown", "streamingStatus", "activityStart", "completionControl", "alert", "retryControl"],
       turns: part,
     })}`
   ));

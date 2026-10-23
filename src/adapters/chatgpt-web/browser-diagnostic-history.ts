@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { atomicWriteFile } from "../../config";
 
 const RECENT_LIMIT = 10;
-const FAILURE_LIMIT = 10;
+const FAILURE_RETENTION_MS = 3 * 24 * 60 * 60_000;
+const FINISHED_CAPTURE_BUDGET_BYTES = 100 * 1024 * 1024;
 const STATE_FILE = ".trace-state";
 
 function ownerIsAlive(pid: number): boolean {
@@ -15,7 +16,7 @@ function ownerIsAlive(pid: number): boolean {
   }
 }
 
-/** Keep recent history and a separate failure history; never prune a live capture. */
+/** Keep three days of failures within 100 MB, ahead of recent successes; never prune a live capture. */
 export function pruneBrowserDiagnosticHistory(root: string): void {
   const traces = readdirSync(root, { withFileTypes: true }).flatMap(entry => {
     if (!entry.isDirectory() || !/^[A-Za-z0-9_-]{6,137}$/.test(entry.name)) return [];
@@ -43,10 +44,27 @@ export function pruneBrowserDiagnosticHistory(root: string): void {
       throw error;
     }
   }).sort((left, right) => right.modifiedAt - left.modifiedAt || left.path.localeCompare(right.path));
-  const keep = new Set([
-    ...traces.slice(0, RECENT_LIMIT),
-    ...traces.filter(trace => trace.failed).slice(0, FAILURE_LIMIT),
-  ].map(trace => trace.path));
+  const cutoff = Date.now() - FAILURE_RETENTION_MS;
+  const candidates = [
+    ...traces.filter(trace => trace.failed && trace.modifiedAt >= cutoff),
+    ...traces.filter(trace => !trace.failed).slice(0, RECENT_LIMIT),
+  ];
+  const keep = new Set<string>();
+  let remainingBytes = FINISHED_CAPTURE_BUDGET_BYTES;
+  for (const trace of candidates) {
+    try {
+      // Captures contain flat checkpoint files. Ignore symlinks and never follow
+      // them into other directories when measuring the finished-history budget.
+      const bytes = readdirSync(trace.path, { withFileTypes: true })
+        .filter(entry => entry.isFile())
+        .reduce((total, entry) => total + statSync(join(trace.path, entry.name)).size, 0);
+      if (bytes > remainingBytes) continue;
+      keep.add(trace.path);
+      remainingBytes -= bytes;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
   for (const trace of traces) {
     if (!keep.has(trace.path)) rmSync(trace.path, { recursive: true, force: true });
   }

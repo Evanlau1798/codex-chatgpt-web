@@ -53,6 +53,7 @@ export interface SafeTurnControl {
 }
 
 export interface TurnChannel {
+  observerPause?: { ready: Promise<void>; resume: () => void };
   traceId: string;
   toolEvidence?: ChatGptToolEvidenceGuard;
   externalOwner: boolean;

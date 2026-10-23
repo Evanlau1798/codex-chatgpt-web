@@ -6,6 +6,7 @@ import { runInNewContext } from "node:vm";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
+import { isSelectedChatGptTurnUrl } from "../src/chatgpt-session";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
 import { ChatGptTurnLiveness } from "../src/adapters/chatgpt-web/turn-liveness";
 import { BrowserDiagnosticHistory } from "../src/adapters/chatgpt-web/browser-diagnostic-history";
@@ -31,6 +32,20 @@ const { BrowserHost } = hostModule.exports;
 
 const OLD = "Review in progress.";
 const FINAL = "Findings: No blocking defects. Review complete.";
+
+test("selected-mode URL validation keeps both response paths inside their exact chat mode", () => {
+  for (const [url, temporary, saved] of [
+    ["https://chatgpt.com/", false, true], ["https://chatgpt.com/c/owned", false, true],
+    ["https://chatgpt.com/?temporary-chat=true", true, false],
+    ["https://chatgpt.com/c/owned?temporary-chat=true", true, false],
+    ["https://chatgpt.com/settings", false, false], ["https://chatgpt.com/c/a/b", false, false],
+    ["https://chatgpt.com.evil.test/", false, false], ["http://chatgpt.com/", false, false],
+    ["not a URL", false, false],
+  ] as const) {
+    expect(isSelectedChatGptTurnUrl(url, false)).toBe(temporary);
+    expect(isSelectedChatGptTurnUrl(url, true)).toBe(saved);
+  }
+});
 
 async function runFixture(options: {
   diagnosticsRoot?: string;
@@ -75,6 +90,7 @@ async function runFixture(options: {
   untunneled?: boolean;
   conversationRoute?: string;
   initialRoute?: string;
+  useSavedChats?: boolean;
   progressScenario?: "status" | "native-tool" | "static" | "foreign";
 } = {}) {
   const recoverable = options.emptyStopped || options.postToolRecovery;
@@ -165,6 +181,7 @@ async function runFixture(options: {
   };
   const response: any = {
     ...hidden,
+    locator: () => hidden,
     count: async () => 1,
     evaluate: async () => text,
   };
@@ -200,6 +217,7 @@ async function runFixture(options: {
   };
   const page: any = Object.assign(new EventEmitter(), {
     isClosed: () => false, url: () => submitted && options.conversationRoute || options.initialRoute || CHATGPT_TEMPORARY_CHAT_URL, evaluate: async () => ({}),
+    evaluateHandle: async () => ({ evaluate: async () => false, dispose: async () => {} }),
     mainFrame: () => page,
     getByText: () => hidden,
     keyboard: { press: async () => { actions.push("composer-end"); } },
@@ -289,6 +307,7 @@ async function runFixture(options: {
   if (options.manualApproval) approvalHost.syncViewVisibility();
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
     config: { appName: "Codex Native2", browserDiagnosticsPath: diagnostics, autoApproveToolCalls: false,
+      useSavedChats: options.useSavedChats === true,
       turnTimeoutMs: options.turnTimeoutMs,
       ...(options.manualApproval ? { browserHostDescriptorPath: "fixture-control" } : {}) },
     // Date.now is already controlled by this fixture; yield I/O without a real 250ms poll.
@@ -625,7 +644,8 @@ test("successful worker turns preserve the earlier failed diagnostic history", a
     history.start();
     writeFileSync(join(failure, "01-turn-failed.json"), "{}");
     history.finish("failed");
-    utimesSync(failure, 100, 100);
+    const recent = new Date(Date.now() - 1_000);
+    utimesSync(failure, recent, recent);
     for (let index = 0; index < 10; index++) {
       const result = await runFixture({ diagnosticsRoot: root, tunneledFinal: true });
       expect(result.error).toBeUndefined();
@@ -652,17 +672,17 @@ test.each([false, true])("manual approval restores its owned protection (DOM=%s)
   for (const approvalOutcome of [undefined, "timeout", "aborted"] as const) {
   const result = await runFixture({ manualApproval: true, untunneled, approvalOutcome });
   if (approvalOutcome === "aborted") expect(result.error).toBeInstanceOf(DOMException);
+  else if (approvalOutcome === "timeout") expect(result.error).toMatchObject({ code: "chatgpt_tool_approval_required", status: 403 });
   else expect(result.error).toBeUndefined();
   expect(result.actions.filter(action => action.startsWith("approval-pending:"))).toEqual([
     "approval-pending:true", "approval-pending:false",
   ]);
   expect(result.actions).toContain("approval-focus");
-  if (approvalOutcome === "timeout") expect(result.actions).toContain("approval-Deny");
-  else expect(result.actions).not.toContain("approval-Deny");
+  expect(result.actions).not.toContain("approval-Deny");
   expect(result.approvalVisibility).toEqual([true, false, true]);
   expect(result.approvalTab.interactionLocked).toBe(true);
   expect((result.otherTab as any).approvalPending).toBeUndefined();
-  if (approvalOutcome !== "aborted") expect(result.answer).toBe(FINAL);
+  if (!approvalOutcome) expect(result.answer).toBe(FINAL);
   }
 });
 
@@ -682,8 +702,8 @@ async function runLateCompletionActionFixture() {
     filter() { return this; }, first() { return this; }, last() { return this; }, nth() { return this; },
     getByText() { return this; }, getByRole() { return this; }, getByTestId() { return this; },
   };
-  const historical: any = { ...hidden, count: async () => 1 };
-  const current: any = { ...hidden, count: async () => 1 };
+  const historical: any = { ...hidden, locator: () => hidden, count: async () => 1 };
+  const current: any = { ...hidden, locator: () => hidden, count: async () => 1 };
   const turns: any = {
     ...hidden,
     nth: (index: number) => index === 0 ? historical : current,
@@ -697,6 +717,7 @@ async function runLateCompletionActionFixture() {
     getByText: () => hidden,
     url: () => submitted ? "https://chatgpt.com/c/current?temporary-chat=true" : CHATGPT_TEMPORARY_CHAT_URL,
     evaluate: async () => ({}),
+    evaluateHandle: async () => ({ evaluate: async () => false, dispose: async () => {} }),
     locator: (selector: string) => {
       if (selector === CHATGPT_ASSISTANT_TURN_SELECTOR) return turns;
       if (selector === CHATGPT_USER_TURN_SELECTOR) return { ...hidden, evaluateAll: async () => [] };
@@ -818,6 +839,16 @@ test("an owned open response stream without Stop preserves tools and waits for t
   expect(result.actions.some(action => action.startsWith("finalization-only:"))).toBe(false);
 });
 
+test.each(["https://chatgpt.com/", "https://chatgpt.com/c/saved"])("Saved Chat tunnel on %s preserves one submission and atomic final", async url => {
+  const result = await runFixture({ emptyStopped: true, streamingGeneration: true,
+    useSavedChats: true, initialRoute: url, conversationRoute: url });
+  expect(result.error).toBeUndefined();
+  expect(result.answer).toBe(FINAL);
+  expect(result.deltas).toEqual([FINAL]);
+  expect(result.actions.filter(action => action === "send")).toHaveLength(1);
+  expect(result.actions).not.toContain("recovery:eligible");
+});
+
 test("an owned open response stream never extends the hard turn deadline", async () => {
   const result = await runFixture({ emptyStopped: true, streamingGeneration: true, turnTimeoutMs: 180_000 });
   expect(String(result.error)).toContain("timed out");
@@ -908,6 +939,31 @@ test("final retry re-proves the same model and effort after Temporary Chat acqui
     { url: CHATGPT_TEMPORARY_CHAT_URL, model: "gpt-5.6-sol", effort: "xhigh", family: "5.6" },
     { url: conversationRoute, model: "gpt-5.6-sol", effort: "xhigh", family: "5.6" },
   ]);
+});
+
+test("Saved Chat first-answer retry re-proves effort after its home acquires a conversation URL", async () => {
+  const initialRoute = "https://chatgpt.com/", conversationRoute = "https://chatgpt.com/c/new-saved";
+  const result = await runFixture({ emptyStopped: true, useSavedChats: true, initialRoute, conversationRoute });
+  expect(result.error).toBeUndefined();
+  expect(result.answer).toBe(FINAL);
+  expect(result.actions.filter(action => action === "send")).toHaveLength(2);
+  expect(result.selections.map(selection => selection.url)).toEqual([initialRoute, conversationRoute]);
+  expect(result.selections.every(selection => selection.model === "gpt-5.6-sol"
+    && selection.effort === "xhigh" && selection.family === "5.6")).toBeTrue();
+});
+
+test("Saved Chat retry cannot transfer selection to another existing conversation or chat mode", async () => {
+  for (const [conversationRoute, error] of [
+    ["https://chatgpt.com/c/unrelated", { code: "upstream_server_error", retryable: false }],
+    ["https://chatgpt.com/c/owned?temporary-chat=true", { code: "chatgpt_surface_changed", retireSession: true }],
+  ] as const) {
+    const result = await runFixture({ emptyStopped: true, useSavedChats: true,
+      initialRoute: "https://chatgpt.com/c/owned", conversationRoute });
+    expect(result.error).toMatchObject(error);
+    expect(result.answer).toBeUndefined();
+    expect(result.actions.filter(action => action === "send")).toHaveLength(1);
+    expect(result.selections).toHaveLength(1);
+  }
 });
 
 test("final retry cannot transfer the selected model to a different existing conversation", async () => {

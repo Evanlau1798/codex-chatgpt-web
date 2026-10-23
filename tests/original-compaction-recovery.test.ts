@@ -200,7 +200,7 @@ test.each([false, true])("structured compact rebuild after retained browser loss
     if (rateLimited) throw new ChatGptWebAdapterError("ChatGPT rate limit: too many requests.", {
       status: 429, errorType: "rate_limit_error", code: "rate_limit_exceeded", retryable: false,
     });
-    const token = preparedText.match(/turn_token (control_[A-Za-z0-9_-]+)/)?.[1];
+    const token = preparedText.match(/turn_token (turn_[A-Za-z0-9_-]+)/)?.[1];
     const handoffId = preparedText.match(/handoff_id (handoff_[A-Za-z0-9_-]+)/)?.[1];
     if (!token || !handoffId) throw new Error("Fresh compaction rebuild has no one-shot control identity");
     await callTurnBroker(provider.chatgptWeb!.brokerSocketPath!, {

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { type AppConfig, defaultBrokerEndpoint, loadConfig } from "../src/config";
 import { providerConfig } from "../src/provider-config";
 import { chatGptAdapterRuntimeConfig } from "../src/adapters/chatgpt-web/adapter-runtime-config";
@@ -41,12 +41,13 @@ export function candidateWebConfig(
   };
 }
 
-export async function verifyLiveConnectorContract(current: AppConfig): Promise<void> {
+export async function verifyLiveConnectorContract(current: AppConfig, browserHelperScriptPath: string): Promise<void> {
   if (current.mode !== "full" || current.browserInteractionMode !== "automatic"
     || current.browserHost !== "launcher" || !current.browserHostDescriptorPath) {
     throw new Error("Live connector contract verification requires the Automatic Full launcher runtime");
   }
   const provider = providerConfig(current);
+  provider.chatgptWeb = { ...provider.chatgptWeb, browserHelperScriptPath };
   const worker = ChatGptBrowserWorker.forProvider(provider);
   const broker = new RemoteTurnBroker(current.brokerSocketPath);
   const capabilities = {
@@ -200,7 +201,7 @@ async function main(): Promise<void> {
     || !current.useEnhancedWebSessionMode) {
     throw new Error("Candidate Web smoke requires the Enhanced full-mode launcher browser host");
   }
-  await verifyLiveConnectorContract(current);
+  await verifyLiveConnectorContract(current, join(dirname(join(runtimeRoot, manifest.entrypoint)), "browser-helper.cjs"));
 
   mkdirSync(join(repo, "tmp"), { recursive: true });
   const root = mkdtempSync(join(repo, "tmp", "candidate-web-"));

@@ -1,3 +1,4 @@
+import { spyOn } from "bun:test";
 import { expect, test } from "bun:test";
 import { chatGptRetainedSurfaceUnavailableError } from "../src/adapters/chatgpt-web/adapter-error";
 import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
@@ -9,7 +10,7 @@ import { deferred } from "../src/adapters/chatgpt-web/runtime-lifecycle";
 import { mock } from "node:test";
 import { CompactionTransactionStore } from "../src/adapters/chatgpt-web/compaction-transaction";
 
-test.each([false, true])("retained handoff refreshes generation, never hidden heartbeat: hidden=%s", async hidden => {
+test.each(["content", "generation", "heartbeat"])("retained handoff renews only real content progress: signal=%s", async activity => {
   const store = new CompactionTransactionStore();
   const broker = {
     beginCompactionTransaction: async (trace: string, ttl: number) => store.begin(trace, ttl),
@@ -19,24 +20,31 @@ test.each([false, true])("retained handoff refreshes generation, never hidden he
   } as unknown as TurnBroker;
   const browser = deferred<string>();
   let running: BrowserTurn | undefined;
-  mock.timers.enable({ apis: ["setTimeout"] });
+  mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const clockNow = spyOn(performance, "now").mockImplementation(() => Date.now());
   const run = requestRetainedCompactionHandoff({ run: turn => {
     running = turn;
     turn.abortSignal!.addEventListener("abort", () => browser.resolve("settled"), { once: true });
     return browser.promise;
   } }, parsed, source(), broker, { localToolsEnabled: true, solAvailable: true, proAvailable: true },
   "retained_progress", undefined, 40);
-  void run.catch(() => {});
+  let failure: unknown;
+  void run.catch(error => { failure = error; });
   try {
     await new Promise<void>(resolve => setImmediate(resolve));
     mock.timers.tick(25);
-    if (hidden) running!.onHeartbeat?.();
-    else running!.onGenerationProgress?.();
+    if (activity === "heartbeat") running!.onHeartbeat?.();
+    else if (activity === "generation") running!.onGenerationProgress?.();
+    else running!.onProgress?.();
     mock.timers.tick(25);
-    if (hidden) await expect(run).rejects.toThrow("timed out after 40ms");
+    if (activity !== "content") {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toContain("timed out after 40ms");
+    }
     else {
       const prompt = await running!.prepare();
-      const token = /turn_token (control_\w+)/.exec(prompt.text)![1]!;
+      const token = /turn_token (turn_\w+)/.exec(prompt.text)![1]!;
       const id = /handoff_id (handoff_\w+)/.exec(prompt.text)![1]!;
       store.submit(token, id, "Complete generation-aware handoff.");
       prompt.release();
@@ -44,6 +52,7 @@ test.each([false, true])("retained handoff refreshes generation, never hidden he
     }
   } finally {
     browser.resolve("cleanup");
+    clockNow.mockRestore();
     mock.timers.reset();
     await run.catch(() => {});
   }

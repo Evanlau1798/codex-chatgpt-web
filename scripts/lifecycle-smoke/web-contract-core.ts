@@ -1,3 +1,8 @@
+import { chromium, type Locator } from "playwright-core";
+import { countChatGptTurnRoots } from "../../src/adapters/chatgpt-web/response-turn-boundary";
+import { readLauncherBrowserHostDescriptor, selectLauncherPage } from "../../src/launcher-browser-host";
+import { runLauncherBrowserConnection } from "../../src/launcher-browser-connection";
+
 export const WEB_CONTRACT_COOLDOWN_MS = 2 * 60_000;
 export const WEB_CONTRACT_PROBE_TIMEOUT_MS = 5 * 60_000;
 export const WEB_CONTRACT_TURN_TIMEOUT_MS = 3 * 60_000;
@@ -30,14 +35,13 @@ export type WebContractCapture = Record<(typeof capabilityKeys)[number], boolean
 export function webContractCandidateSurfaceIds(
   primarySurfaceId: string,
   surfaceIds: string[],
-  initialSurfaceIds: ReadonlySet<string>,
   retainedSurfaceId?: string,
 ): string[] {
   if (retainedSurfaceId) {
     return retainedSurfaceId !== primarySurfaceId && surfaceIds.includes(retainedSurfaceId)
       ? [retainedSurfaceId] : [];
   }
-  return surfaceIds.filter(surfaceId => surfaceId !== primarySurfaceId && !initialSurfaceIds.has(surfaceId));
+  return surfaceIds.filter(surfaceId => surfaceId !== primarySurfaceId);
 }
 
 export function responseHasFinalProjection(payload: unknown): boolean {
@@ -65,6 +69,31 @@ export async function findWebContractSurface(
   if (owned.length === 0) throw new WebContractSurfaceMissingError();
   if (owned.length !== 1) throw new Error(`Web contract expected one owned retained surface; found ${owned.length}`);
   return owned[0]!;
+}
+
+export async function connectWebContractInspection(
+  descriptorPath: string,
+  surfaceId: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+) {
+  const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
+  return await runLauncherBrowserConnection(timeoutMs, {
+    ready: async () => {},
+    connect: budget => chromium.connectOverCDP(descriptor.endpoint, { timeout: budget, noDefaults: true }),
+    select: async (browser, budget) => ({ browser,
+      ...await selectLauncherPage(browser, descriptor, budget, surfaceId, signal) }),
+    close: browser => browser.close(),
+  });
+}
+
+export async function inspectWebContractCanary(
+  turns: Pick<Locator, "evaluateAll">,
+  canaryId: string,
+): Promise<{ ownsCanary: boolean; userTurns: number }> {
+  const ownsCanary = await turns.evaluateAll((nodes, marker) =>
+    nodes.some(node => node.textContent?.includes(`Canary ID: ${marker}`)), canaryId);
+  return { ownsCanary, userTurns: ownsCanary ? await countChatGptTurnRoots(turns) : 0 };
 }
 
 export class WebContractSurfaceMissingError extends Error {
@@ -101,9 +130,6 @@ export async function waitForWebContractSurface(
     try {
       const candidates = surfaceIds();
       if (candidates.length === 0) throw new WebContractSurfaceMissingError();
-      if (candidates.length !== 1) {
-        throw new Error(`Web contract expected one retained surface candidate; found ${candidates.length}`);
-      }
       const remainingMs = deadline - now();
       if (remainingMs <= 0) throw new WebContractSurfaceDeadlineError();
       const controller = new AbortController();
@@ -115,7 +141,11 @@ export async function waitForWebContractSurface(
       try {
         const observation = await findWebContractSurface(
           candidates,
-          surfaceId => inspect(surfaceId, remainingMs, controller.signal),
+          surfaceId => {
+            const budget = deadline - now();
+            if (budget <= 0 || controller.signal.aborted) throw new WebContractSurfaceDeadlineError();
+            return inspect(surfaceId, budget, controller.signal);
+          },
         );
         if (controller.signal.aborted || deadline - now() <= 0) throw new WebContractSurfaceDeadlineError();
         return observation;

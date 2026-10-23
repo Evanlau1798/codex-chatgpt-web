@@ -534,7 +534,7 @@ test("fresh-conversation snapshot uses runtime configuration and manual mode cle
 test("changing Bigger Context retires ready automatic chats before a previous mode can reuse them", () => {
   const vm = require("node:vm");
   const state = { experimentalBiggerContext: false, experimentalFreshConversationPerTurn: false,
-    useSavedChats: false, autoApproveToolCalls: false, biggerContextAvailable: true };
+    useSavedChats: true, autoApproveToolCalls: false, biggerContextAvailable: true };
   const tabs = new Map([
     ["old", { status: "ready", conversationKey: "old-luna", interactionMode: "automatic" }],
     ["active", { status: "running", conversationKey: "running", interactionMode: "automatic" }],
@@ -547,12 +547,12 @@ test("changing Bigger Context retires ready automatic chats before a previous mo
   });
   vm.runInContext(electronMain.slice(electronMain.indexOf("function syncBrowserPreferences("), electronMain.indexOf("function registerIpc(")), context);
   const store = { read: () => state, update: patch => Object.assign(state, patch) };
-  context.syncBrowserPreferences(store, { solAvailable: false, experimentalBiggerContext: true });
+  context.syncBrowserPreferences(store, { solAvailable: false, experimentalBiggerContext: true, useSavedChats: true });
   assert.deepEqual(released, ["old-luna"]);
   assert.equal(state.experimentalBiggerContext, true);
   assert.equal(tabs.has("active"), true);
   assert.equal(tabs.has("manual"), true);
-  context.syncBrowserPreferences(store, { solAvailable: false, experimentalBiggerContext: true });
+  context.syncBrowserPreferences(store, { solAvailable: false, experimentalBiggerContext: true, useSavedChats: true });
   assert.deepEqual(released, ["old-luna"]);
 });
 

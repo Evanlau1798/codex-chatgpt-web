@@ -385,6 +385,10 @@ test("conversation preferences survive reload; saved chats also apply to Zero Ri
   persist();
   expect(loadConfig()!.experimentalFreshConversationPerTurn).toBe(false);
   expect(loadConfig()!.useSavedChats).toBe(false);
+  config.useSavedChats = false;
+  persist();
+  expect(loadConfigForSetup().useSavedChats).toBe(false);
+  expect(providerConfig(loadConfig()!).chatgptWeb!.useSavedChats).toBe(false);
   config.useSavedChats = true;
   config.experimentalFreshConversationPerTurn = true;
   persist();

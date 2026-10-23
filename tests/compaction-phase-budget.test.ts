@@ -1,3 +1,4 @@
+import { spyOn } from "bun:test";
 import { expect, test } from "bun:test";
 import { mock } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -79,7 +80,7 @@ test.each([{ enhanced: true, fresh: false }, { enhanced: true, fresh: true }])("
     mock.timers.tick(60_000);
     expect(turn.abortSignal?.aborted).toBeFalse();
     const prepared = await turn.prepare();
-    const token = /turn_token (control_\w+)/.exec(prepared.text)![1]!;
+    const token = /turn_token (turn_\w+)/.exec(prepared.text)![1]!;
     const handoffId = /handoff_id (handoff_\w+)/.exec(prepared.text)![1]!;
     prepared.release();
     await callTurnBroker(provider.chatgptWeb!.brokerSocketPath!, {
@@ -94,7 +95,8 @@ test.each([{ enhanced: true, fresh: false }, { enhanced: true, fresh: true }])("
     throw turn.abortSignal?.reason;
   };
   const events: AdapterEvent[] = [];
-  mock.timers.enable({ apis: ["setTimeout"] });
+  mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const clockNow = spyOn(performance, "now").mockImplementation(() => Date.now());
   try {
     await createChatGptWebAdapter(provider).runTurn!(
       request(true),
@@ -105,6 +107,7 @@ test.each([{ enhanced: true, fresh: false }, { enhanced: true, fresh: true }])("
       && event.text.includes("Fallback checkpoint after separately bounded phases"))).toBeTrue();
     expect(events.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
   } finally {
+    clockNow.mockRestore();
     mock.timers.reset();
     (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
     await broker.close();
@@ -139,14 +142,16 @@ test("a timed-out fresh compaction retains its owner until helper cleanup comple
   let browserStarts = 0;
   let cancelled = false;
   let fallbackTrace = "";
+  let running!: BrowserTurn;
   (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
+    running = turn;
     browserStarts += 1;
     fallbackTrace = turn.traceId;
     started();
     turn.abortSignal!.addEventListener("abort", () => { cancelled = true; }, { once: true });
     if (browserStarts === 2) {
       const prepared = await turn.prepare();
-      const token = /turn_token (control_\w+)/.exec(prepared.text)![1]!;
+      const token = /turn_token (turn_\w+)/.exec(prepared.text)![1]!;
       const handoffId = /handoff_id (handoff_\w+)/.exec(prepared.text)![1]!;
       prepared.release();
       await callTurnBroker(provider.chatgptWeb!.brokerSocketPath!, {
@@ -169,11 +174,15 @@ test("a timed-out fresh compaction retains its owner until helper cleanup comple
     runs.push(run);
     return run;
   };
-  mock.timers.enable({ apis: ["setTimeout"] });
+  mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const clockNow = spyOn(performance, "now").mockImplementation(() => Date.now());
   try {
     void observe();
     await ready;
-    mock.timers.tick(41);
+    for (let tick = 0; tick < 5; tick++) {
+      mock.timers.tick(9);
+      running.onGenerationProgress?.();
+    }
     await Bun.sleep(5);
     expect(cancelled).toBeTrue();
     expect(failures).toHaveLength(1);
@@ -195,6 +204,7 @@ test("a timed-out fresh compaction retains its owner until helper cleanup comple
   } finally {
     releasePhysical();
     await Promise.allSettled(runs);
+    clockNow.mockRestore();
     mock.timers.reset();
     (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
     await broker.close();

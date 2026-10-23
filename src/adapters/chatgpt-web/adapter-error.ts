@@ -85,6 +85,14 @@ export function chatGptResponseIncompleteError(message: string): ChatGptWebAdapt
   });
 }
 
+export function chatGptToolApprovalRequiredError(): ChatGptWebAdapterError {
+  return new ChatGptWebAdapterError(
+    "ChatGPT is waiting for plugin permission. Open the plugin's settings in ChatGPT, "
+    + 'then Permissions → Allow all actions, and retry this turn.',
+    { status: 403, errorType: "permission_error", code: "chatgpt_tool_approval_required", retryable: false },
+  );
+}
+
 // Only the compaction owner may signal this after the broker accepts its one-shot handoff.
 // It cancels browser observation while preserving the accepted summary as the native result.
 export class ChatGptCompactionHandoffAccepted extends DOMException {

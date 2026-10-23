@@ -1,3 +1,4 @@
+import { chatGptSuspensionClock, remainingStageBudgetMs } from "./browser-stage-lifecycle";
 import type { CodexParsedRequest } from "../../types";
 import {
   CHATGPT_RETAINED_SURFACE_UNAVAILABLE,
@@ -19,7 +20,7 @@ export class RetainedCompactionSourceUnavailableError extends Error {
 }
 
 export async function requestRetainedCompactionHandoff(
-  worker: Pick<ChatGptBrowserWorker, "run">,
+  worker: Pick<ChatGptBrowserWorker, "run"> & Partial<Pick<ChatGptBrowserWorker, "appName">>,
   parsed: CodexParsedRequest,
   source: ChatGptTurnSession,
   broker: TurnBroker,
@@ -40,10 +41,15 @@ export async function requestRetainedCompactionHandoff(
   const armDeadline = (): void => {
     if (deadline.signal.aborted || handoffAccepted) return;
     clearTimeout(timer);
-    timer = setTimeout(
-      () => deadline.abort(new Error(`ChatGPT compaction handoff timed out after ${operationTimeoutMs}ms`)),
-      operationTimeoutMs,
-    );
+    const activityAt = performance.now();
+    const suspendedAtActivity = chatGptSuspensionClock.suspendedMs();
+    const fireOrRearm = () => {
+      const remaining = remainingStageBudgetMs(operationTimeoutMs, performance.now() - activityAt,
+        chatGptSuspensionClock.suspendedMs() - suspendedAtActivity);
+      if (remaining > 0) { timer = setTimeout(fireOrRearm, remaining); timer.unref?.(); return; }
+      deadline.abort(new Error(`ChatGPT compaction handoff timed out after ${operationTimeoutMs}ms`));
+    };
+    timer = setTimeout(fireOrRearm, operationTimeoutMs);
     timer.unref?.();
     if (transaction) broker.refreshCompactionTransaction(transaction.token, operationTimeoutMs);
     onProgress?.();
@@ -69,7 +75,7 @@ export async function requestRetainedCompactionHandoff(
       transactionPromise,
       operationSignal,
     );
-    const instruction = structuredCompactionHandoffInstruction(transaction);
+    const instruction = structuredCompactionHandoffInstruction(transaction, worker.appName);
     const prepare = async () => ({ text: instruction, images: [], release: () => {} });
     requireAutomaticAdmission?.(traceId);
     browser = worker.run({
@@ -86,7 +92,6 @@ export async function requestRetainedCompactionHandoff(
       compaction: true,
       abortSignal: browserAbort.signal,
       onSubmitted: armDeadline,
-      onGenerationProgress: armDeadline,
       onProgress: armDeadline,
       onReasoningSummary: armDeadline,
       onCommentary: armDeadline,
