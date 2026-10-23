@@ -32,7 +32,7 @@ const {
   registerLoggedIpc,
 } = require("./logging.cjs");
 const { RuntimeHost } = require("./runtime.cjs");
-const { ensurePackagedRuntime, waitForPackagedRuntimeSource } = require("./runtime-install.cjs");
+const { ensurePackagedRuntime, waitForPackagedRuntime } = require("./runtime-install.cjs");
 const { RuntimeSupervisor } = require("./runtime-supervisor.cjs");
 const { DEVELOPMENT_PROFILE, resolveLauncherProfile } = require("./profile.cjs");
 const { runtimeBundlePaths } = require("./runtime-command.cjs");
@@ -121,6 +121,24 @@ function findFreePort() {
       server.close((error) => error ? reject(error) : resolve(port));
     });
   });
+}
+
+function findFreePortBeforeReady() {
+  const result = spawnSync(process.execPath, ["-e", `
+    const net = require("node:net");
+    (${findFreePort.toString()})().then(port => process.stdout.write(String(port)))
+      .catch(error => { process.stderr.write(error.message); process.exitCode = 1; });
+  `], {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+    encoding: "utf8", timeout: 5_000, maxBuffer: 1024, windowsHide: true,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(String(result.stderr || "Browser CDP port allocation failed").slice(0, 1024));
+  const port = Number(result.stdout);
+  if (!/^[1-9]\d{0,4}$/.test(result.stdout) || port > 65_535) {
+    throw new Error("Browser CDP port allocation did not return a valid loopback port");
+  }
+  return port;
 }
 
 function send(channel, value) {
@@ -1115,25 +1133,24 @@ async function start() {
   app.on("second-instance", () => showMainWindow());
   app.on("activate", () => showMainWindow());
 
-  await waitForPackagedRuntimeSource({ app, resourcesPath: process.resourcesPath });
-  let installedRuntimeRoot = null;
-  let runtimeRootResolved = false;
+  let installedRuntimeRoot = await waitForPackagedRuntime({
+    app, coreHome: CORE_HOME, resourcesPath: process.resourcesPath,
+  });
   const runtimeRootProvider = () => {
     const packagedRuntimeWasRemoved = app.isPackaged
       && (!installedRuntimeRoot || !fs.existsSync(installedRuntimeRoot));
-    if (!runtimeRootResolved || packagedRuntimeWasRemoved) {
+    if (packagedRuntimeWasRemoved) {
       installedRuntimeRoot = ensurePackagedRuntime({
         app,
         coreHome: CORE_HOME,
         resourcesPath: process.resourcesPath,
       });
-      runtimeRootResolved = true;
     }
     return installedRuntimeRoot;
   };
   installedRuntimeRoot = runtimeRootProvider();
 
-  cdpPort = await findFreePort();
+  cdpPort = findFreePortBeforeReady();
   if (process.platform === "linux") {
     app.commandLine.appendSwitch("class", IS_DEV_PROFILE ? "codex-web-gpt-dev" : "codex-web-gpt");
   }

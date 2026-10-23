@@ -4,11 +4,12 @@ const { createHash } = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const vm = require("node:vm");
 const { runtimeInvocation } = require("../electron/runtime-command.cjs");
 const {
   ensurePackagedRuntime,
   validateRuntimeBundle,
-  waitForPackagedRuntimeSource,
+  waitForPackagedRuntime,
 } = require("../electron/runtime-install.cjs");
 
 function comparePaths(left, right) {
@@ -210,6 +211,115 @@ test("packaged runtime rejects same-count content corruption", () => {
   }
 });
 
+test("packaged startup returns the installed durable runtime after source readiness", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-startup-install-"));
+  const resourcesPath = runtimeFixture(root);
+  const coreHome = path.join(root, "core-home");
+  try {
+    const installed = await waitForPackagedRuntime({
+      app: { isPackaged: true, getVersion: () => "0.2.0" },
+      resourcesPath,
+      coreHome,
+    });
+    assert.equal(installed, path.join(coreHome, "versions", `0.2.0-${process.platform}-${process.arch}`));
+    fs.rmSync(resourcesPath, { recursive: true, force: true });
+    assert.equal(fs.readFileSync(path.join(installed, "app", "cli.js"), "utf8"), "cli");
+    assert.equal(validateRuntimeBundle(installed, {
+      version: "0.2.0", platform: process.platform, arch: process.arch,
+    }), installed);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const failure of [
+  { name: "read failure", result: { status: 1, stderr: "injected source read failure" }, message: /injected source read failure/ },
+  { name: "missing receipt", result: { status: 0, stdout: "unexpected" }, message: /did not confirm success/ },
+  { name: "timeout", result: { error: new Error("injected source timeout") }, message: /injected source timeout/ },
+]) test(`startup fails closed before copying on source verifier ${failure.name}`, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-source-io-"));
+  const resourcesPath = runtimeFixture(root);
+  const coreHome = path.join(root, "core-home");
+  const filename = path.join(__dirname, "../electron/runtime-install.cjs");
+  const runtimeRequire = require("node:module").createRequire(filename);
+  const loaded = { exports: {} };
+  let attempts = 0;
+  vm.runInNewContext(fs.readFileSync(filename, "utf8"), {
+    module: loaded, process, Buffer, SharedArrayBuffer, Int32Array, Atomics,
+    require: name => name === "node:child_process"
+      ? { spawnSync: () => { attempts++; return failure.result; } }
+      : runtimeRequire(name),
+  });
+  try {
+    await assert.rejects(loaded.exports.waitForPackagedRuntime({
+      app: { isPackaged: true, getVersion: () => "0.2.0" },
+      resourcesPath, coreHome, timeoutMs: 250,
+    }), error => {
+      assert.match(error.message, failure.message);
+      if (failure.result.error) assert.equal(error.cause, failure.result.error);
+      return true;
+    });
+    assert.equal(attempts, 1, "permanent verifier failures must not be retried as materialization");
+    assert.equal(fs.existsSync(coreHome), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runtime validation completes before app ready can discard the browser CDP switches", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-startup-ready-"));
+  const resourcesPath = runtimeFixture(root);
+  const main = fs.readFileSync(path.join(__dirname, "../electron/main.cjs"), "utf8");
+  const start = main.indexOf("async function start() {");
+  const end = main.indexOf("  await app.whenReady();", start);
+  const allocatePort = main.slice(main.indexOf("function findFreePort()"), main.indexOf("function send("));
+  assert(start >= 0 && end > start);
+  let ready = false;
+  const readyEvent = new Promise(resolve => setImmediate(() => { ready = true; resolve(); }));
+  const switches = new Map();
+  const actualNet = require("node:net");
+  const slowNet = { createServer: () => {
+    const server = actualNet.createServer();
+    const listen = server.listen.bind(server), close = server.close.bind(server);
+    server.listen = (port, host, callback) => listen(port, host, () => setTimeout(callback, 25));
+    server.close = callback => close(error => setTimeout(() => callback(error), 25));
+    return server;
+  } };
+  const app = { isPackaged: true, getVersion: () => "0.2.0", requestSingleInstanceLock: () => true,
+    on() {}, commandLine: { appendSwitch: (name, value) => { if (!ready) switches.set(name, value); } } };
+  try {
+    await vm.runInNewContext(`${allocatePort}\n${main.slice(start, end)}\n}\nstart();`, {
+      app, fs, waitForPackagedRuntime, ensurePackagedRuntime,
+      net: slowNet,
+      spawnSync: (exe, args, options) => require("node:child_process").spawnSync(exe,
+        [args[0], args[1].replace('const net = require("node:net");', `const actualNet = require("node:net"); const net = { createServer: ${slowNet.createServer.toString()} };`)], options),
+      CORE_HOME: path.join(root, "core-home"), process: { platform: "win32", resourcesPath, execPath: process.execPath, env: process.env },
+      showMainWindow() {}, cdpPort: 0, IS_DEV_PROFILE: false,
+    });
+    assert.equal(switches.get("remote-debugging-address"), "127.0.0.1");
+    assert(Number(switches.get("remote-debugging-port")) > 0);
+  } finally {
+    await readyEvent;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("asynchronous startup rejects source checksum corruption before creating durable state", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-async-checksum-"));
+  const resourcesPath = runtimeFixture(root);
+  const coreHome = path.join(root, "core-home");
+  fs.writeFileSync(path.join(resourcesPath, "runtime", "app", "cli.js"), "bad");
+  try {
+    await assert.rejects(waitForPackagedRuntime({
+      app: { isPackaged: true, getVersion: () => "0.2.0" },
+      resourcesPath, coreHome, timeoutMs: 0,
+    }), /checksum mismatch/);
+    assert.equal(fs.existsSync(coreHome), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("packaged runtime source wait accepts a delayed final dependency within its bound", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-runtime-delayed-"));
   const resourcesPath = runtimeFixture(root);
@@ -225,19 +335,23 @@ test("packaged runtime source wait accepts a delayed final dependency within its
   );
   const content = fs.readFileSync(delayed);
   fs.rmSync(delayed);
-  const materialize = setTimeout(() => fs.writeFileSync(delayed, content), 40);
+  const materialize = require("node:child_process").spawn(process.execPath, ["-e",
+    `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(delayed)}, ${JSON.stringify(content.toString())}), 40)`,
+  ], { windowsHide: true });
+  const materialized = new Promise((resolve, reject) => { materialize.once("exit", resolve); materialize.once("error", reject); });
   try {
     assert.equal(
-      await waitForPackagedRuntimeSource({
+      await waitForPackagedRuntime({
         app: { isPackaged: true, getVersion: () => "0.2.0" },
         resourcesPath,
+        coreHome: path.join(root, "core-home"),
         timeoutMs: 500,
         intervalMs: 10,
       }),
-      path.join(resourcesPath, "runtime"),
+      path.join(root, "core-home", "versions", `0.2.0-${process.platform}-${process.arch}`),
     );
   } finally {
-    clearTimeout(materialize);
+    await materialized;
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
@@ -248,9 +362,10 @@ test("packaged runtime source wait fails closed when materialization exceeds its
   fs.rmSync(path.join(resourcesPath, "runtime", "app", "node_modules", "zod", "v4", "index.js"));
   try {
     await assert.rejects(
-      waitForPackagedRuntimeSource({
+      waitForPackagedRuntime({
         app: { isPackaged: true, getVersion: () => "0.2.0" },
         resourcesPath,
+        coreHome: path.join(root, "core-home"),
         timeoutMs: 30,
         intervalMs: 5,
       }),
@@ -327,6 +442,32 @@ test("failed candidate validation preserves the previous validated runtime", () 
     );
   } finally {
     fs.cpSync = originalCopy;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("destination corruption after rename restores the previous runtime", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-runtime-publish-corrupt-"));
+  const resourcesPath = runtimeFixture(root);
+  const coreHome = path.join(root, "core-home");
+  const app = { isPackaged: true, getVersion: () => "0.2.0" };
+  const rename = fs.renameSync;
+  try {
+    const installed = ensurePackagedRuntime({ app, coreHome, resourcesPath });
+    const source = path.join(resourcesPath, "runtime");
+    fs.writeFileSync(path.join(source, "app", "cli.js"), "new cli");
+    writeRuntimeManifest(source);
+    fs.renameSync = (from, to) => {
+      rename(from, to);
+      if (from.includes(".tmp-") && to === installed) {
+        fs.writeFileSync(path.join(to, "app", "cli.js"), "bad cli");
+      }
+    };
+    assert.throws(() => ensurePackagedRuntime({ app, coreHome, resourcesPath }), /checksum mismatch/);
+    assert.equal(fs.readFileSync(path.join(installed, "app", "cli.js"), "utf8"), "cli");
+    assert.deepEqual(fs.readdirSync(path.dirname(installed)), [path.basename(installed)]);
+  } finally {
+    fs.renameSync = rename;
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

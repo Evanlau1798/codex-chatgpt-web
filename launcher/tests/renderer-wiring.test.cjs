@@ -125,7 +125,7 @@ test("a foreground launch request survives hidden startup until the launcher win
   );
 
   const secondInstance = electronMain.indexOf('app.on("second-instance", () => showMainWindow())');
-  const runtimeMaterialization = electronMain.indexOf("await waitForPackagedRuntimeSource", secondInstance);
+  const runtimeMaterialization = electronMain.indexOf("await waitForPackagedRuntime", secondInstance);
   assert.ok(secondInstance >= 0, "the second-instance foreground request must be registered");
   assert.ok(
     runtimeMaterialization > secondInstance,
@@ -233,7 +233,7 @@ test("startup failure stays visible on another launch and Retry exits the failed
 test("packaged runtime is verified before launcher browser surfaces can bind ports", () => {
   const start = electronMain.indexOf("async function start()");
   const runtimeValidation = electronMain.indexOf("installedRuntimeRoot = runtimeRootProvider();", start);
-  const cdpPortAllocation = electronMain.indexOf("cdpPort = await findFreePort();", start);
+  const cdpPortAllocation = electronMain.indexOf("cdpPort = findFreePortBeforeReady();", start);
   const windowCreation = electronMain.indexOf("mainWindow = createWindow({", start);
   const controlServerStart = electronMain.indexOf("browserControl = await new BrowserControlServer({", start);
   const browserReady = electronMain.indexOf("await browserHost.ready();", start);
