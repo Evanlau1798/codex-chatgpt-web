@@ -49,6 +49,10 @@ test("production 100K harness preserves the total boundary and prepares only tok
   expect(compiled.text.length).toBeGreaterThan(compiled.bootstrapLimits!.chars);
   const prepared = await prepareChatGptWebContext(broker, compiled, true, 60_000, "archive_harness");
   expect(prepared.transport).toBe("native2-archive");
+  expect(prepared.text.includes("The task context is complete.")).toBe(false);
+  expect(prepared.text.includes("Read the complete inline JSON task context before acting.")).toBe(false);
+  expect(prepared.text).toContain("After reading the complete task context, execute");
+  expect(prepared.text).toContain("any referenced archive before acting");
   expect(prepared.text.length).toBeLessThanOrEqual(compiled.bootstrapLimits!.chars);
   expect(registrations).toBe(1);
   const prefix = chatGptStartupHarnessPrefix(prepared.text)!;

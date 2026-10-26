@@ -142,11 +142,11 @@ test("retained prompts omit stable system instructions but preserve the current 
     const full = compileChatGptWebPrompt(parsed, capabilities, oldToken, options);
     const incremental = compileChatGptWebPrompt(resume, capabilities, currentToken, options);
     expect(full.text).toContain(systemSentinel);
-    expect(full.text).toContain("Read the complete inline JSON task context before acting.");
+    expect(full.text).toContain("Read the supplied inline JSON task context and any referenced archive before acting.");
     expect(incremental.text).not.toContain(systemSentinel);
-    expect(incremental.text).not.toContain("Read the complete inline JSON task context before acting.");
+    expect(incremental.text).not.toContain("Read the supplied inline JSON task context and any referenced archive before acting.");
     expect(incremental.text).toContain("Read the incremental inline JSON task context before continuing.");
-    expect(incremental.text).toContain("The retained conversation and this turn's incremental context are complete.");
+    expect(incremental.text).toContain("After reading the retained conversation and this turn's incremental context,");
     expect(incremental.text).not.toContain("old-history-");
     expect(incremental.text).toContain(environment);
     expect(incremental.text).toContain("latest-user-sentinel");

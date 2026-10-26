@@ -242,7 +242,7 @@ export function compileChatGptWebPrompt(
         : "Read and reconstruct every acknowledged staged JSON record before acting."
       : retainedResume
         ? "Read the incremental inline JSON task context before continuing."
-        : "Read the complete inline JSON task context before acting.",
+        : "Read the supplied inline JSON task context and any referenced archive before acting.",
     manualControl
       ? "Each image_attachment in the context refers, in order, to an image the user manually attached to this ChatGPT message. If its corresponding image is absent, say that it was not provided instead of guessing."
       : multipartEnabled
@@ -254,6 +254,7 @@ export function compileChatGptWebPrompt(
     ...(localTools || nativeControlConnector ? [
       `The selected local Codex plugin for this turn is ${JSON.stringify(appName)}.`,
       "Do not substitute another plugin for this local connection or send this turn's request identifiers to another plugin. If the selected plugin is unavailable, report that limitation.",
+      "If a Native2 call is wrapped in hosted functions.exec, explicitly surface its public result: const { _meta, ...publicResult } = r; text(publicResult); for text-only results, and use image()/audio() for media blocks. Preserve the returned public fields, including normalized text, accepted, sequence and error fields. A bare await or assignment does not make the result model-visible. Do not print private _meta or repeat completed work to recover an unprinted result.",
     ] : []),
   ];
   const transportContract = parsed._compactionRequest
@@ -368,16 +369,16 @@ export function compileChatGptWebPrompt(
   const transportResume = parsed._compactionRequest
     ? compactionControlInstruction ? [
       "<codex_transport_resume>",
-      "The task context is complete. Submit the checkpoint through the one-shot control operation now.",
+      "After reading the complete task context, submit the checkpoint through the one-shot control operation.",
       "Do not write the checkpoint summary as ordinary assistant text.",
       "</codex_transport_resume>",
     ] : manualControl ? [
       "<codex_transport_resume>",
-      "The task context is complete. Produce the requested checkpoint summary now.",
+      "After reading the complete task context, produce the requested checkpoint summary.",
       "</codex_transport_resume>",
     ] : [
       "<codex_transport_resume>",
-      "The task context is complete. Produce the requested checkpoint summary now without calling tools.",
+      "After reading the complete task context, produce the requested checkpoint summary without calling tools.",
       "</codex_transport_resume>",
     ]
     : finalizationOnly ? [
@@ -387,8 +388,8 @@ export function compileChatGptWebPrompt(
     ] : manualControl ? [
       "<codex_transport_resume>",
       retainedResume
-        ? "The retained conversation and this turn's incremental context are complete. Execute the latest active user request now."
-        : "The task context is complete. Execute the latest active user request now.",
+        ? "After reading the retained conversation and this turn's incremental context, execute the latest active user request."
+        : "After reading the complete task context, execute the latest active user request.",
       "</codex_transport_resume>",
     ] : localTools
     ? [
@@ -399,15 +400,15 @@ export function compileChatGptWebPrompt(
       "The value begins with turn_. Never substitute a connector or plugin identifier, conversation UUID, or any handle from task history.",
       "</codex_native_turn_binding>",
       retainedResume
-        ? "The retained conversation and this turn's incremental context are complete. Execute the latest active user request now."
-        : "The task context is complete. Execute the latest active user request now.",
+        ? "After reading the retained conversation and this turn's incremental context, execute the latest active user request."
+        : "After reading the complete task context, execute the latest active user request.",
       "</codex_transport_resume>",
     ]
     : [
       "<codex_transport_resume>",
       retainedResume
-        ? "The retained conversation and this turn's incremental context are complete. Execute the latest active user request now under the capability contract above."
-        : "The task context is complete. Execute the latest active user request now under the capability contract above.",
+        ? "After reading the retained conversation and this turn's incremental context, execute the latest active user request under the capability contract above."
+        : "After reading the complete task context, execute the latest active user request under the capability contract above.",
       "</codex_transport_resume>",
     ];
   const build = (sourceMessages: readonly CodexMessage[], omittedMessages = 0): CompiledChatGptWebPrompt => {

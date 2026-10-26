@@ -64,6 +64,58 @@ test.each([undefined, 6] as const)("Native work batching keeps separate operatio
   expect(readOnly.text).not.toContain("Request independent tool calls together as separate invocations");
 });
 
+test.each([undefined, 6] as const)("hosted Native2 results stay visible across work and control-only turns (parts=%s)", parts => {
+  const capabilities = { localToolsEnabled: true, solAvailable: true, proAvailable: true };
+  const token = "turn_12345678901234567890123456789012";
+  const options = { nativeControlConnector: true, useEnhancedOutputTunnel: true,
+    ...(parts ? { experimentalMultipartParts: parts } : {}) };
+  const render = (parsed: CodexParsedRequest) => {
+    const compiled = compileChatGptWebPrompt(parsed, capabilities,
+      parsed.context.tools?.length && !parsed._chatgptFinalizationOnly ? token : undefined, options);
+    return compiled.multipart
+      ? formatChatGptWebMultipartCommit(compiled.multipart, `ctx_${"d".repeat(32)}`) : compiled.text;
+  };
+  const prompt = render(toolRequest("high"));
+  const rule = "explicitly surface its public result";
+  expect(prompt.split(rule)).toHaveLength(2);
+  expect(prompt).toContain("const { _meta, ...publicResult } = r; text(publicResult);");
+  expect(prompt).toContain("use image()/audio() for media blocks");
+  expect(prompt).toContain("A bare await or assignment does not make the result model-visible");
+  expect(prompt).toContain("Do not print private _meta or repeat completed work to recover an unprinted result");
+  const compact = request("high");
+  compact._compactionRequest = true;
+  const finalization = toolRequest("high");
+  finalization._chatgptFinalizationOnly = true;
+  for (const parsed of [request("high"), compact, finalization]) {
+    const controlOnly = render(parsed);
+    expect(controlOnly.split(rule)).toHaveLength(2);
+    expect(controlOnly).not.toContain("Request independent tool calls together as separate invocations");
+  }
+  const unbound = compileChatGptWebPrompt(request("high"), { ...capabilities, localToolsEnabled: false },
+    undefined, parts ? { experimentalMultipartParts: parts } : {});
+  expect(unbound.text).not.toContain(rule);
+});
+
+test.each([
+  { text: "CODEX_CONTEXT_ARCHIVE_END index=0 next_query=__codex_context__:1" },
+  { accepted: true, sequence: 1, duplicate: false },
+  { text: "Bounded failure", is_error: true },
+  { content: [{ type: "text", text: "Raw MCP result" }], structuredContent: { pending: true }, isError: false },
+])("hosted receipt example preserves normalized and raw public fields (%j)", publicResult => {
+  const prompt = compileChatGptWebPrompt(toolRequest("high"),
+    { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+    "turn_12345678901234567890123456789012").text;
+  const example = prompt.split("explicitly surface its public result: ")[1]?.split(" for text-only results")[0];
+  expect(example).toBeDefined();
+  let visible: unknown;
+  new Function("r", "text", example!)(
+    { ...publicResult, _meta: { private: "PRIVATE_RECEIPT_METADATA" } },
+    (value: unknown) => { visible = value; },
+  );
+  expect(JSON.parse(JSON.stringify(visible))).toEqual(publicResult);
+  expect(JSON.stringify(visible)).not.toContain("PRIVATE_RECEIPT_METADATA");
+});
+
 test("inline and staged history escape Markdown delimiters without changing decoded code", () => {
   const parsed = request("high");
   const code = '```ts\nconst value = "`key`";\n``` '.repeat(20) + '\\u0060 \\` [text](https://example.com) 中文';
@@ -181,7 +233,7 @@ test("historical termination text does not disable the current Web turn's native
   expect(compiled.text).toContain("Session terminated");
   expect(compiled.text).toContain("Historical failure or termination text is not evidence that this turn's attached tools are unavailable.");
   expect(compiled.text).toContain("Only a tool result returned in this turn can establish a current tool failure.");
-  expect(compiled.text).toContain("Execute the latest active user request now.");
+  expect(compiled.text).toContain("After reading the complete task context, execute the latest active user request.");
 });
 
 test("Claude tool prompts authenticate additive steering without changing Codex prompts", () => {
@@ -230,7 +282,7 @@ test("read-only prompts resume without exposing a bind capability", () => {
     { localToolsEnabled: false, solAvailable: true, proAvailable: true },
   );
 
-  expect(compiled.text).toContain("The task context is complete. Execute the latest active user request now under the capability contract above.");
+  expect(compiled.text).toContain("After reading the complete task context, execute the latest active user request under the capability contract above.");
   expect(compiled.text).not.toContain("codex_bind_turn");
   expect(compiled.text).not.toContain("turn_token");
   expect(compiled.text).toContain("web search, browsing, research");
@@ -352,7 +404,7 @@ test("compaction prompts are isolated summarization turns without local or nativ
   );
 
   expect(compiled.text).toContain("This is a Codex history-compaction checkpoint, not a normal task turn.");
-  expect(compiled.text).toContain("Produce the requested checkpoint summary now without calling tools.");
+  expect(compiled.text).toContain("After reading the complete task context, produce the requested checkpoint summary without calling tools.");
   expect(compiled.text).not.toContain("codex_bind_turn");
   expect(compiled.text).not.toContain("web search, browsing, research");
   expect(compiled.text).not.toContain("missing local-computer bridge");
@@ -374,9 +426,9 @@ test.each([undefined, 6] as const)("connector-backed compaction has one control-
   );
 
   expect(compiled.text).toContain(control);
-  expect(compiled.text).not.toContain("Produce the requested checkpoint summary now without calling tools.");
+  expect(compiled.text).not.toContain("produce the requested checkpoint summary without calling tools.");
   expect(compiled.text).not.toContain("Return only the answer that the outer Codex task should receive.");
-  expect(compiled.text).toContain("Submit the checkpoint through the one-shot control operation now.");
+  expect(compiled.text).toContain("After reading the complete task context, submit the checkpoint through the one-shot control operation.");
 });
 
 test("Web compaction trims only the oldest history until the browser request fits", () => {
