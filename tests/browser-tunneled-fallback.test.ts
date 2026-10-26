@@ -58,6 +58,7 @@ async function runFixture(options: {
   emptyStopped?: boolean; recoveryFails?: boolean; composerBusy?: boolean; stoppedThinking?: boolean;
   postToolRecovery?: boolean;
   delayedAtomicFinalMs?: number;
+  partialStopped?: boolean;
   composerBusyAfterAdmission?: boolean;
   boundRecoveryParagraphs?: boolean;
   localizedGeneration?: boolean;
@@ -170,11 +171,11 @@ async function runFixture(options: {
     if (options.finalAfterToolWithoutAssistantTurn) submitTurnOutput(channel, "final", FINAL);
     remainingBatches--;
     if (remainingBatches > 0) {
-      text = options.emptyStopped ? "" : "Intermediate review.";
+      text = options.partialStopped ? "Partial review in progress." : options.emptyStopped ? "" : "Intermediate review.";
       if (options.delayedSecondBatch) pendingSecondBatch = true;
       else progress.recordToolBatch(1);
     } else if (options.unsettledBaseline) text = OLD;
-    else if (!options.stale) text = options.emptyStopped ? "" : FINAL;
+    else if (!options.stale) text = options.partialStopped ? "Partial review in progress." : options.emptyStopped ? "" : FINAL;
   };
   const hidden: any = {
     locator() { return this; },
@@ -815,6 +816,30 @@ test("a delayed atomic Native final arrives on the original submission without r
   expect(result.actions.filter(action => action === "fence-commit")).toHaveLength(1);
   expect(result.actions).toContain("delayed-atomic-final");
   expect(result.recoveryDecisionAgeMs).toBeUndefined();
+});
+
+test("partial nonterminal DOM preserves the original tunnel for a delayed atomic final", async () => {
+  const result = await runFixture({ emptyStopped: true, partialStopped: true, delayedAtomicFinalMs: 125_000 });
+  expect(result.error).toBeUndefined();
+  expect(result.answer).toBe(FINAL);
+  expect(result.deltas).toEqual([FINAL]);
+  expect(result.actions.filter(action => action === "send")).toHaveLength(1);
+  expect(result.actions.filter(action => action === "tool-dispatched")).toHaveLength(1);
+  expect(result.actions.filter(action => action === "fence-commit")).toHaveLength(1);
+  expect(result.actions).toContain("snapshot:Partial review in progress.");
+  expect(result.actions).toContain("delayed-atomic-final");
+  expect(result.actions).not.toContain("output-seal");
+  expect(result.recoveryDecisionAgeMs).toBeUndefined();
+});
+
+test("waiting for a partial response never extends the configured turn deadline", async () => {
+  const result = await runFixture({ emptyStopped: true, partialStopped: true,
+    delayedAtomicFinalMs: 240_000, turnTimeoutMs: 90_000 });
+  expect(String(result.error)).toContain("timed out");
+  expect(result.answer).toBeUndefined();
+  expect(result.actions.filter(action => action === "send")).toHaveLength(1);
+  expect(result.actions).not.toContain("delayed-atomic-final");
+  expect(result.actions).not.toContain("output-seal");
 });
 
 test("a stopped empty Web response continues once before sealing the native output channel", async () => {

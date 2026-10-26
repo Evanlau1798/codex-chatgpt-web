@@ -5431,6 +5431,7 @@ export class ChatGptBrowserWorker {
           );
           const tunneled = await runChatGptTunneledOutputTurn({
             output: turn.tunneledOutput,
+            terminalEvidenceGraceMs: CHATGPT_COMPLETION_ACTION_GRACE_MS,
             waitForPoll: () => this.pauseObservation(),
             afterSequence: tunneledOutputSequence,
             attempt: responseAttempt,
