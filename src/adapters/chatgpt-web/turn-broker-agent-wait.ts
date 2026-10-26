@@ -10,6 +10,7 @@ import {
   execGateway,
 } from "./mcp-tool-inventory";
 import { execGatewayProgram } from "./native-command";
+import { decodeGatewayResult, gatewayResultMarker } from "./gateway-result";
 import { opaqueId, type BrokerToolRequest, type BrokerToolResult } from "./turn-broker-protocol";
 import type { TurnChannel } from "./turn-broker-state";
 
@@ -85,12 +86,13 @@ export function startAgentWait(
   claimTurnActivity(channel, wait.activityId);
   channel.agentWait = wait;
   const boundedArgs = boundedConnectorToolArguments(direct ?? wireName, arguments_);
-  const request = direct
-    ? { wireName, freeform: false, arguments: boundedArgs }
-    : { wireName: "exec", freeform: true, input: execGatewayProgram(wireName, false,
-      { arguments: boundedArgs }, tools.map(tool => namespacedToolName(tool.namespace, tool.name))) };
   let remainingSlices = logicalTimeoutMs / CHATGPT_WEB_AGENT_WAIT_POLL_MS;
   const startSlice = () => {
+    const resultMarker = direct ? undefined : gatewayResultMarker();
+    const request = direct
+      ? { wireName, freeform: false, arguments: boundedArgs }
+      : { wireName: "exec", freeform: true, input: execGatewayProgram(wireName, false,
+        { arguments: boundedArgs }, tools.map(tool => namespacedToolName(tool.namespace, tool.name)), resultMarker) };
     if (logicalTimeoutMs > CHATGPT_WEB_AGENT_WAIT_POLL_MS && channel.environment.expiresAt !== undefined) {
       channel.environment.expiresAt = Math.max(
         channel.environment.expiresAt,
@@ -102,6 +104,7 @@ export function startAgentWait(
       chatGptMcpInvocationTimeout(channel.environment));
     void Promise.resolve(invocation).then(result => {
       if (channel.agentWait !== wait || wait.result !== undefined) return;
+      if (resultMarker && !isDeepStrictEqual(result, channel.compactionResult)) result = decodeGatewayResult(result, resultMarker);
       if (wait.timer) clearTimeout(wait.timer);
       wait.timer = undefined;
       remainingSlices -= 1;
@@ -115,7 +118,10 @@ export function startAgentWait(
       }
       wait.result = result;
       console.info(`[chatgpt-web] broker trace=${channel.traceId} agent wait ready elapsedMs=${Date.now() - wait.startedAt}`);
-    }, () => clearAgentWait(channel));
+    }, () => clearAgentWait(channel)).catch(error => {
+      clearAgentWait(channel);
+      retire(error instanceof Error ? error : new Error("Native agent wait result could not be decoded"));
+    });
   };
   try {
     startSlice();

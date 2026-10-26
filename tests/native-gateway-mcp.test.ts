@@ -7,10 +7,10 @@ import { join } from "node:path";
 import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
 
-async function execute(program: string, names: string[], calls: Array<{ name: string; input: unknown }>) {
+async function execute(program: string, names: string[], calls: Array<{ name: string; input: unknown }>, result?: unknown) {
   const tools = Object.fromEntries(names.map(name => [name, async (input: unknown) => {
     calls.push({ name, input });
-    return { output: name };
+    return result ?? { output: name };
   }]));
   const content: Array<{ type: "text"; text: string }> = [];
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as new (
@@ -62,6 +62,34 @@ test("MCP gateway discovers and invokes nested tools while rejecting unsafe wait
     broker.completeTool(token, nestedRequest!.callId, { content: nestedContent });
     expect(nestedCalls).toEqual([{ name: "web__run", input: { q: "Codex" } }]);
     expect((await nested).isError).not.toBeTrue();
+
+    for (const isError of [false, true]) {
+      const structuredContent = { operation_status: "pending", wait_id: "wait_test" };
+      const metadataCall = call("codex_tool_call", {
+        turn_token: token, wire_name: "vendor__status", arguments: {},
+      });
+      const [metadataRequest] = await broker.nextToolBatch(token, AbortSignal.timeout(2_000));
+      const metadataContent = await execute(metadataRequest!.input!, ["vendor__status"], [], {
+        content: [], structuredContent, isError, _meta: { credential: "private-client-metadata" },
+      });
+      broker.completeTool(token, metadataRequest!.callId, { content: metadataContent });
+      const metadataResult = await metadataCall;
+      expect(metadataResult.structuredContent).toEqual(structuredContent);
+      expect(metadataResult.isError === true).toBe(isError);
+      expect(JSON.stringify(metadataResult)).not.toContain("private-client-metadata");
+      expect(JSON.stringify(metadataResult)).not.toContain("codex-tool-result:");
+    }
+
+    const commandCall = call("codex_exec", { turn_token: token, cmd: "read-only fixture" });
+    const [commandRequest] = await broker.nextToolBatch(token, AbortSignal.timeout(2_000));
+    const commandContent = await execute(commandRequest!.input!, ["exec_command"], [], {
+      content: [{ type: "text", text: "command detail" }], structuredContent: { session_id: 42 }, isError: true,
+    });
+    broker.completeTool(token, commandRequest!.callId, { content: commandContent });
+    const commandResult = await commandCall;
+    expect(commandResult.isError).toBeTrue();
+    expect(commandResult.structuredContent).toEqual({ session_id: 42 });
+    expect(JSON.stringify(commandResult.content)).toContain("command detail");
 
     for (const wireName of ["multi_agent_v2__wait_agent", "collaboration__wait_agent"]) {
       const invalidWait = await call("codex_tool_call", {

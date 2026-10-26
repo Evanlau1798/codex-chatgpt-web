@@ -638,7 +638,7 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap", "fi
     ? source.indexOf('        await this.runStage(\n          turn.traceId,\n          "send",')
     : source.indexOf("        for (let index = 0; index < multipartTransport.stages.length;");
   const end = lane !== "multipart"
-    ? source.indexOf('        await diagnostics.capture(page, "send-accepted");', start)
+    ? source.indexOf('        if (!recoveryObservationOnly) await diagnostics.capture(page, "send-accepted");', start)
     : source.indexOf("        // The first saved message changes", start);
   expect(start).toBeGreaterThan(0);
   expect(end).toBeGreaterThan(start);

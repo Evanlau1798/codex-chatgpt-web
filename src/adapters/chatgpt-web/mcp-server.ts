@@ -35,6 +35,7 @@ import { callTurnBroker } from "./turn-broker";
 import { invokeChatGptMcpTool } from "./mcp-invocation";
 import { readNativeAgentWait, startNativeAgentWait } from "./mcp-agent-wait";
 import { brokerMcpResult as asMcpResult, mcpJsonResult as result } from "./mcp-results";
+import { decodeGatewayResult, gatewayResultMarker } from "./gateway-result";
 import { withClaimedTurn, type ClaimedTurn } from "./mcp-turn-activity";
 import { observeMcpToolCalls } from "./mcp-observation";
 import { isConnectorContractProbeQuery, recordConnectorContractProbeQuery } from "./connector-contract";
@@ -121,7 +122,7 @@ export async function runChatGptMcpServer(options: {
     bindingId: string,
     bound: ChatGptTurnEnvironment & { expiresAt?: number },
     tool: CodexTool,
-    payload: { arguments?: Record<string, unknown>; input?: string },
+    payload: { arguments?: Record<string, unknown>; input?: string; resultMarker?: string },
     signal?: AbortSignal,
   ) => {
     const name = wireName(tool);
@@ -133,8 +134,9 @@ export async function runChatGptMcpServer(options: {
         freeform: tool.freeform === true,
         ...(tool.freeform ? { input: payload.input ?? "" } : { arguments: payload.arguments ?? {} }),
       }, signal);
-      logMcpToolPhase(name, "invoke", "completed", ` isError=${response.isError === true} binding=${binding}`);
-      return asMcpResult(response);
+      const decoded = payload.resultMarker ? decodeGatewayResult(response, payload.resultMarker) : response;
+      logMcpToolPhase(name, "invoke", "completed", ` isError=${decoded.isError === true} binding=${binding}`);
+      return asMcpResult(decoded);
     } catch (error) {
       logMcpToolPhase(name, "invoke", "failed", ` errorType=${diagnosticErrorType(error)} errorCode=${diagnosticErrorCode(error)} binding=${binding}`);
       throw error;
@@ -153,8 +155,9 @@ export async function runChatGptMcpServer(options: {
     if (!gateway) {
       throw new Error(`This Codex turn did not advertise ${nestedToolName} or the native exec gateway`);
     }
+    const resultMarker = gatewayResultMarker();
     return invoke(bindingId, bound, gateway, {
-      input: execGatewayProgram(nestedToolName, freeform, payload, bound.tools.map(wireName)),
+      input: execGatewayProgram(nestedToolName, freeform, payload, bound.tools.map(wireName), resultMarker), resultMarker,
     }, signal);
   };
 
@@ -199,8 +202,9 @@ export async function runChatGptMcpServer(options: {
     }
     const gateway = execGateway(bound);
     if (!gateway) throw new Error("This Codex turn did not advertise a native command tool or the native exec gateway");
+    const resultMarker = gatewayResultMarker();
     return invoke(claimed.bindingId, bound, gateway, {
-      input: execCommandGatewayProgram(execCommandArguments, shellCommandArguments),
+      input: execCommandGatewayProgram(execCommandArguments, shellCommandArguments, resultMarker), resultMarker,
     }, signal);
   };
 
@@ -539,10 +543,8 @@ export async function runChatGptMcpServer(options: {
           }
           assertGatewayToolArguments(wire_name, invocationArguments);
           const toolArguments = boundedConnectorToolArguments(wire_name, invocationArguments);
-          return invoke(claimed.bindingId, bound, gateway, {
-            input: execGatewayProgram(wire_name, input !== undefined, {
-              ...(input !== undefined ? { input } : { arguments: toolArguments }),
-            }, bound.tools.map(wireName)),
+          return invokeNestedNative(claimed.bindingId, bound, wire_name, input !== undefined, {
+            ...(input !== undefined ? { input } : { arguments: toolArguments }),
           }, extra.signal);
         }
         if (tool.freeform) {
