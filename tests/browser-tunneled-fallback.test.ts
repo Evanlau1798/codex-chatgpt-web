@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
+import { CHATGPT_COMPLETION_ACTION_GRACE_MS, ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { isSelectedChatGptTurnUrl } from "../src/chatgpt-session";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
 import { ChatGptTurnLiveness } from "../src/adapters/chatgpt-web/turn-liveness";
@@ -57,6 +57,7 @@ async function runFixture(options: {
   compactionSettlement?: boolean;
   emptyStopped?: boolean; recoveryFails?: boolean; composerBusy?: boolean; stoppedThinking?: boolean;
   postToolRecovery?: boolean;
+  delayedAtomicFinalMs?: number;
   composerBusyAfterAdmission?: boolean;
   boundRecoveryParagraphs?: boolean;
   localizedGeneration?: boolean;
@@ -191,6 +192,11 @@ async function runFixture(options: {
     ...hidden, nth: () => response, page: () => page,
     evaluateAll: async () => {
       now += options.recentToolProgress ? 500 : options.emptyStopped ? 15_000 : 61_000; // Advance observation time, never sleep to guess tool completion.
+      if (options.delayedAtomicFinalMs && actions.includes("tool-settled")
+        && now - lastToolResultAt >= options.delayedAtomicFinalMs && !actions.includes("delayed-atomic-final")) {
+        actions.push("delayed-atomic-final");
+        submitTurnOutput(channel, "final", FINAL);
+      }
       if (streamRequest && now - lastToolResultAt >= 300_000) {
         if (!options.keepResponseStreamAfterFinal) page.emit("requestfinished", streamRequest);
         streamRequest = undefined;
@@ -774,7 +780,7 @@ async function runLateCompletionActionFixture() {
     },
     waitForTurnDomOrExternalProgress: async () => {
       waitCount++;
-      now += waitCount === 1 ? 60_000 : waitCount === 2 ? 1 : 2_000;
+      now += waitCount === 1 ? CHATGPT_COMPLETION_ACTION_GRACE_MS : waitCount === 2 ? 1 : 2_000;
     },
     stalledTurnDiagnostic: async () => "fixture stable DOM",
   });
@@ -799,6 +805,18 @@ async function runLateCompletionActionFixture() {
   }
 }
 
+test("a delayed atomic Native final arrives on the original submission without recovery", async () => {
+  const result = await runFixture({ emptyStopped: true, delayedAtomicFinalMs: 180_000 });
+  expect(result.error).toBeUndefined();
+  expect(result.answer).toBe(FINAL);
+  expect(result.deltas).toEqual([FINAL]);
+  expect(result.actions.filter(action => action === "send")).toHaveLength(1);
+  expect(result.actions.filter(action => action === "tool-dispatched")).toHaveLength(1);
+  expect(result.actions.filter(action => action === "fence-commit")).toHaveLength(1);
+  expect(result.actions).toContain("delayed-atomic-final");
+  expect(result.recoveryDecisionAgeMs).toBeUndefined();
+});
+
 test("a stopped empty Web response continues once before sealing the native output channel", async () => {
   const result = await runFixture({ emptyStopped: true });
   expect(result.error).toBeUndefined();
@@ -809,7 +827,7 @@ test("a stopped empty Web response continues once before sealing the native outp
   expect(result.actions.filter(a => a === "tool-dispatched")).toHaveLength(1);
   expect(result.actions.filter(a => a === "fence-commit")).toHaveLength(1);
   expect(result.actions).toContain("recovery:eligible");
-  expect(result.recoveryDecisionAgeMs).toBeGreaterThanOrEqual(60_000);
+  expect(result.recoveryDecisionAgeMs).toBeGreaterThanOrEqual(CHATGPT_COMPLETION_ACTION_GRACE_MS);
   expect(result.actions).not.toContain("output-seal");
 });
 
@@ -1068,7 +1086,7 @@ test("production retry preserves its submission budget across repeated worker CA
     expect(result.logs.filter(line => line.includes("recovery_cancelled reason=finalization_cas_rejected"))).toHaveLength(2);
     const checkpoints = readdirSync(root).flatMap(name => readdirSync(join(root, name)));
     expect(checkpoints.filter(name => /^\d+-send-accepted\.json$/.test(name))).toHaveLength(2);
-    const bounded = await runFixture({ emptyStopped: true, finalizationCancellations: 100, turnTimeoutMs: 1_200_000,
+    const bounded = await runFixture({ emptyStopped: true, finalizationCancellations: 100, turnTimeoutMs: 4 * CHATGPT_COMPLETION_ACTION_GRACE_MS,
       errorRecovery: createChatGptSameSurfaceRetry({ traceId: "bounded_cancellations", executionKey: "cancelled_budget",
         enhancedMode: true, outputTunnel: true, turnToken: () => "turn_cancelled_budget", abortSignal: new AbortController().signal }) });
     expect(bounded.error).toMatchObject({ message: "ChatGPT web turn timed out" });

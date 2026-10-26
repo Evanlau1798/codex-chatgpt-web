@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { estimateTokens } from "../../lib/token-estimate";
 import type { CompiledChatGptWebPrompt } from "./prompt";
 import type { TurnBroker } from "./turn-broker";
+import { withoutRetiredTurnHandles } from "./prompt-multipart";
 
 // Keep model-facing pages bounded; fresh recovery stalled rereading a 514K-character page.
 // This is our transport budget, not a claim about ChatGPT's undocumented response ceiling.
@@ -143,7 +144,7 @@ function splitOversizePrompt(text: string, limits: { chars: number; tokens?: num
         tool_wire_names: envelope.tool_wire_names.filter((_entry, index) => selectedTools.has(index)),
       }),
     };
-    return `${before}${archiveContract()}\n${CONTEXT_OPEN}${JSON.stringify(visible)}${CONTEXT_CLOSE}${after}`;
+    return `${before}${archiveContract()}\n${CONTEXT_OPEN}${withoutRetiredTurnHandles(JSON.stringify(visible))}${CONTEXT_CLOSE}${after}`;
   };
   const trySelect = (bucket: Set<number>, index: number): void => {
     if (bucket.has(index)) return;

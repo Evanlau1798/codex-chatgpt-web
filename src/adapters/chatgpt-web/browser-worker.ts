@@ -276,7 +276,9 @@ export async function closeChatGptBrowserWorkers(): Promise<void> {
 export const CHATGPT_RESPONSE_DOM_GRACE_MS = 60_000;
 export const CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS = 180_000;
 export const CHATGPT_EMPTY_RESPONSE_GRACE_MS = 10_000;
-export const CHATGPT_COMPLETION_ACTION_GRACE_MS = 60_000;
+// Upstream #885 observed a final 125 seconds after visible activity stopped.
+// Keep waiting bounded; explicit errors and proven empty completions retain their own checks.
+export const CHATGPT_COMPLETION_ACTION_GRACE_MS = 10 * 60_000;
 export const CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS = 60_000;
 export const MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS = 3;
 const CHATGPT_PREEMPTIVE_RETRY_STOP_TIMEOUT_MS = 15_000;
