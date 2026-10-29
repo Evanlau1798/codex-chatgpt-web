@@ -1,14 +1,18 @@
 import { expect, test } from "bun:test";
 import { ChatGptBrowserWorker, ChatGptTurnDomHealthTracker } from "../src/adapters/chatgpt-web/browser-worker";
 import {
-  CHATGPT_COMPOSER_SELECTOR,
   CHATGPT_EFFORT_CONTROL_SELECTOR,
   CHATGPT_EFFORT_MENU_SELECTOR,
   CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR,
-  CHATGPT_STOP_BUTTON_SELECTOR,
   activateChatGptEffortMenu,
+} from "../src/chatgpt-ui/model-picker";
+import {
   assertNewChatPage,
+  CHATGPT_COMPOSER_SELECTOR,
+  CHATGPT_STOP_BUTTON_SELECTOR,
   chatGptNewChatUrl,
+  CHATGPT_NEW_CHAT_URL,
+  CHATGPT_TEMPORARY_CHAT_ACTIVE_SELECTOR,
   detectChatGptAccountCapabilities,
 } from "../src/chatgpt-session";
 
@@ -25,8 +29,9 @@ test("French generation stays live beyond the completion grace period and still 
   expect(state().running).toBeFalse();
   expect(tracker.update(state(), 180_001)).toBeUndefined();
   expect(tracker.update(state(), 240_001)).toBeUndefined();
-  expect(tracker.update(state(), 240_002)).toContain("did not expose its completed-turn action");
-  expect(tracker.update({ ...state(), completionActionVisible: true }, 240_003)).toBeUndefined();
+  expect(tracker.update(state(), 780_002)).toBeUndefined();
+  expect(tracker.update(state(), 780_003)).toContain("did not expose its completed-turn action");
+  expect(tracker.update({ ...state(), completionActionVisible: true }, 780_004)).toBeUndefined();
 });
 
 test("generation control detection preserves legacy and English controls and excludes unrelated French buttons", () => {
@@ -45,25 +50,31 @@ test("generation control detection preserves legacy and English controls and exc
     .toEqual(["legacy", "english", "french"]);
 });
 
-test("saved chats start empty and cannot reuse an arbitrary conversation or a Temporary Chat", async () => {
+test.each([false, true])("new chats verify the configured saved preference without inheriting a prior conversation (%s)", async useSavedChats => {
+  const target = chatGptNewChatUrl(useSavedChats);
   expect(chatGptNewChatUrl()).toBe("https://chatgpt.com/?temporary-chat=true");
   expect(chatGptNewChatUrl(true)).toBe("https://chatgpt.com/");
   const prepare = (ChatGptBrowserWorker.prototype as any).prepareChatSurface;
-  for (const saved of [false, true]) {
-    let url = "https://chatgpt.com/c/previous-task";
+  for (const initial of ["https://chatgpt.com/c/previous-task", "https://chatgpt.com/?temporary-chat=true", "about:blank", CHATGPT_NEW_CHAT_URL]) {
+    let url = initial;
     const navigations: string[] = [];
-    const absent: any = { filter: () => absent, last: () => absent, isVisible: async () => false };
+    const absent: any = { filter: () => absent, last: () => absent, isVisible: async () => false, count: async () => 0 };
     const composer: any = { count: async () => 1, nth: () => composer, isVisible: async () => true };
     const page: any = {
       url: () => url,
+      getByRole: () => absent,
+      getByText: () => absent,
       goto: async (next: string) => { url = next; navigations.push(next); },
-      locator: (selector: string) => selector === CHATGPT_COMPOSER_SELECTOR ? composer : absent,
+      locator: (selector: string) => selector === CHATGPT_COMPOSER_SELECTOR
+        || (selector === CHATGPT_TEMPORARY_CHAT_ACTIVE_SELECTOR && !useSavedChats) ? composer : absent,
     };
-    expect(await prepare.call({ activeComposer: async () => composer }, page, undefined, saved)).toBe(composer);
-    expect(navigations).toEqual([chatGptNewChatUrl(saved)]);
-    await expect(assertNewChatPage(page, !saved)).rejects.toThrow("requested new");
-    url = "https://chatgpt.com/c/previous-task";
-    await expect(assertNewChatPage(page, saved)).rejects.toThrow("requested new");
+    expect(await prepare.call({ config: { useSavedChats }, activeComposer: async () => composer }, page)).toBe(composer);
+    expect(navigations).toEqual(initial === target ? [] : [target]);
+    await expect(assertNewChatPage(page, useSavedChats)).resolves.toBeUndefined();
+    for (const invalid of ["https://chatgpt.com/c/previous-task", chatGptNewChatUrl(!useSavedChats), "https://example.com/"]) {
+      url = invalid;
+      await expect(assertNewChatPage(page, useSavedChats)).rejects.toThrow("requested new");
+    }
   }
 });
 
@@ -330,7 +341,7 @@ function reasoningPicker(options: { max?: string; locks?: Array<string | null>; 
   const modelRows = { count: async () => 3, first() { return this; }, waitFor: async () => {}, nth: () => { throw new Error("Model rows are not effort choices"); } };
   const menu = { filter() { return this; }, last() { return this; }, isVisible: async () => true, locator: () => modelRows, getByRole: () => ({ count: async () => 0 }) };
   const page = {
-    url: () => "https://chatgpt.com/?temporary-chat=true",
+    url: () => "https://chatgpt.com/",
     evaluate: async () => true,
     locator: (selector: string) => {
       if (selector === CHATGPT_COMPOSER_SELECTOR) return composer;

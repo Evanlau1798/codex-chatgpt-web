@@ -13,6 +13,11 @@ export const codexLifecycleTests = [
   "tests/environment-steering.test.ts",
   "tests/environment-post-compaction-steering.test.ts",
   "tests/compaction-continuation-registry.test.ts",
+  "tests/compaction-empty-retained-source.test.ts",
+  "tests/multipart-compaction-ceiling.test.ts",
+  "tests/compaction-task-context.test.ts",
+  "tests/compaction-task-context-review.test.ts",
+  "tests/dev-chat-broker.test.ts",
   "tests/trusted-environment-cleanup.test.ts",
   "tests/native-steering-boundary.test.ts",
   "tests/native-observer-handoff.test.ts",
@@ -28,6 +33,13 @@ export const claudeLifecycleTests = [
 ] as const;
 
 export const sharedLifecycleTests = [
+  "tests/upstream-v6115-adaptations.test.ts",
+  "tests/temporary-chat-mode-proof.test.ts",
+  "tests/temporary-chat-onboarding.test.ts",
+  "tests/personalization-preflight-1.test.ts",
+  "tests/personalization-preflight-2.test.ts",
+  "tests/personalization-worker-cancellation.test.ts",
+  "tests/connector-selection-abort.test.ts",
   "tests/upstream-v6110-adaptations.test.ts",
   "tests/turn-broker-diagnostics.test.ts",
   "tests/server-predictions.test.ts",

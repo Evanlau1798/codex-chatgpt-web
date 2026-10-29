@@ -215,6 +215,7 @@ test("personalization proof falls back to the exact plus-menu connector after a 
   await expect(selectConnector.call({
     config: { appName: "Codex Native2" },
     activeComposer: async () => composer,
+    connectorIsSelected: async () => false,
     clearChatGptComposerState: async () => { calls.push("proof:cleanup"); },
     ensureConnectorSurface: async (
       _page: unknown,

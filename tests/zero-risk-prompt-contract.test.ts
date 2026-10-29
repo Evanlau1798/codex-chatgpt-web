@@ -63,7 +63,7 @@ test("Zero Risk compaction prompt stays task-focused while MCP metadata owns com
   });
   expect(compiled.text).toContain("This is a Codex history-compaction checkpoint");
   expect(compiled.text).toContain("Do not call work tools or ChatGPT-native tools");
-  expect(compiled.text).toContain("Produce the requested checkpoint summary now");
+  expect(compiled.text).toContain("produce the requested checkpoint summary.");
   expect(compiled.text).not.toContain("codex_turn_start");
   expect(compiled.text).not.toContain("codex_turn_complete");
 });

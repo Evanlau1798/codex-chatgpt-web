@@ -1,0 +1,52 @@
+<!-- Behavioral fixture mirroring the September 29 English Pro capture; not a raw page dump. -->
+<form><div id="prompt-textarea" contenteditable="true">Draft</div>
+  <button type="button" data-tone="neutral" aria-haspopup="menu" aria-controls="picker" aria-expanded="false">Medium</button></form>
+  <div id="picker" role="menu" aria-label="Select ChatGPT model" hidden>
+    <div data-model-picker-view="simple">
+      <div aria-hidden="false" data-active="true">
+        <div data-explicit-model="false">
+          <div role="menuitem" aria-hidden="false" aria-label="Select model" data-model-picker-view-toggle="true" tabindex="0">
+            <div data-menu-row-content="true"><span><span><span id="header-version"></span><span id="header-effort" data-accent="true"></span><svg></svg></span></span></div>
+          </div>
+          <span aria-hidden="true"><span>Consumes usage limits faster</span></span>
+        </div>
+        <span aria-live="polite" id="status" role="status"></span>
+        <span id="hint">Use Left and Right arrow keys to adjust power</span>
+        <div role="menuitem" aria-describedby="status hint" aria-label="Power" data-reasoning-slider="true" tabindex="-1">
+          <div data-menu-row-content="true"><span><div data-model-picker-power-slider style="height:30px;width:250px"></div></span></div>
+        </div>
+      </div>
+      <div aria-hidden="true" data-active="false" inert>
+        <span>Locked, opens access options</span>
+        <div role="menuitemradio" aria-checked="true" data-model-selected="true" tabindex="-1"><div data-menu-row-content="true"><span>Latest</span></div></div>
+        <div role="menuitemradio" aria-checked="false" tabindex="-1"><div data-menu-row-content="true"><span>GPT-5.6 Sol</span></div></div>
+        <div role="menuitemradio" aria-checked="false" tabindex="-1"><div data-menu-row-content="true"><div><span>GPT-5.5</span><span>Leaving on October 14</span></div></div></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const efforts = ["Instant", "Medium", "High", "Extra High", "Pro"];
+    const control = document.querySelector("button"), menu = document.querySelector("#picker");
+    let value = 1;
+    function render() {
+      document.querySelector("[data-model-picker-power-slider]").innerHTML = '<span data-orientation="horizontal" aria-disabled="false">'
+        + efforts.map((_, i) => '<span data-selected="' + (i <= value) + '"></span>').join("")
+        + '<span role="slider" aria-hidden="true" aria-valuemin="0" aria-valuemax="4" aria-valuenow="' + value + '"></span></span>';
+      document.querySelector("#status").textContent = window.pickerStatus(efforts[value], value);
+      if (window.pickerHeader === null) document.querySelector("[data-model-picker-view-toggle]")?.remove();
+      else {
+        document.querySelector("#header-version").textContent = window.pickerHeader(value);
+        document.querySelector("#header-effort").textContent = efforts[value];
+      }
+    }
+    control.onclick = () => {
+      menu.hidden = false; control.setAttribute("aria-expanded", "true"); control.textContent = "Thinking effort"; render();
+    };
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape") {
+        menu.hidden = true; control.setAttribute("aria-expanded", "false"); control.textContent = efforts[value];
+      } else if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+        value = Math.max(0, Math.min(4, value + (event.key === "ArrowRight" ? 1 : -1))); render(); event.preventDefault();
+      }
+    });
+  </script>

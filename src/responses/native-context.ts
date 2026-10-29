@@ -26,3 +26,21 @@ export function isNativeOpenPageContext(item: Record<string, unknown> | undefine
   return typeof metadata?.turn_id === "string" && metadata.turn_id.trim().length > 0
     && Array.isArray(kinds) && kinds.length === 1 && kinds[0] === "additional_content.codex_apps_open_page";
 }
+
+/** The desktop injects cross-chat input without a matching model tool call. */
+export function readNativeThreadDelegation(item: Record<string, unknown>): {
+  sourceThreadId: string; output: string;
+} | undefined {
+  const metadata = item.internal_chat_message_metadata_passthrough as { turn_id?: unknown } | undefined;
+  if (item.type !== "function_call_output" || item.name !== "send_message_to_thread"
+    || item.namespace !== "codex_app" || item.call_id !== undefined
+    || typeof item.id !== "string" || !item.id
+    || typeof metadata?.turn_id !== "string" || !metadata.turn_id.trim()
+    || typeof item.output !== "string") return undefined;
+  const fields = /^<codex_delegation>\s*<source_thread_id>([^<>]+)<\/source_thread_id>\s*<input>([^<>]+)<\/input>\s*<\/codex_delegation>$/.exec(item.output.trim());
+  if (!fields || !fields.slice(1).every(text => text.trim() && !/&(?!amp;|lt;|gt;)/.test(text))) return undefined;
+  // Decode the producer's XML escapes once, preserving literal escaped strings.
+  const decode = (text: string) => text.replace(/&(amp|lt|gt);/g, (_, name: string) =>
+    ({ amp: "&", lt: "<", gt: ">" })[name]!);
+  return { sourceThreadId: decode(fields[1]!), output: item.output };
+}

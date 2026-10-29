@@ -1,10 +1,11 @@
+import { chatGptStopButton, chatGptThinkButtons } from "../src/chatgpt-ui/composer";
 import { expect, test } from "bun:test";
 import { chromium, _electron } from "playwright-core";
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { chatGptStopButton, chatGptThinkButtons, ChatGptTurnDomHealthTracker, setChatGptThinkMode } from "../src/adapters/chatgpt-web/browser-worker";
-import { CHATGPT_THINK_BUTTON_SELECTOR } from "../src/chatgpt-session";
+import { ChatGptTurnDomHealthTracker, setChatGptThinkMode } from "../src/adapters/chatgpt-web/browser-worker";
+import { CHATGPT_THINK_BUTTON_SELECTOR } from "../src/chatgpt-ui/composer";
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("Think buttons do not require the 6.1.8 icon shape or type slash commands", async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
@@ -170,7 +171,7 @@ test.skipIf(!process.env.LAUNCHER_TEST_ELECTRON)("captured Think toggles indepen
   });
   try {
     const page = await app.firstWindow();
-    for (const fixture of ["chatgpt-composer-think.html", "chatgpt-composer-think-2026-10-11.html"]) {
+    for (const fixture of ["chatgpt-composer-think.html", "chatgpt-composer-think-2026-10-11.html", "chatgpt-composer-think-2026-10-28.html"]) {
       const captured = readFileSync(new URL(`./fixtures/${fixture}`, import.meta.url), "utf8");
       for (const label of ["Think", "思考", "Думать", "생각하기", "التفكير", "Unknown future translation"]) {
         await page.setContent(`<form data-chatgpt-composer><div id="prompt-textarea" contenteditable="true"><span data-id="plugin:fixture" data-keyword="Codex Native2" contenteditable="false">Codex Native2</span></div>

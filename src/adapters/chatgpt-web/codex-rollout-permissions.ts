@@ -10,7 +10,7 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-function absolutePaths(value: unknown, field: string): string[] {
+export function absolutePaths(value: unknown, field: string): string[] {
   if (!Array.isArray(value) || value.some(path => typeof path !== "string" || !isAbsolute(path))) {
     throw new Error(`Codex rollout ${field} is invalid`);
   }
@@ -199,6 +199,7 @@ export function environmentFromTurnContext(
   payload: Record<string, unknown>,
   expectedTurnId: string,
   tools: readonly CodexTool[] | undefined,
+  runtimeWorkspaceRoots?: string[],
 ): ChatGptTurnEnvironment {
   if (payload.turn_id !== expectedTurnId) {
     throw new Error("Latest Codex rollout turn context does not belong to the requested turn");
@@ -208,10 +209,12 @@ export function environmentFromTurnContext(
   }
   const cwd = resolve(payload.cwd);
   const declaredRoots = payload.workspace_roots === undefined
-    ? []
+    ? runtimeWorkspaceRoots ?? []
     : absolutePaths(payload.workspace_roots, "workspace_roots");
   const roots = declaredRoots.length > 0 ? declaredRoots : [cwd];
-  if (!roots.some(root => contains(root, cwd))) {
+  if (!roots.some(root => contains(root, cwd))
+    && !(record(payload.permission_profile)?.type === "disabled"
+      && record(payload.sandbox_policy)?.type === "danger-full-access")) {
     throw new Error("Codex rollout cwd is outside its workspace roots");
   }
 

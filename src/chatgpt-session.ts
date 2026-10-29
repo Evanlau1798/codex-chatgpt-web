@@ -1,42 +1,37 @@
+import { CHATGPT_COMPOSER_SELECTOR } from "./chatgpt-ui/composer";
+import {
+  CHATGPT_EFFORT_CONTROL_SELECTOR,
+  CHATGPT_EFFORT_MENU_SELECTOR,
+  chatGptEffortSlider,
+  readChatGptEffortSnapshot,
+  openChatGptModelRows,
+  type ChatGptEffortActivation,
+} from "./chatgpt-ui/model-picker";
+export * from "./chatgpt-ui/composer";
+export * from "./chatgpt-ui/model-picker";
+export * from "./chatgpt-ui/turns";
+import { CHATGPT_EFFORT_SLIDER_MAX_OPTIONS, activateChatGptEffortMenu } from "./chatgpt-ui/model-picker";
 import type { Locator, Page } from "playwright-core";
 import { familyOption, selectChatGptModelFamily } from "./adapters/chatgpt-web/model-selection";
 import type { ChatGptWebModelCapabilities, ChatGptWebAdapterEffort, ChatGptWebAccountCapabilities } from "./chatgpt-web-models";
 
 export const CHATGPT_TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
 export const CHATGPT_SAVED_CHAT_URL = "https://chatgpt.com/";
+export const CHATGPT_NEW_CHAT_URL = CHATGPT_SAVED_CHAT_URL;
 
 export function chatGptNewChatUrl(useSavedChats = false): string {
   return useSavedChats ? CHATGPT_SAVED_CHAT_URL : CHATGPT_TEMPORARY_CHAT_URL;
 }
-export const CHATGPT_COMPOSER_SELECTOR = [
-  '[data-testid="prompt-textarea"]',
-  "#prompt-textarea",
-  '[contenteditable="true"][data-lexical-editor="true"]',
-  'form[data-chatgpt-composer] [data-composer-markdown][contenteditable="true"][role="textbox"]',
-].join(", ");
-export const CHATGPT_EFFORT_CONTROL_SELECTOR = [
-  'button[data-tone="neutral"][aria-haspopup="menu"]',
-  'button[data-testid="model-switcher-dropdown-button"][aria-haspopup="menu"]',
-  'button[data-codex-intelligence-trigger="true"][data-composer-navigation-target="reasoning"][aria-haspopup="menu"]',
-].join(", ");
-export const CHATGPT_EFFORT_MENU_SELECTOR = [
-  '[data-testid="composer-intelligence-picker-content"]:has([role="menuitemradio"], [data-model-reasoning-effort-slider])',
-  '[role="menu"]:has([role="menuitemradio"], [data-model-reasoning-effort-slider])',
-  '[role="group"]:has([role="menuitemradio"], [data-model-reasoning-effort-slider])',
-  '[role="menu"]:has([data-model-picker-power-slider])',
-].join(", ");
-export const CHATGPT_EFFORT_ITEM_SELECTOR = '[role="menuitemradio"]';
-export const CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR = '[data-model-reasoning-effort-slider], [data-model-picker-power-slider]';
-export const CHATGPT_EFFORT_SLIDER_SELECTOR = [
-  '[data-testid="composer-intelligence-picker-content"] [role="slider"]',
-  '[data-model-reasoning-effort-slider] [role="slider"]',
-  '[data-model-picker-power-slider] [role="slider"]',
-].join(", ");
-export const CHATGPT_EFFORT_SLIDER_MAX_OPTIONS = 5;
 export const CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR = [
   '[data-testid="thread-header-right-actions"] button[aria-haspopup="menu"]',
   '#conversation-header-actions button[aria-haspopup="menu"]',
   'div:has(> [data-testid="temporary-chat-label"]) + div button[aria-expanded]',
+].join(", ");
+export const CHATGPT_TEMPORARY_CHAT_ACTIVE_SELECTOR = [
+  '[data-testid="temporary-chat-label"]',
+  ...["header", "#conversation-header-actions", "[data-app-shell-header-obstacle]"].flatMap(scope =>
+    ["codex-icon-chat-bubble-checkmark-dashed-light-20", "chat-bubble-checkmark-dashed-light-20", "chat-temp-checked"]
+      .map(icon => `${scope} button:has(use[href$="#${icon}"])`)),
 ].join(", ");
 
 export function normalizeChatGptModelAnnouncement(text: string): string {
@@ -44,87 +39,6 @@ export function normalizeChatGptModelAnnouncement(text: string): string {
 }
 
 /** Model identity precedes the localized slider position; punctuation is not language-specific. */
-export function parseChatGptModelAnnouncement(text: string): {
-  version: string; name?: string; mode: string;
-} | undefined {
-  const normalized = normalizeChatGptModelAnnouncement(text);
-  // The current picker repeats the version in the effort caption below the family name.
-  const match = /^(?:GPT[-\s]?)?(\d+(?:\.\d+)?)(?:\s+(Sol|Astra))?\s+(?:(?:GPT[-\s]?)?\1\s+)?([^\p{P}]+)(?:\p{P}|$)/iu.exec(normalized);
-  if (!match) return undefined;
-  return { version: match[1]!, ...(match[2] ? { name: match[2].toLowerCase() } : {}), mode: match[3]!.trim() };
-}
-
-/** Read model evidence only from the slider's own active picker. */
-export async function readChatGptModelAnnouncements(slider: Locator): Promise<string[]> {
-  return slider.evaluate(element => {
-    const doc = element.ownerDocument;
-    const descriptions = (element.closest('[role="menuitem"]')?.getAttribute("aria-describedby") ?? "")
-      .split(/\s+/).filter(Boolean).map(id => doc.getElementById(id)?.textContent ?? "");
-    // Some accounts now announce only the effort ("Pro, 5 of 5"); the model
-    // version is shown in the picker header as adjacent text nodes ("6" + "Pro").
-    const menu = element.closest('[role="menu"]');
-    const rendered = (node: Element): boolean => {
-      for (let parent: Element | null = node; parent; parent = parent.parentElement) {
-        if (parent.matches('[hidden], [inert], [aria-hidden="true"]')) return false;
-        const style = getComputedStyle(parent);
-        if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
-      }
-      return true;
-    };
-    const headers = [...(menu?.querySelectorAll('[data-model-picker-view-toggle="true"]') ?? [])]
-      .filter(header => header.closest('[role="menu"]') === menu && rendered(header));
-    if (headers.length > 1) throw new Error("ChatGPT model picker exposes multiple active model headers");
-    if (headers.length === 1) {
-      const content = headers[0]!.querySelector("[data-menu-row-content]") ?? headers[0]!;
-      const words: string[] = [];
-      const walker = doc.createTreeWalker(content, NodeFilter.SHOW_TEXT);
-      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-        if (node.parentElement && rendered(node.parentElement)) {
-          const word = node.textContent?.trim();
-          if (word) words.push(word);
-        }
-      }
-      descriptions.push(words.join(" "));
-    }
-    return descriptions;
-  });
-}
-/** Resolve only inside the verified composer's form; multiple submitters are an error. */
-export const CHATGPT_SEND_BUTTON_SELECTOR = '[data-testid="send-button"], button[type="submit"]';
-export const CHATGPT_STOP_BUTTON_SELECTOR = [
-  '[data-testid="stop-button"]',
-  'form[data-chatgpt-composer] button[type="button"][aria-label="Stop"]',
-  // The current composer omits the test id and localizes its label. Bind the observed stop
-  // glyph inside the verified composer, excluding send arrows and unrelated page controls.
-  'form[data-chatgpt-composer] button[type="button"]:has(svg.icon-primary-action path[d="M4.5 5.75C4.5 5.05964 5.05964 4.5 5.75 4.5H14.25C14.9404 4.5 15.5 5.05964 15.5 5.75V14.25C15.5 14.9404 14.9404 15.5 14.25 15.5H5.75C5.05964 15.5 4.5 14.9404 4.5 14.25V5.75Z"])',
-].join(", ");
-// The new footer is shared with user messages. Response extraction rejects controls owned by a
-// user content unit, then verifies their relationship to the bound assistant answer.
-// Captured Luna Think control (2026-09-08). The brain glyph's opening contour,
-// composer pill and pressed state identify this action independently of its label.
-// Other composer pills (search, tools, attachments) must not be treated as Think.
-// The Free account in the DEV launcher (2026-10-11) uses an SVG sprite instead.
-// The sprite fragment stays the same with Think on/off; the asset hash does not.
-export const CHATGPT_THINK_BUTTON_SELECTOR = [
-  'button[type="button"].__composer-pill[aria-pressed]:has(> .__composer-pill-icon > svg[viewBox="0 0 24 24"] > path[d^="M14.8974 2.29998C15.8303 2.29013 16.802 2.58194 17.5566 3.22577"])',
-  'button[type="button"][aria-pressed]:has(> svg[viewBox="0 0 20 20"] > use[href$="#brain-regular-20"])',
-].join(", ");
-// The new footer is shared with user messages. Response extraction additionally requires
-// this control to FOLLOW the last assistant answer, excluding the user's earlier footer.
-export const CHATGPT_COMPLETION_ACTION_SELECTOR = 'button[data-testid="copy-turn-action-button"], [data-turn-key] .turn-action-controls button';
-export const CHATGPT_ASSISTANT_TURN_SELECTOR = [
-  '[data-testid^="conversation-turn-"][data-turn="assistant"]:not([data-turn-key] *)',
-  '[data-testid^="conversation-turn-"][data-message-author-role="assistant"]:not([data-turn-key] *)',
-  '[data-testid^="conversation-turn-"]:has([data-message-author-role="assistant"]):not([data-turn-key] *)',
-  '[data-turn-key]:has([data-conversation-role="assistant"], [data-chatgpt-agent-turn-start])',
-].join(", ");
-export const CHATGPT_USER_TURN_SELECTOR = [
-  '[data-testid^="conversation-turn-"][data-turn="user"]:not([data-turn-key] *)',
-  '[data-testid^="conversation-turn-"][data-message-author-role="user"]:not([data-turn-key] *)',
-  '[data-testid^="conversation-turn-"]:has([data-message-author-role="user"]):not([data-turn-key] *)',
-  '[data-turn-key]:has([data-user-message-bubble], [data-conversation-role="assistant"], [data-chatgpt-agent-turn-start])',
-].join(", ");
-
 export function isTemporaryChatGptUrl(value: string): boolean {
   try {
     const url = new URL(value);
@@ -161,186 +75,10 @@ export function isSelectedChatGptTurnUrl(value: string, useSavedChats = false): 
 }
 
 /** The new renderer groups both roles under the user's stable turn key. */
-export function chatGptTurnContainerSelector(identity: string): string {
-  const prefix = "group:assistant:";
-  return identity.startsWith(prefix)
-    ? `[data-turn-key=${JSON.stringify(identity.slice(prefix.length))}]`
-    : `[data-turn-id=${JSON.stringify(identity)}]`;
-}
-
-export function chatGptAssistantTurnSelector(identity: string): string {
-  const container = chatGptTurnContainerSelector(identity);
-  return identity.startsWith("group:assistant:")
-    ? `${container}:has([data-conversation-role="assistant"], [data-chatgpt-agent-turn-start])`
-    : container;
-}
-
-export interface ChatGptEffortSliderState {
-  min: number;
-  max: number;
-  value: number;
-}
-
-export interface ChatGptEffortActivation {
-  method: "already-open" | "click" | "pointerdown";
-  menu: Locator;
-  sliderContainer: Locator;
-  slider: Locator;
-}
-
-export function chatGptEffortSlider(page: Page): { sliderContainer: Locator; slider: Locator } {
-  const sliderContainer = page.locator(CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR).filter({ visible: true });
-  // The current picker keeps ARIA values on a zero-width, aria-hidden semantic input.
-  // Its visible container proves the active surface; the input proves the effort range.
-  return { sliderContainer, slider: sliderContainer.locator('[role="slider"]') };
-}
-
-function effortMenuSelectorForId(menuId: string): string {
-  return `[id=${JSON.stringify(menuId)}]`;
-}
-
-export async function chatGptEffortMenuForControl(page: Page, control: Locator): Promise<Locator> {
-  const menuId = await control.getAttribute("aria-controls").catch(() => null);
-  if (menuId) return page.locator(effortMenuSelectorForId(menuId));
-  const controlId = await control.getAttribute("id").catch(() => null);
-  if (controlId) return page.locator(`[role="menu"][aria-labelledby~=${JSON.stringify(controlId)}]`).filter({ visible: true });
-  return page.locator(CHATGPT_EFFORT_MENU_SELECTOR).filter({ visible: true });
-}
-
-async function visibleEffortSurface(
-  page: Page,
-  control: Locator,
-): Promise<Omit<ChatGptEffortActivation, "method"> | undefined> {
-  // The exit animation keeps a closed menu's slider visible after Escape. Read the
-  // owner state first: selecting that outgoing range races its removal from the DOM.
-  const expanded = await control.getAttribute("aria-expanded").catch(() => null);
-  const state = await control.getAttribute("data-state").catch(() => null);
-  if (expanded === "false" || state === "closed") return undefined;
-  const menu = await chatGptEffortMenuForControl(page, control);
-  const surface = chatGptEffortSlider(page);
-  if (await menu.isVisible().catch(() => false) || await surface.sliderContainer.isVisible().catch(() => false)) {
-    return { menu, ...surface };
-  }
-  return undefined;
-}
-
-async function waitForEffortSurface(
-  page: Page,
-  control: Locator,
-  timeoutMs: number,
-): Promise<Omit<ChatGptEffortActivation, "method"> | undefined> {
-  const deadline = Date.now() + timeoutMs;
-  do {
-    const surface = await visibleEffortSurface(page, control);
-    if (surface) return surface;
-    if (Date.now() >= deadline) return undefined;
-    await new Promise(resolveSleep => setTimeout(resolveSleep, 50));
-  } while (true);
-}
-
-async function clearGhostEffortState(page: Page, control: Locator): Promise<void> {
-  const expanded = await control.getAttribute("aria-expanded").catch(() => null);
-  const state = await control.getAttribute("data-state").catch(() => null);
-  if (expanded === "true" || state === "open") {
-    await page.keyboard.press("Escape").catch(() => {});
-  }
-}
-
-export async function activateChatGptEffortMenu(
-  page: Page,
-  control: Locator,
-  options: { settleMs?: number } = {},
-): Promise<ChatGptEffortActivation> {
-  const openSurface = await visibleEffortSurface(page, control);
-  if (openSurface) return { method: "already-open", ...openSurface };
-
-  const settleMs = options.settleMs ?? 3_000;
-  await clearGhostEffortState(page, control);
-  try {
-    await control.click({ timeout: Math.max(1, settleMs) });
-  } catch (error) {
-    if (!(error instanceof Error) || error.name !== "TimeoutError") throw error;
-    // The click can commit before Playwright acknowledges it. Prove the owned
-    // open surface before accepting that receipt; never click again blindly.
-    const committed = await visibleEffortSurface(page, control);
-    if (committed) return { method: "click", ...committed };
-    throw error;
-  }
-  const clickedSurface = await waitForEffortSurface(page, control, settleMs);
-  if (clickedSurface) return { method: "click", ...clickedSurface };
-
-  await clearGhostEffortState(page, control);
-  await control.dispatchEvent("pointerdown", {
-    button: 0,
-    buttons: 1,
-    pointerType: "mouse",
-    isPrimary: true,
-  });
-  const pointerSurface = await waitForEffortSurface(page, control, settleMs);
-  if (pointerSurface) return { method: "pointerdown", ...pointerSurface };
-  throw new Error(
-    "ChatGPT effort control did not expose its owned menu or structural slider after click and primary pointerdown",
-  );
-}
-
-function safeIntegerAttribute(value: string | null): number | undefined {
-  if (value === null || !/^-?\d+$/.test(value)) return undefined;
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) ? parsed : undefined;
-}
-
-export function parseChatGptEffortSliderState(
-  rawMin: string | null,
-  rawMax: string | null,
-  rawValue: string | null,
-): ChatGptEffortSliderState | undefined {
-  const min = safeIntegerAttribute(rawMin);
-  const max = safeIntegerAttribute(rawMax);
-  const value = safeIntegerAttribute(rawValue);
-  if (min === undefined || max === undefined || value === undefined) return undefined;
-  const optionCount = max - min + 1;
-  if (optionCount < 1 || optionCount > CHATGPT_EFFORT_SLIDER_MAX_OPTIONS) return undefined;
-  if (value < min || value > max) return undefined;
-  return { min, max, value };
-}
-
 export function chatGptEffortSliderAdvancedTowardTarget(previous: number, current: number, target: number): boolean {
   return target > previous
     ? current > previous && current <= target
     : current < previous && current >= target;
-}
-
-export async function readChatGptEffortSnapshot(
-  sliderContainer: Locator,
-  timeoutMs = 1_000,
-): Promise<ChatGptEffortSliderState & { available: boolean[] }> {
-  const deadline = Date.now() + timeoutMs;
-  do {
-    // Read the range, selection and locks in one DOM revision. Separate Playwright
-    // reads can straddle hydration and combine a five-step range with four ticks.
-    const snapshot = await sliderContainer.evaluate(container => {
-      const sliders = container.querySelectorAll('[role="slider"]');
-      const slider = sliders.length === 1 ? sliders[0] : undefined;
-      const power = container.hasAttribute("data-model-picker-power-slider")
-        && Boolean(container.querySelector('[data-orientation="horizontal"][aria-disabled="false"]'));
-      return {
-        min: slider?.getAttribute("aria-valuemin") ?? null,
-        max: slider?.getAttribute("aria-valuemax") ?? null,
-        value: slider?.getAttribute("aria-valuenow") ?? null,
-        locks: Array.from(container.querySelectorAll("[data-selected]"), tick =>
-          tick.getAttribute("data-locked") ?? (power ? "false" : null)),
-      };
-    });
-    const state = parseChatGptEffortSliderState(snapshot.min, snapshot.max, snapshot.value);
-    if (!state) throw new Error("ChatGPT effort slider exposed an invalid ARIA range");
-    if (snapshot.locks.some(lock => lock !== "true" && lock !== "false")) break;
-    if (snapshot.locks.length === state.max - state.min + 1) {
-      return { ...state, available: snapshot.locks.map(lock => lock === "false") };
-    }
-    if (Date.now() >= deadline) break;
-    await new Promise(resolve => setTimeout(resolve, 50));
-  } while (true);
-  throw new Error("ChatGPT effort availability could not be verified from its slider ticks");
 }
 
 async function anyVisible(locator: Locator): Promise<boolean> {
@@ -368,10 +106,13 @@ export async function assertTemporaryChatPage(page: Page): Promise<void> {
 
 export async function assertNewChatPage(page: Page, useSavedChats = false): Promise<void> {
   const url = new URL(page.url());
-  const expected = new URL(chatGptNewChatUrl(useSavedChats));
+  const expected = new URL(CHATGPT_NEW_CHAT_URL);
   if (url.origin !== expected.origin || url.pathname !== expected.pathname
     || (url.searchParams.get("temporary-chat") === "true") === useSavedChats) {
-    throw new Error(`ChatGPT left the requested new ${useSavedChats ? "saved" : "Temporary"} Chat surface (${page.url()})`);
+    throw new Error(`ChatGPT left the requested new chat surface (${page.url()})`);
+  }
+  if (await anyVisible(page.locator(CHATGPT_TEMPORARY_CHAT_ACTIVE_SELECTOR)) === useSavedChats) {
+    throw new Error("ChatGPT rendered chat mode does not match the requested new chat surface");
   }
 }
 
@@ -532,7 +273,7 @@ export async function detectChatGptAccountCapabilities(
     const present: (typeof families[number])[] = [];
     let original: typeof families[number] | undefined;
     for (const family of families) {
-      const option = familyOption(current, family);
+      const option = await familyOption(current, family);
       const count = await option.count();
       if (count > 1) throw new Error("ChatGPT model capability probe found ambiguous family radios");
       if (count === 1) {
@@ -544,7 +285,14 @@ export async function detectChatGptAccountCapabilities(
     if (present.length === 0) {
       return { solAvailable: true, extraHighAvailable: initial.available[3] === true, proAvailable: initial.available[4] === true };
     }
-    if (!original) throw new Error("ChatGPT model capability probe could not verify the selected family");
+    const astra = menu.getByRole("menuitemradio", { name: /^GPT[-\s]?6\s+Astra$/i, exact: true, includeHidden: true });
+    const defaults = menu.getByRole("menuitemradio", { name: /^Default(?:\s+Recommended set of models)?$/i, exact: true, includeHidden: true });
+    const hasAstra = await astra.count() === 1;
+    const originalAstra = hasAstra && await astra.getAttribute("aria-checked") === "true";
+    const originalDefault = await defaults.count() === 1 && await defaults.getAttribute("aria-checked") === "true";
+    if (Number(!!original) + Number(originalAstra) + Number(originalDefault) !== 1) {
+      throw new Error("ChatGPT model capability probe could not verify the selected family");
+    }
     const modelCapabilities: ChatGptWebModelCapabilities = { observedAt: Date.now(), families: {} };
     const effortOrder: ChatGptWebAdapterEffort[] = ["low", "medium", "high", "xhigh", "max"];
     const reopen = () => activateChatGptEffortMenu(page, effortButton);
@@ -556,11 +304,26 @@ export async function detectChatGptAccountCapabilities(
         current = await selectChatGptModelFamily(current, family, reopen);
         const snapshot = await readChatGptEffortSnapshot(current.sliderContainer);
         modelCapabilities.families[family] = effortOrder.filter((_, index) => snapshot.available[index] === true);
+        if (family === "6" && hasAstra) {
+          current = await selectChatGptModelFamily(current, family, reopen, "max");
+          const pro = await readChatGptEffortSnapshot(current.sliderContainer);
+          modelCapabilities.families[family] = effortOrder.filter((effort, index) =>
+            effort === "max" ? pro.available[index] === true : snapshot.available[index] === true);
+        }
       }
     } finally {
       // Inspection must not change the user's next model or effort, even after a probe failure.
       current = await reopen();
-      current = await selectChatGptModelFamily(current, original, reopen);
+      if (originalDefault) {
+        await openChatGptModelRows(current.menu);
+        await defaults.click({ timeout: 5_000 });
+        current = await reopen();
+        if (await defaults.getAttribute("aria-checked") !== "true") {
+          throw new Error("ChatGPT capability probe could not restore the original Default model");
+        }
+      } else {
+        current = await selectChatGptModelFamily(current, originalAstra ? "6" : original!, reopen, originalAstra ? "max" : undefined);
+      }
       const target = initial.value - initial.min;
       for (let step = 0; step <= CHATGPT_EFFORT_SLIDER_MAX_OPTIONS; step++) {
         const state = await readChatGptEffortSnapshot(current.sliderContainer);

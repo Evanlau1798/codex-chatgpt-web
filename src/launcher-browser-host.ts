@@ -289,7 +289,7 @@ export async function inspectLauncherBrowserHost(
     });
     const body = await response.json().catch(() => ({})) as Record<string, unknown>;
     if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : `HTTP ${response.status}`);
-    if (body.authenticated !== true || body.temporary !== true || typeof body.url !== "string") {
+    if (body.authenticated !== true || body.newChat !== true || typeof body.url !== "string") {
       throw new Error("Launcher returned invalid ChatGPT session evidence");
     }
     if (options.detectCapabilities && (typeof body.solAvailable !== "boolean"

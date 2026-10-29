@@ -191,10 +191,10 @@ export function ownerEnvironment(value: unknown): ChatGptTurnEnvironment {
   if (typeof environment.cwd !== "string" || !isAbsolute(environment.cwd)
     || !paths(environment.roots) || !Array.isArray(environment.writableRoots)
     || environment.writableRoots.some(path => typeof path !== "string" || !isAbsolute(path))
-    || !environment.roots.some(root => {
+    || (environment.sandboxPolicy?.type !== "dangerFullAccess" && !environment.roots.some(root => {
       const nested = relative(resolve(root), resolve(environment.cwd!));
       return nested === "" || (!nested.startsWith("..") && !isAbsolute(nested));
-    })
+    }))
     || !environment.sandboxPolicy
     || !["dangerFullAccess", "workspaceWrite", "readOnly"].includes(environment.sandboxPolicy.type)
     || !Array.isArray(environment.tools)

@@ -41,6 +41,7 @@ const en = {
   savedChats: "Save chats in ChatGPT",
   savedChatsBody: "Keep Codex and Claude task conversations in ChatGPT history. ChatGPT memory and custom instructions may apply. API requests always use Temporary Chat. Off by default.",
   freshConversation: "New browser chat for each turn",
+  temporaryChat: "Temporary Chat",
   freshConversationBody: "Rebuild context from the same Codex task in a new browser chat for each turn. This may help when ChatGPT loses access to tools, but can send more context and be slower. Off by default.",
   manualFreshConversationUnavailable: "Available only with Automation and Original session mode. Enhanced and Zero Risk force this setting off.",
   tagline: "ChatGPT Web inside the native Codex harness",
@@ -67,7 +68,7 @@ const en = {
   runtime: "Runtime",
   browser: "Browser",
   openChatgpt: "Open ChatGPT",
-  temporaryChat: "Temporary Chat",
+  newChat: "New chat",
   back: "Back",
   forward: "Forward",
   reload: "Reload",
@@ -105,7 +106,7 @@ const en = {
   verifySignIn: "Check sign in",
   signedIn: "Signed in",
   stepSmoke: "Run browser smoke test",
-  stepSmokeBody: "Select High, send a small temporary message, and verify a complete streamed response.",
+  stepSmokeBody: "Select High, send a short test message, and verify a complete streamed response.",
   runSmoke: "Run smoke test",
   smokePassed: "Smoke test passed",
   stepInstall: "Install a coding client",
@@ -137,7 +138,7 @@ const en = {
   mcpStepTwo: "Connect the local harness",
   mcpStepTwoBody: "Paste the Tunnel ID and API key. The tunnel must belong to the same OpenAI account that will use the ChatGPT plugin. The key stays in private local storage and is never written to launcher logs.",
   mcpStepTwoHint: "You can add the MCP connector in ChatGPT only after this step succeeds and the tunnel is running.",
-  mcpCatalogRequired: "Connect harness is unavailable until the Codex models are installed and verified. Return to Setup, click Install models, restart Codex once, and wait for the model catalog check to complete.",
+  mcpSetupRequired: "Install the Codex integration in Setup before connecting the harness. You can connect MCP while Codex refreshes its model list.",
   tunnelId: "Tunnel ID",
   runtimeKey: "API key (not Admin key)",
   connect: "Connect harness",
@@ -164,6 +165,9 @@ const en = {
   doctorMacServiceLoaded: "macOS background service is loaded",
   doctorMacTunnelRunning: "macOS tunnel service is installed, loaded, and running",
   doctorProxyHealthy: "Responses proxy is healthy on {endpoint}",
+  doctorCatalogPending: "This runtime has not observed a completed Codex model-list request yet",
+  doctorCatalogReady: "Codex's latest model-list request succeeded",
+  doctorCatalogFailed: "Codex's latest model-list request failed; the local runtime is reachable",
   doctorTunnelBinaryInstalled: "Pinned openai/tunnel-client binary is installed",
   doctorTunnelKeyStored: "Tunnel runtime key is stored privately",
   doctorTunnelRuntimeOwned: "Launcher owns the tunnel runtime",
@@ -330,6 +334,7 @@ const zh: Record<keyof typeof en, string> = {
   savedChats: "在 ChatGPT 中保存聊天",
   savedChatsBody: "将 Codex 和 Claude 任务对话保留在 ChatGPT 历史记录中，可能应用 ChatGPT 记忆和自定义指令。API 请求始终使用临时聊天。默认关闭。",
   freshConversation: "每轮使用新的浏览器聊天",
+  temporaryChat: "临时聊天",
   freshConversationBody: "每轮在新的浏览器聊天中重建同一个 Codex 任务的上下文。这可能有助于解决 ChatGPT 丢失工具访问的问题，但可能发送更多上下文，速度也可能更慢。默认关闭。",
   manualFreshConversationUnavailable: "仅支持自动化与 Original 会话模式。Enhanced 和零风险模式会强制关闭此设置。",
   tagline: "在原生 Codex Harness 中运行 ChatGPT Web",
@@ -356,7 +361,7 @@ const zh: Record<keyof typeof en, string> = {
   runtime: "运行时",
   browser: "浏览器",
   openChatgpt: "打开 ChatGPT",
-  temporaryChat: "临时聊天",
+  newChat: "新聊天",
   back: "后退",
   forward: "前进",
   reload: "重新加载",
@@ -394,7 +399,7 @@ const zh: Record<keyof typeof en, string> = {
   verifySignIn: "检查登录",
   signedIn: "已登录",
   stepSmoke: "运行浏览器冒烟测试",
-  stepSmokeBody: "选择 High，发送一条临时消息，并验证完整的流式响应。",
+  stepSmokeBody: "选择 High，发送一条测试消息，并验证完整的流式响应。",
   runSmoke: "运行冒烟测试",
   smokePassed: "冒烟测试通过",
   stepInstall: "安装编程客户端",
@@ -426,7 +431,7 @@ const zh: Record<keyof typeof en, string> = {
   mcpStepTwo: "连接本地 Harness",
   mcpStepTwoBody: "粘贴 Tunnel ID 和 API key。Tunnel 必须属于将使用该 ChatGPT 插件的同一 OpenAI 账户。密钥只保存在本机私有存储中，绝不会写入启动器日志。",
   mcpStepTwoHint: "只有此步骤成功且 Tunnel 正在运行后，才能在 ChatGPT 中添加 MCP 连接器。",
-  mcpCatalogRequired: "在 Codex 模型安装并验证完成前，无法连接 Harness。请返回“设置”，点击“安装模型”，重启一次 Codex，并等待模型列表验证完成。",
+  mcpSetupRequired: "请先在“设置”中安装 Codex 集成，再连接 Harness。Codex 刷新模型列表期间也可以连接 MCP。",
   tunnelId: "Tunnel ID",
   runtimeKey: "API key（不是 Admin key）",
   connect: "连接 Harness",
@@ -453,6 +458,9 @@ const zh: Record<keyof typeof en, string> = {
   doctorMacServiceLoaded: "已加载 macOS 后台服务",
   doctorMacTunnelRunning: "macOS 隧道服务已安装、加载并运行",
   doctorProxyHealthy: "Responses 代理在 {endpoint} 上运行正常",
+  doctorCatalogPending: "当前运行环境尚未收到已完成的 Codex 模型列表请求",
+  doctorCatalogReady: "Codex 最近一次模型列表请求成功",
+  doctorCatalogFailed: "Codex 最近一次模型列表请求失败；本地运行环境可以连接",
   doctorTunnelBinaryInstalled: "已安装固定版本的 openai/tunnel-client 二进制文件",
   doctorTunnelKeyStored: "隧道运行时密钥已安全存储",
   doctorTunnelRuntimeOwned: "启动器正在管理隧道运行时",
@@ -621,6 +629,11 @@ export function localizeRuntimeMessage(
       .replace("{pid}", () => match[2]!);
   }
   if (checkId === "codex" && message === "Codex native model route is installed") return copy.doctorCodexInstalled;
+  if (checkId === "model-catalog") {
+    if (message === "This runtime has not observed a completed Codex model-list request yet") return copy.doctorCatalogPending;
+    if (message === "Codex's latest model-list request succeeded") return copy.doctorCatalogReady;
+    if (message === "Codex's latest model-list request failed; the local runtime is reachable") return copy.doctorCatalogFailed;
+  }
   if (checkId === "service" && message === "Launcher owns the background runtime") return copy.doctorRuntimeOwned;
   if (checkId === "service" && message === "macOS background service is loaded") return copy.doctorMacServiceLoaded;
   if (checkId === "chrome") {

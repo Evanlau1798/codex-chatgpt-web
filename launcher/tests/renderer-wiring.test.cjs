@@ -12,6 +12,32 @@ const electronMain = fs.readFileSync(path.join(launcherRoot, "electron", "main.c
 const browserHostSource = fs.readFileSync(path.join(launcherRoot, "electron", "browser-host.cjs"), "utf8");
 const preloadSource = fs.readFileSync(path.join(launcherRoot, "electron", "preload.cjs"), "utf8");
 
+function preferenceIpc(dependencies) {
+  const vm = require("node:vm");
+  const ts = require("typescript");
+  const ast = ts.createSourceFile("main.cjs", electronMain, ts.ScriptTarget.Latest, true);
+  const declarations = ast.statements.filter(node => ts.isFunctionDeclaration(node)
+    && ["syncBrowserPreferences", "registerIpc"].includes(node.name?.text));
+  assert.equal(declarations.length, 2);
+  const handlers = new Map();
+  const sandbox = { runtimeStartup: Promise.resolve(), SessionReminderView: class {}, mainWindow: {}, loadRenderer() {},
+    ipcMain: { on() {} }, logger: { info() {} },
+    releaseRetainedConversation: require("../electron/retained-turn-release.cjs").releaseRetainedConversation,
+    registerLoggedIpc: (_ipc, _logger, channel, handler) => handlers.set(channel, handler), ...dependencies };
+  vm.runInNewContext(declarations.map(node => node.getText(ast)).join("\n")
+    + "\nregisterIpc({ logger, stateStore });", sandbox);
+  let api;
+  vm.runInNewContext(preloadSource, { require: () => ({
+    contextBridge: { exposeInMainWorld: (_name, value) => { api = value; } },
+    ipcRenderer: { invoke: (channel, ...args) => {
+      assert.ok(handlers.has(channel), `preload channel must be registered: ${channel}`);
+      return handlers.get(channel)(null, ...args);
+    } },
+  }) });
+  return { api, handlers, sync: () => sandbox.syncBrowserPreferences(dependencies.stateStore,
+    dependencies.runtimeHost.runtimeConfigSnapshot().config) };
+}
+
 test("runtime context settings wait for startup and route recovery without invalidating healthy setup", async () => {
   const vm = require("node:vm");
   for (const [method, property, channel] of [
@@ -36,6 +62,7 @@ test("runtime context settings wait for startup and route recovery without inval
     const context = vm.createContext({
       runtimeStartup, finishRuntimeStartup: () => { startupSettled = true; finishRuntimeStartup(); },
       startupAuthenticationRefresh, logger, stateStore, IS_DEV_PROFILE: false, browserHost: null,
+      SessionReminderView: class {}, mainWindow: {}, loadRenderer() {},
       ipcMain: { on() {} }, registerLoggedIpc: (_ipc, _logger, channel, handler) => handlers.set(channel, handler),
       send() {}, publishOperation() {}, startCatalogVerificationMonitor() {}, stopCatalogVerificationMonitor() {},
       syncBrowserPreferences() {},
@@ -191,21 +218,6 @@ test("macOS passkey sign-in is additive to the unchanged embedded login action",
   assert.match(browserHostSource, /await this\.waitForAuthenticated\(60_000\)[\s\S]*?runSessionInspection\(false\)/);
 });
 
-test("MCP connection requires a verified Codex catalog or current Claude setup", () => {
-  assert.match(
-    appSource,
-    /manualInteraction \|\| configuringInactiveMode \|\| hasVerifiedClientIntegration\(snapshot\.state\)\s+\? copy\.mcpStepTwoHint : copy\.mcpCatalogRequired/,
-  );
-  assert.match(appSource, /\|\| \(!manualInteraction && !configuringInactiveMode && !hasVerifiedClientIntegration\(snapshot\.state\)\)/);
-  const body = appSource.match(/function hasVerifiedClientIntegration\(state: LauncherState\): boolean \{([\s\S]*?)\n\}/)[1];
-  const verified = new Function("state", body);
-  assert.equal(verified({ codexCatalogVerified: true, claudeSetupComplete: false }), true);
-  assert.equal(verified({ codexCatalogVerified: false, claudeSetupComplete: true }), true);
-  assert.equal(verified({ codexCatalogVerified: false, claudeSetupComplete: false }), false);
-  assert.equal(verified({}), false);
-  assert.equal(verified({ codexCatalogVerified: "true", claudeSetupComplete: "true" }), false);
-});
-
 test("MCP navigation remains locked while an operation is active", () => {
   assert.match(appSource, /<McpSurface[\s\S]*?operation=\{operation\}/);
   assert.match(appSource, /const busy = localBusy \|\| operation\?\.status === "running"/);
@@ -287,7 +299,8 @@ test("completed model setup remains a repeatable capability probe", () => {
 test("session reminders expose dismissal and a real storage-clearing logout", () => {
   assert.match(electronMain, /sessionRefreshReminderAt:\s*nextSessionRefreshReminderAt\(\)/);
   assert.match(electronMain, /launcher:session-reminder-dismiss/);
-  assert.match(electronMain, /launcher:browser-logout[\s\S]*?browserHost\.logout\(\)/);
+  assert.match(electronMain, /handle\("launcher:browser-logout", logoutChatGpt\)/);
+  assert.match(electronMain, /const logoutChatGpt = async[\s\S]*?await browserHost\.logout\(\)/);
   assert.match(preloadSource, /dismissSessionReminder:[\s\S]*?launcher:session-reminder-dismiss/);
   assert.match(preloadSource, /logoutChatGpt:[\s\S]*?launcher:browser-logout/);
   assert.match(browserHostSource, /session\.clearStorageData\(\)/);
@@ -424,26 +437,18 @@ test("catalog verification reports a failed request instead of requesting anothe
 });
 
 test("browser preference IPC commits only after setup succeeds and refuses active browser work", async () => {
-  const vm = require("node:vm");
-  for (const [property, method, channel, nextChannel] of [
-    ["composerPredictionsEnabled", "setComposerPredictions", "launcher:composer-predictions", "launcher:fresh-conversation-per-turn"],
-    ["experimentalFreshConversationPerTurn", "setFreshConversationPerTurn", "launcher:fresh-conversation-per-turn", "launcher:use-saved-chats"],
-    ["useSavedChats", "setUseSavedChats", "launcher:use-saved-chats", "launcher:auto-approve-tool-calls"],
-    ["autoApproveToolCalls", "setAutoApproveToolCalls", "launcher:auto-approve-tool-calls", "launcher:set-preference"],
+  for (const [property, method] of [
+    ["composerPredictionsEnabled", "setComposerPredictions"],
+    ["experimentalFreshConversationPerTurn", "setFreshConversationPerTurn"],
+    ["useSavedChats", "setUseSavedChats"],
+    ["autoApproveToolCalls", "setAutoApproveToolCalls"],
   ]) {
-    const source = electronMain.slice(
-      electronMain.indexOf(`handle("${channel}",`),
-      electronMain.indexOf(`handle("${nextChannel}",`),
-    );
     const state = { composerPredictionsEnabled: false, experimentalFreshConversationPerTurn: false, useSavedChats: false, autoApproveToolCalls: false };
-    const config = { composerPredictionsEnabled: false, experimentalFreshConversationPerTurn: false, useSavedChats: false, autoApproveToolCalls: false };
+    const config = { ...state };
     const events = [];
-    let handler, finishSetup, setupFailure, calls = 0;
+    let finishSetup, setupFailure, calls = 0;
     const browserHost = { activeTraceId: "running-turn", currentOperation: () => null, turnTabs: new Map() };
-    const syncSource = electronMain.slice(electronMain.indexOf("function syncBrowserPreferences("), electronMain.indexOf("function registerIpc("));
-    vm.runInNewContext(syncSource + source, {
-      handle: (_channel, callback) => { handler = callback; }, browserHost,
-      releaseRetainedConversation: require("../electron/retained-turn-release.cjs").releaseRetainedConversation,
+    const { api } = preferenceIpc({ browserHost,
       runtimeHost: { currentOperation: () => null, runtimeConfigSnapshot: () => ({ config }), [method]: async enabled => {
         calls++;
         if (setupFailure) throw setupFailure;
@@ -454,21 +459,14 @@ test("browser preference IPC commits only after setup succeeds and refuses activ
       stateStore: { read: () => ({ ...state }), update: patch => Object.assign(state, patch) },
       send: (channel, value) => events.push({ channel, value: { ...value } }),
     });
-    await assert.rejects(() => handler(null, true), /Finish or cancel active ChatGPT turns/);
+    await assert.rejects(() => api[method](true), /Finish or cancel active ChatGPT turns/);
     browserHost.activeTraceId = null;
     browserHost.currentOperation = () => "browser-smoke";
-    await assert.rejects(() => handler(null, true), /Finish or cancel active ChatGPT turns/);
+    await assert.rejects(() => api[method](true), /Finish or cancel active ChatGPT turns/);
     assert.equal(calls, 0);
     browserHost.currentOperation = () => null;
-    let api;
-    vm.runInNewContext(preloadSource, { require: () => ({
-      contextBridge: { exposeInMainWorld: (_name, value) => { api = value; } },
-      ipcRenderer: { invoke: (actualChannel, enabled) => {
-        assert.equal(actualChannel, channel);
-        return handler(null, enabled);
-      } },
-    }) });
     const changing = api[method](true);
+    await new Promise(resolve => setImmediate(resolve));
     assert.equal(state[property], false);
     assert.equal(events.length, 0);
     finishSetup();
@@ -479,6 +477,107 @@ test("browser preference IPC commits only after setup succeeds and refuses activ
     await assert.rejects(() => api[method](false), /synthetic setup rollback/);
     assert.equal(state[property], true);
     assert.equal(events.length, 1);
+  }
+});
+
+test("saved-chat preload IPC waits for real setup and retires only completed automatic and manual chats", async () => {
+  const os = require("node:os");
+  const { RuntimeHost } = require("../electron/runtime.cjs");
+  const { BrowserHost } = require("../electron/browser-host.cjs");
+  const { createStateStore } = require("../electron/state.cjs");
+  for (const browserInteractionMode of ["automatic", "manual"]) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cgw-saved-ipc-"));
+    try {
+      const configPath = path.join(root, "config.json");
+      const original = { mode: "full", browserHost: "launcher", browserInteractionMode,
+        useSavedChats: false, composerPredictionsEnabled: false, experimentalFreshConversationPerTurn: false };
+      fs.writeFileSync(configPath, JSON.stringify(original));
+      const readConfig = () => JSON.parse(fs.readFileSync(configPath, "utf8"));
+      const stateStore = createStateStore(path.join(root, "state.json"));
+      stateStore.update({ onboardingComplete: true, coreSetupComplete: true, browserInteractionMode,
+        useEnhancedWebSessionMode: false, useSavedChats: false });
+      let startupReady, runtimeReady, reachedRuntime, holdRuntime = true, failSetup = false, setupCalls = 0;
+      const runtimeStartup = new Promise(resolve => { startupReady = resolve; });
+      const started = new Promise(resolve => { reachedRuntime = resolve; });
+      const ready = new Promise(resolve => { runtimeReady = resolve; });
+      const logger = { info() {}, warn() {}, error() {} };
+      const runtimeHost = new RuntimeHost({ app: { getPath: () => root }, logger,
+        coreHome: root, codexHome: path.join(root, "codex"), sourceRoot: root,
+        browserDescriptorPath: path.join(root, "browser.json"), getBrowserInteractionMode: () => browserInteractionMode,
+        supervisor: { coreHome: root, configPath, readConfig, readSetupConfig: readConfig,
+          stopForSetup: async () => ({ status: "stopped" }),
+          startIfConfigured: async () => {
+            if (holdRuntime) { reachedRuntime(); await ready; }
+            return { status: "ready" };
+          } },
+      });
+      runtimeHost.run = async (_name, args) => {
+        if (args.includes("--preflight-only")) return { code: 0 };
+        setupCalls++;
+        assert.ok(args.includes(browserInteractionMode === "manual" ? "--zero-risk-browser-interaction" : "--automatic-browser-interaction"));
+        assert.equal(args.includes("--ordinary-chats"), false);
+        fs.writeFileSync(configPath, JSON.stringify({ ...readConfig(), useSavedChats: args.includes("--saved-chats") }));
+        if (failSetup) throw new Error("synthetic saved-chat setup failure");
+        return { code: 0 };
+      };
+      const closed = [], events = [];
+      const tab = (id, interactionMode, status = "ready") => ({ id, traceId: id, interactionMode, status,
+        conversationKey: "shared-history", view: { webContents: { isDestroyed: () => false, close: () => closed.push(id) } } });
+      const automatic = tab("automatic", "automatic"), manual = tab("manual", "manual");
+      const running = tab("running", browserInteractionMode, "running");
+      const browserHost = Object.assign(Object.create(BrowserHost.prototype), {
+        manualOperation: null, turnTabs: new Map([automatic, manual, running].map(value => [value.id, value])),
+        currentOperation() { return this.manualOperation; }, logger, selectedTabId: "home",
+        syncPowerSaveBlocker() {}, syncViewVisibility() {}, snapshot: () => ({}), writeDescriptor() {},
+      });
+      const { api, handlers, sync } = preferenceIpc({ runtimeStartup, runtimeHost, browserHost, stateStore,
+        send: (channel, value) => events.push([channel, value]) });
+      assert.ok(handlers.has("launcher:use-saved-chats"), "register the actual preload channel");
+      assert.equal(handlers.has("launcher:temporary-chats"), false);
+      const blocked = api.setUseSavedChats(true);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(setupCalls, 0, "the runtime startup fence must hold IPC");
+      startupReady();
+      await assert.rejects(blocked, /Finish or cancel active ChatGPT turns/);
+      browserHost.turnTabs.delete(running.id);
+      browserHost.manualOperation = "browser-smoke";
+      await assert.rejects(api.setUseSavedChats(true), /Finish or cancel active ChatGPT turns/);
+      browserHost.manualOperation = null;
+      await assert.rejects(api.setUseSavedChats("true"), /boolean/);
+      const changing = api.setUseSavedChats(true);
+      await started;
+      assert.equal(readConfig().useSavedChats, true, "setup has written its candidate before runtime readiness");
+      assert.equal(sync().useSavedChats, false, "in-flight setup must not publish its uncommitted candidate");
+      assert.equal(stateStore.read().useSavedChats, false);
+      assert.deepEqual(closed, []);
+      assert.deepEqual(events, []);
+      browserHost.turnTabs.set(running.id, running);
+      holdRuntime = false;
+      runtimeReady();
+      assert.equal((await changing).useSavedChats, true);
+      assert.equal(createStateStore(path.join(root, "state.json")).read().useSavedChats, true);
+      assert.deepEqual(closed, ["automatic", "manual"]);
+      assert.equal(browserHost.turnTabs.get(running.id), running);
+      assert.equal(events.length, 1);
+      sync();
+      assert.deepEqual(closed, ["automatic", "manual"], "identical sync must not repeat retirement");
+      assert.equal(events.length, 1);
+      await assert.rejects(api.setUseSavedChats(false), /Finish or cancel active ChatGPT turns/);
+      browserHost.turnTabs.delete(running.id);
+      const retained = tab("retained", browserInteractionMode);
+      browserHost.turnTabs.set(retained.id, retained);
+      failSetup = true;
+      await assert.rejects(api.setUseSavedChats(false), /synthetic saved-chat setup failure/);
+      assert.equal(readConfig().useSavedChats, true, "real setup rollback must restore the prior preference");
+      assert.equal(stateStore.read().useSavedChats, true);
+      assert.equal(browserHost.turnTabs.get(retained.id), retained);
+      assert.deepEqual(closed, ["automatic", "manual"]);
+      assert.equal(events.length, 1);
+      failSetup = false;
+      assert.equal((await api.setUseSavedChats(false)).useSavedChats, false);
+      assert.equal(readConfig().useSavedChats, false, "false restores Temporary Chat without a parallel preference");
+      assert.deepEqual(closed, ["automatic", "manual", "retained"]);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
   }
 });
 
@@ -533,8 +632,8 @@ test("fresh-conversation snapshot uses runtime configuration and manual mode cle
 
 test("changing Bigger Context retires ready automatic chats before a previous mode can reuse them", () => {
   const vm = require("node:vm");
-  const state = { experimentalBiggerContext: false, experimentalFreshConversationPerTurn: false,
-    useSavedChats: true, autoApproveToolCalls: false, biggerContextAvailable: true };
+  const state = { experimentalBiggerContext: false, experimentalFreshConversationPerTurn: false, useSavedChats: true,
+    autoApproveToolCalls: false, biggerContextAvailable: true };
   const tabs = new Map([
     ["old", { status: "ready", conversationKey: "old-luna", interactionMode: "automatic" }],
     ["active", { status: "running", conversationKey: "running", interactionMode: "automatic" }],

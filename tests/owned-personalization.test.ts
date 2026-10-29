@@ -3,6 +3,17 @@ import { runInNewContext } from "node:vm";
 import { registerOwnedChatGptWorkPage, recoverOwnedTemporaryPersonalization } from "../src/adapters/chatgpt-web/owned-personalization";
 import { ensureChatGptPersonalizedConnectorAccess } from "../src/adapters/chatgpt-web/personalization";
 
+test("working native connector access keeps owned-page recovery dormant even without a personalization button", async () => {
+  const absent: any = { filter: () => absent, count: async () => 0 };
+  let recoveries = 0, proofs = 0;
+  const page: any = { getByRole: () => absent };
+  expect(await ensureChatGptPersonalizedConnectorAccess(page, undefined,
+    async () => { proofs++; return true; }, undefined,
+    async () => { recoveries++; return false; })).toBe("already-personalized");
+  expect(proofs).toBe(1);
+  expect(recoveries).toBe(0);
+});
+
 function fixture(options: { url?: string; gate?: boolean; layer?: boolean; ready?: boolean; clients?: number; notifyFails?: boolean;
   gateThrows?: boolean; layerThrows?: boolean; layerNull?: boolean } = {}) {
   let notifications = 0, evaluations = 0;

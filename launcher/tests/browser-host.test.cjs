@@ -189,6 +189,74 @@ test("primary browser bootstrap fails closed on navigation, renderer, and timeou
   }
 });
 
+function manualTabNavigationFixture(remoteError, chatUrl = "https://chatgpt.com/") {
+  const calls = [];
+  const logs = [];
+  const terminal = [];
+  let currentUrl = "about:blank";
+  const contents = new EventEmitter();
+  contents.isDestroyed = () => false;
+  contents.getURL = () => currentUrl;
+  contents.stop = () => calls.push("stop");
+  contents.loadURL = async (url) => {
+    calls.push(["load", url]);
+    if (url === IDLE_BROWSER_URL) {
+      currentUrl = url;
+      tab.url = url;
+      return;
+    }
+    throw remoteError;
+  };
+  const tab = {
+    id: "manual-edit-retry",
+    url: chatUrl,
+    traceId: "trace-edit-retry",
+    manualState: "awaiting-user",
+    view: { webContents: contents },
+  };
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    getBrowserInteractionMode: () => "manual",
+    turnTabs: new Map([[tab.id, tab]]),
+    logger: {
+      info: (event, detail) => logs.push(["info", event, detail]),
+      error: (event, detail) => logs.push(["error", event, detail]),
+    },
+    manualTurns: { removed(_tab, status) { terminal.push(status); } },
+    removeTurnTab(removed) { this.turnTabs.delete(removed.id); },
+  });
+  return { calls, fixture, logs, tab, terminal };
+}
+
+test("manual edit retry survives Electron superseding the ChatGPT navigation", async () => {
+  for (const chatUrl of ["https://chatgpt.com/", "https://chatgpt.com/?temporary-chat=true"]) {
+    const observed = manualTabNavigationFixture(
+      new Error(`ERR_ABORTED (-3) loading ${chatUrl}`), chatUrl,
+    );
+
+    await observed.fixture.initializeManualTurnTab(observed.tab);
+
+    assert.deepEqual(observed.calls, [
+      ["load", IDLE_BROWSER_URL],
+      ["load", chatUrl],
+    ]);
+    assert.equal(observed.fixture.turnTabs.has(observed.tab.id), true);
+    assert.deepEqual(observed.terminal, []);
+    assert.equal(observed.logs.some(([, event]) => event === "browser.manual_tab_navigation_superseded"), true);
+  }
+});
+
+test("manual ChatGPT navigation still fails closed on a real load failure", async () => {
+  const failure = new Error("ERR_FAILED (-2) loading 'https://chatgpt.com/'");
+  failure.code = "ERR_FAILED";
+  const observed = manualTabNavigationFixture(failure);
+
+  await observed.fixture.initializeManualTurnTab(observed.tab);
+
+  assert.equal(observed.fixture.turnTabs.has(observed.tab.id), false);
+  assert.deepEqual(observed.terminal, ["failed"]);
+  assert.equal(observed.logs.some(([, event]) => event === "browser.manual_tab_navigation_failed"), true);
+});
+
 test("primary browser initialization keeps its view offscreen but visible until ownership is committed", async () => {
   const calls = [];
   let currentUrl = "about:blank";
@@ -272,7 +340,7 @@ test("the idle home browser performs one bounded reload for a Cloudflare challen
     view: {
       webContents: {
         id: 42,
-        getURL: () => "https://chatgpt.com/?temporary-chat=true",
+        getURL: () => "https://chatgpt.com/",
         isDestroyed: () => false,
         loadURL: async (url) => calls.push(["loadURL", url]),
         executeJavaScript: async () => ({ draft: false, running: false }),
@@ -298,7 +366,7 @@ test("the idle home browser performs one bounded reload for a Cloudflare challen
   await fixture.cloudflareChallengeRecovery;
 
   assert.deepEqual(calls.filter(([name]) => name === "loadURL"), [
-    ["loadURL", "https://chatgpt.com/?temporary-chat=true"],
+    ["loadURL", "https://chatgpt.com/"],
   ]);
   assert.equal(fixture.cloudflareChallengeRecoveryArmed, false);
   assert.doesNotMatch(JSON.stringify(calls.filter(([name]) => name === "warn")), /PRIVATE_QUERY|https:\/\//);
@@ -428,7 +496,7 @@ function createContents() {
   };
   const webContents = {
     navigationHistory: history,
-    getURL: () => "https://chatgpt.com/?temporary-chat=true",
+    getURL: () => "https://chatgpt.com/",
     getTitle: () => "ChatGPT",
     isDestroyed: () => false,
     isLoading: () => false,
@@ -472,9 +540,10 @@ test("showing the browser restores its minimized parent window", () => {
   assert.deepEqual(calls, ["restore", "show-window", "sync", ["state", { visible: true }]]);
 });
 
-test("smoke preserves an already-hydrated Temporary Chat page", () => {
-  assert.equal(isTemporaryChatUrl("https://chatgpt.com/?temporary-chat=true"), true);
+test("smoke preserves only an already-hydrated Temporary Chat home", () => {
+  assert.equal(isTemporaryChatUrl("https://chatgpt.com/"), false);
   assert.equal(isTemporaryChatUrl("https://chatgpt.com/?temporary-chat=false"), false);
+  assert.equal(isTemporaryChatUrl("https://chatgpt.com/?temporary-chat=true"), true);
   assert.equal(isTemporaryChatUrl("https://chatgpt.com/c/abc?temporary-chat=true"), false);
   assert.equal(isTemporaryChatUrl("not a url"), false);
 });
@@ -485,6 +554,7 @@ test("session inspection delegates navigation and capability detection to the sh
     helper: { executable: "/runtime/electron", script: "/runtime/browser-helper.cjs" },
     descriptorPath: "/runtime/launcher-browser.json",
     getConnectorName: () => "Codex Native2",
+    getUseSavedChats: () => false,
     logger: { info() {} },
     view: { webContents: { getURL: () => "https://chatgpt.com/" } },
     refreshChatGptHomeDocument: async () => calls.push({ operation: "refresh" }),
@@ -494,7 +564,7 @@ test("session inspection delegates navigation and capability detection to the sh
         type: "result",
         value: {
           authenticated: true,
-          temporary: true,
+          newChat: true,
            url: "https://chatgpt.com/?temporary-chat=true",
            solAvailable: true,
            extraHighAvailable: true,
@@ -508,7 +578,7 @@ test("session inspection delegates navigation and capability detection to the sh
 
   assert.deepEqual(inspected, {
     authenticated: true,
-    temporary: true,
+    newChat: true,
      url: "https://chatgpt.com/?temporary-chat=true",
      solAvailable: true,
      extraHighAvailable: true,
@@ -518,6 +588,7 @@ test("session inspection delegates navigation and capability detection to the sh
   assert.equal(calls[0].operation, "refresh");
   assert.equal(calls[1].operation, "inspect");
   assert.equal(calls[1].appName, "Codex Native2");
+  assert.equal(calls[1].useSavedChats, false, "account inspection uses an isolated Temporary surface");
   assert.deepEqual(calls[1].payload, { detectCapabilities: true });
 });
 
@@ -527,11 +598,11 @@ test("session inspection fails closed on incomplete shared-helper capability evi
     descriptorPath: "/runtime/launcher-browser.json",
     getConnectorName: () => "Codex Native",
     logger: { info() {} },
-    view: { webContents: { getURL: () => "https://chatgpt.com/?temporary-chat=true" } },
+    view: { webContents: { getURL: () => "https://chatgpt.com/" } },
     refreshChatGptHomeDocument: async () => {},
     runBrowserHelperOperation: async () => ({
       type: "result",
-      value: { authenticated: true, temporary: true, url: "https://chatgpt.com/?temporary-chat=true" },
+      value: { authenticated: true, newChat: true, url: "https://chatgpt.com/" },
     }),
   });
   await assert.rejects(
@@ -783,7 +854,7 @@ test("navigation restores the task viewport at DOM readiness without completing 
   const emulations = [];
   let ownershipMarks = 0;
   const contents = Object.assign(new EventEmitter(), {
-    setWindowOpenHandler() {}, getURL: () => "https://chatgpt.com/?temporary-chat=true",
+    setWindowOpenHandler() {}, getURL: () => "https://chatgpt.com/",
     enableDeviceEmulation: options => emulations.push(options.viewSize),
     isDestroyed: () => false, insertCSS: async () => {},
     executeJavaScript: async script => { if (script.includes("__CODEX_WEB_GPT_SURFACE_ID__")) ownershipMarks++; },
@@ -946,11 +1017,11 @@ test("guest and incomplete server sessions do not prove launcher authentication"
     view: {
       webContents: {
         isDestroyed: () => false,
-        getURL: () => "https://chatgpt.com/?temporary-chat=true",
+        getURL: () => "https://chatgpt.com/",
         ...scriptEvents(),
         executeJavaScript: async () => ({
           composer: true,
-          temporary: true,
+          newChat: true,
           sessionAuthenticated: false,
           readyState: "complete",
         }),
@@ -974,11 +1045,11 @@ test("launcher authentication is established by the complete server session", as
     view: {
       webContents: {
         isDestroyed: () => false,
-        getURL: () => "https://chatgpt.com/?temporary-chat=true",
+        getURL: () => "https://chatgpt.com/",
         ...scriptEvents(),
         executeJavaScript: async () => ({
           composer: true,
-          temporary: true,
+          newChat: true,
           sessionAuthenticated: true,
           readyState: "complete",
         }),
@@ -997,7 +1068,7 @@ test("launcher authentication is established by the complete server session", as
 test("a verified session stays signed in while its composer is unavailable", async () => {
   const vm = require("node:vm");
   const { createDocument } = require("@mixmark-io/domino");
-  const url = "https://chatgpt.com/?temporary-chat=true";
+  const url = "https://chatgpt.com/";
   for (const owned of [true, false]) {
     const document = createDocument(`<form ${owned ? "data-chatgpt-composer" : ""}>
       <div data-composer-markdown contenteditable="true" role="textbox"></div></form>`);
@@ -1032,7 +1103,7 @@ test("a verified session stays signed in while its composer is unavailable", asy
 
 test("session verification distinguishes a missing login from network and invalid-response failures", async () => {
   const vm = require("node:vm");
-  const url = "https://chatgpt.com/?temporary-chat=true";
+  const url = "https://chatgpt.com/";
   const sessionUrl = "https://chatgpt.com/api/auth/session";
   const response = (payload, overrides = {}) => ({
     ok: true, status: 200, url: sessionUrl,
@@ -1142,7 +1213,7 @@ test("concurrent authentication probes share the same navigation and allow the n
   let probes = 0;
   let navigations = 0;
   let release;
-  let temporary = false;
+  let newChat = false;
   const ready = new Promise(resolve => { release = resolve; });
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
     turnTabs: new Map(),
@@ -1154,9 +1225,9 @@ test("concurrent authentication probes share the same navigation and allow the n
       executeJavaScript: async () => {
         probes += 1;
         await ready;
-        return { composer: true, temporary, sessionAuthenticated: true, url: "https://chatgpt.com/", readyState: "complete" };
+        return { composer: true, newChat, sessionAuthenticated: true, url: "https://chatgpt.com/", readyState: "complete" };
       },
-      loadURL: async () => { navigations += 1; temporary = true; },
+      loadURL: async () => { navigations += 1; newChat = true; },
     } },
     setState(patch) { this.state = { ...this.state, ...patch }; },
     snapshot() { return this.state; }, logger: { info() {} },
@@ -1166,7 +1237,7 @@ test("concurrent authentication probes share the same navigation and allow the n
   release();
   await Promise.all([first, second]);
   assert.equal(navigations, 1);
-  assert.equal(probes, 2); // initial surface, then the one navigated temporary surface
+  assert.equal(probes, 2); // initial surface, then the one navigated new-chat surface
   await fixture.probeAuthentication();
   assert.equal(probes, 3); // the settled operation must not cache stale authentication
 });
@@ -1224,7 +1295,7 @@ test("a later sign-out wins over pending native and page authentication probes",
   let finishNative;
   let finishPage;
   let requests = 0;
-  let url = "https://chatgpt.com/?temporary-chat=true";
+  let url = "https://chatgpt.com/";
   const updates = [];
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
     authenticationRevision: 0, state: { authenticated: false },
@@ -1249,7 +1320,7 @@ test("a later sign-out wins over pending native and page authentication probes",
   assert.equal(first, second);
   finishNative({ user: { id: "previous-account" } });
   await second;
-  finishPage({ composer: true, temporary: true, sessionAuthenticated: true });
+  finishPage({ composer: true, newChat: true, sessionAuthenticated: true });
   await page;
   assert.equal(requests, 2);
   assert.equal(updates.length, 1);
@@ -1268,12 +1339,12 @@ test("session changes use the open page after invalidating an older check", asyn
     const fixture = Object.assign(Object.create(BrowserHost.prototype), {
       authenticationRevision: 0, state: { authenticated: false }, turnTabs: new Map(),
       view: { webContents: {
-        getURL: () => "https://chatgpt.com/?temporary-chat=true", isDestroyed: () => false,
+        getURL: () => "https://chatgpt.com/", isDestroyed: () => false,
         ...scriptEvents(),
         executeJavaScript: async () => {
           pageChecks++;
           if (pageChecks === 1) await new Promise(resolve => { finishOld = resolve; });
-          return { composer: true, temporary: true, readyState: "complete", ...result };
+          return { composer: true, newChat: true, readyState: "complete", ...result };
         },
         session: { fetch: async () => { assert.fail("A loaded ChatGPT page owns session verification"); } },
       } },
@@ -1297,12 +1368,12 @@ test("sign-out during a refreshed page check rejects its earlier signed-in resul
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
     authenticationRevision: 0, state: { authenticated: false }, turnTabs: new Map(),
     view: { webContents: {
-      getURL: () => "https://chatgpt.com/?temporary-chat=true", isDestroyed: () => false,
+      getURL: () => "https://chatgpt.com/", isDestroyed: () => false,
       ...scriptEvents(),
       executeJavaScript: async () => {
         const check = ++pageChecks;
         if (check === 1) await new Promise(resolve => { finishPage = resolve; });
-        return { sessionAuthenticated: check === 1, readyState: "complete", composer: true, temporary: true };
+        return { sessionAuthenticated: check === 1, readyState: "complete", composer: true, newChat: true };
       },
       session: { fetch: async () => { assert.fail("Must use the loaded page"); } },
     } },
@@ -1345,7 +1416,7 @@ test("concurrent embedded login requests share one authentication operation", as
     logger: { info() {} },
     view: {
       webContents: {
-        getURL: () => "https://chatgpt.com/?temporary-chat=true",
+        getURL: () => "https://chatgpt.com/",
         loadURL: async () => {},
       },
     },
@@ -1385,7 +1456,7 @@ test("explicit login waits for an in-flight saved-session refresh before taking 
     snapshot: () => ({ authenticated: true }),
     logger: { info() {} },
     view: { webContents: {
-      getURL: () => "https://chatgpt.com/?temporary-chat=true",
+      getURL: () => "https://chatgpt.com/",
       loadURL: async () => {},
     } },
     probeAuthentication: async () => {
@@ -1693,7 +1764,7 @@ test("OAuth completion is re-proved on the primary Temporary Chat surface before
       ...scriptEvents(),
       executeJavaScript: async () => ({
         composer: true,
-        temporary: false,
+        newChat: false,
         sessionAuthenticated: true,
         readyState: "complete",
       }),
@@ -1714,7 +1785,7 @@ test("OAuth completion is re-proved on the primary Temporary Chat surface before
         ...scriptEvents(),
         executeJavaScript: async () => ({
           composer: primaryReady,
-          temporary: primaryReady,
+          newChat: primaryReady,
           sessionAuthenticated: primaryReady,
           readyState: "complete",
           url: primaryReady
@@ -1744,7 +1815,7 @@ test("OAuth completion is re-proved on the primary Temporary Chat surface before
 });
 
 test("a successful primary login redirect is re-proved on Temporary Chat before login completes", async () => {
-  let currentUrl = "https://chatgpt.com/";
+  let currentUrl = "https://chatgpt.com/c/after-login";
   const loadedUrls = [];
   const fixture = {
     activeTraceId: null,
@@ -1759,7 +1830,7 @@ test("a successful primary login redirect is re-proved on Temporary Chat before 
         ...scriptEvents(),
         executeJavaScript: async () => ({
           composer: true,
-          temporary: currentUrl === "https://chatgpt.com/?temporary-chat=true",
+          newChat: currentUrl === "https://chatgpt.com/?temporary-chat=true",
           sessionAuthenticated: true,
           readyState: "complete",
           url: currentUrl,
@@ -1788,7 +1859,7 @@ test("an authenticated primary surface closes a stale embedded auth popup", asyn
       ...scriptEvents(),
       executeJavaScript: async () => ({
         composer: false,
-        temporary: false,
+        newChat: false,
         sessionAuthenticated: false,
         readyState: "complete",
       }),
@@ -1803,15 +1874,15 @@ test("an authenticated primary surface closes a stale embedded auth popup", asyn
     logger: { info() {} },
     view: {
       webContents: {
-        getURL: () => "https://chatgpt.com/?temporary-chat=true",
+        getURL: () => "https://chatgpt.com/",
         isDestroyed: () => false,
         ...scriptEvents(),
         executeJavaScript: async () => ({
           composer: true,
-          temporary: true,
+          newChat: true,
           sessionAuthenticated: true,
           readyState: "complete",
-          url: "https://chatgpt.com/?temporary-chat=true",
+          url: "https://chatgpt.com/",
         }),
       },
     },
@@ -1919,7 +1990,7 @@ test("browser chrome state is read from the owned WebContents", () => {
   });
   assert.deepEqual(state, {
     title: "ChatGPT",
-    url: "https://chatgpt.com/?temporary-chat=true",
+    url: "https://chatgpt.com/",
     loading: false,
     canGoBack: true,
     canGoForward: false,
@@ -1932,6 +2003,7 @@ test("launcher delegates every ChatGPT model and turn operation to the shared br
     helper: { executable: "/runtime/electron", script: "/runtime/browser-helper.cjs" },
     descriptorPath: "/runtime/launcher-browser.json",
     getConnectorName: () => "Codex Native2",
+    getUseSavedChats: () => false,
     logger: { info: (...args) => calls.push(["log", ...args]) },
     show: () => calls.push(["show"]),
     waitForSurfaceReady: async () => calls.push(["ready"]),
@@ -1966,7 +2038,7 @@ test("browser helper operations fail closed when the configured connector name i
   assert.equal(helperCalls, 0);
 });
 
-for (const useSavedChats of [false, true]) test(`hidden connector verification uses the selected chat mode (${useSavedChats}) without selecting effort`, async () => {
+for (const useSavedChats of [false, true]) test(`hidden connector verification follows the selected chat mode (${useSavedChats}) without selecting effort`, async () => {
   const calls = [];
   const fixture = {
     helper: { executable: "/runtime/electron", script: "/runtime/browser-helper.cjs" },
@@ -1974,8 +2046,8 @@ for (const useSavedChats of [false, true]) test(`hidden connector verification u
     logger: { info: (event, detail) => calls.push(["log", event, detail]) },
     setState: (patch) => calls.push(["state", patch]),
     show: () => calls.push(["show"]),
+    refreshChatGptHomeDocument: async temporary => calls.push(["refresh", temporary]),
     getUseSavedChats: () => useSavedChats,
-    refreshChatGptHomeDocument: async (saved) => calls.push(["refresh", saved]),
     selectHighEffort: async () => {
       throw new Error("connector verification must not select an effort");
     },
@@ -2004,10 +2076,10 @@ for (const useSavedChats of [false, true]) test(`hidden connector verification u
   );
 });
 
-for (const useSavedChats of [false, true]) test(`verification refresh and authentication preserve the selected chat mode (${useSavedChats})`, async () => {
+for (const useSavedChats of [false, true]) test(`verification refresh authenticates the selected new chat (${useSavedChats})`, async () => {
   const target = useSavedChats ? "https://chatgpt.com/" : "https://chatgpt.com/?temporary-chat=true";
-  for (const initial of [target, "https://chatgpt.com/c/existing", "about:blank",
-    useSavedChats ? "https://chatgpt.com/?temporary-chat=true" : "https://chatgpt.com/"]) {
+  for (const initial of ["https://chatgpt.com/", "https://chatgpt.com/c/existing", "about:blank",
+    "https://chatgpt.com/?temporary-chat=true"]) {
     const calls = [];
     let currentUrl = initial;
     const fixture = Object.assign(Object.create(BrowserHost.prototype), {
@@ -2020,7 +2092,7 @@ for (const useSavedChats of [false, true]) test(`verification refresh and authen
         loadURL: async (url) => { currentUrl = url; calls.push(["navigate", url]); },
         executeJavaScript: async () => {
           calls.push(["authenticate"]);
-          return { sessionAuthenticated: true, composer: true, temporary: !useSavedChats,
+          return { sessionAuthenticated: true, composer: true, newChat: true,
             url: currentUrl, readyState: "complete" };
         },
       } },
@@ -2331,7 +2403,11 @@ test("hard refresh accepts Chromium's completed loading cycle even without did-f
   contents.reloadIgnoringCache = () => {
     calls.push("reload");
     queueMicrotask(() => {
-      contents.emit("did-start-loading");
+      contents.emit("did-start-navigation", {
+        url: "https://chatgpt.com/",
+        isMainFrame: true,
+        isSameDocument: false,
+      });
       contents.emit("did-stop-loading");
     });
   };
@@ -2344,7 +2420,43 @@ test("hard refresh accepts Chromium's completed loading cycle even without did-f
   await fixture.hardRefreshHome(100);
 
   assert.deepEqual(calls.filter(call => call === "reload" || call === "stop"), ["reload"]);
-  assert.equal(contents.listenerCount("did-start-loading"), 0);
+  assert.equal(contents.listenerCount("did-start-navigation"), 0);
+  assert.equal(contents.listenerCount("did-stop-loading"), 0);
+  assert.equal(contents.listenerCount("did-finish-load"), 0);
+});
+
+test("hard refresh ignores an old loading stop before its own main-frame navigation", async () => {
+  const calls = [];
+  const contents = new EventEmitter();
+  contents.isDestroyed = () => false;
+  contents.reloadIgnoringCache = () => {
+    calls.push("reload");
+    queueMicrotask(() => {
+      contents.emit("did-stop-loading");
+      contents.emit("did-start-navigation", {
+        url: "https://chatgpt.com/",
+        isMainFrame: false,
+        isSameDocument: false,
+      });
+      contents.emit("did-finish-load");
+      contents.emit("did-start-navigation", {
+        url: "https://chatgpt.com/",
+        isMainFrame: true,
+        isSameDocument: false,
+      });
+      contents.emit("did-stop-loading");
+    });
+  };
+  contents.stop = () => calls.push("stop");
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    view: { webContents: contents },
+    setState: patch => calls.push(["state", patch]),
+  });
+
+  await fixture.hardRefreshHome(100);
+
+  assert.deepEqual(calls.filter(call => call === "reload" || call === "stop"), ["reload"]);
+  assert.equal(contents.listenerCount("did-start-navigation"), 0);
   assert.equal(contents.listenerCount("did-stop-loading"), 0);
   assert.equal(contents.listenerCount("did-finish-load"), 0);
 });
@@ -2402,6 +2514,68 @@ test("launcher session refresh resolves persisted authentication before setup ac
     ["probe"],
     ["state", { status: "ready", message: "ChatGPT is ready" }],
   ]);
+});
+
+test("concurrent launcher session refresh requests share one browser operation", async () => {
+  let finishProbe;
+  let operations = 0;
+  const fixture = {
+    sessionRefreshOperation: null,
+    state: { authenticated: false },
+    snapshot: () => ({ authenticated: true }),
+    setState() {},
+    probeAuthentication: async () => await new Promise((resolve) => { finishProbe = resolve; }),
+    withManualOperation: async (_name, action) => {
+      operations += 1;
+      return await action();
+    },
+    view: { webContents: {
+      getURL: () => "https://chatgpt.com/?temporary-chat=true",
+      loadURL: async () => {},
+    } },
+  };
+
+  const first = BrowserHost.prototype.refreshAuthentication.call(fixture);
+  const second = BrowserHost.prototype.refreshAuthentication.call(fixture);
+  assert.equal(first, second);
+  assert.equal(operations, 1);
+  finishProbe({ authenticated: true });
+  await first;
+  assert.equal(fixture.sessionRefreshOperation, null);
+});
+
+test("startup sign-in redirects become signed-out state while real navigation errors remain errors", async () => {
+  for (const redirected of [true, false]) {
+    let url = IDLE_BROWSER_URL;
+    const failure = Object.assign(new Error("navigation stopped"), { code: -3 });
+    const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+      state: { authenticated: true },
+      snapshot() { return { ...this.state }; },
+      setState(patch) { Object.assign(this.state, patch); },
+      withManualOperation: async (_name, action) => await action(),
+      view: { webContents: {
+        isDestroyed: () => false,
+        getURL: () => url,
+        loadURL: async () => {
+          if (redirected) url = "https://chatgpt.com/auth/login?next=%2F";
+          throw failure;
+        },
+        ...scriptEvents(),
+        executeJavaScript: async () => { throw new Error("must not probe a login page"); },
+      } },
+    });
+    if (redirected) {
+      const state = await fixture.refreshAuthentication();
+      assert.equal(state.status, "signed-out");
+      assert.equal(state.authenticated, false);
+      assert.equal(state.message, "Sign in to ChatGPT");
+    } else {
+      await assert.rejects(fixture.refreshAuthentication(), error => error === failure);
+      assert.equal(fixture.state.status, "error");
+      assert.equal(fixture.state.loading, false);
+    }
+    assert.equal(fixture.sessionRefreshOperation, null);
+  }
 });
 
 test("manual browser operations disable background throttling until completion", async () => {
@@ -3191,7 +3365,7 @@ function recoveringRendererFixture() {
   });
   host.bindWebContents();
   return { host, contents, loads, events, storageClears: () => storageClears,
-    finishProbe: () => completeProbe?.({ sessionAuthenticated: true, temporary: true, composer: true }),
+    finishProbe: () => completeProbe?.({ sessionAuthenticated: true, newChat: true, composer: true }),
     crash: () => { dead = true; contents.emit("render-process-gone", {}, { reason: "killed", exitCode: 9 }); },
   };
 }
@@ -3211,7 +3385,7 @@ test("a killed primary renderer retires its pending probe, recovers without clea
   assert.equal(host.state.authenticated, true);
   assert.equal(fixture.storageClears(), 0);
   assert.ok(events.includes("browser.renderer_recovered"));
-  contents.executeJavaScript = async () => ({ sessionAuthenticated: false, temporary: true, composer: true, readyState: "complete" });
+  contents.executeJavaScript = async () => ({ sessionAuthenticated: false, newChat: true, composer: true, readyState: "complete" });
   await host.logout();
   assert.equal(host.manualOperation, null);
   assert.equal(host.state.authenticated, false);
@@ -3271,7 +3445,7 @@ test("a turn sign-in redirect updates the launcher and survives stale session pr
       ...scriptEvents(),
       executeJavaScript: async () => {
         probes++;
-        return { sessionAuthenticated: true, composer: true, temporary: true, url: "https://chatgpt.com/?temporary-chat=true" };
+        return { sessionAuthenticated: true, composer: true, newChat: true, url: "https://chatgpt.com/?temporary-chat=true" };
       },
     } },
     logger: { warn() {}, info() {} },
@@ -3337,7 +3511,7 @@ test("Zero Risk fails closed at every primary-surface inspection boundary", asyn
     getBrowserInteractionMode: () => "manual",
     view: { webContents: {
       isDestroyed: () => false,
-      getURL: () => "https://chatgpt.com/?temporary-chat=true",
+      getURL: () => "https://chatgpt.com/",
       ...scriptEvents(),
       executeJavaScript: async () => { domOperations += 1; },
       insertCSS: async () => { domOperations += 1; return "css-key"; },

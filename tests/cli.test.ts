@@ -26,7 +26,49 @@ async function runCli(args: string[], env: Record<string, string | undefined>) {
   return { exitCode, stdout, stderr };
 }
 
-test("production and DEV setup reject the removed connector-name option before configuration", async () => {
+test("doctor distinguishes a healthy local proxy from failed, pending and recovered model loading", async () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-doctor-catalog-"));
+  const appHome = join(root, "app");
+  const config = { ...defaultConfig("browser-only"), browserHost: "managed-chrome" as const };
+  let result: Record<string, unknown> | null = {
+    request: 2, at: "2026-10-22T07:53:53.739Z", status: 502,
+    failure: { stage: "transport", code: "ConnectionRefused", message: "PRIVATE_PROXY_URL" },
+  };
+  const paths: string[] = [];
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(req) {
+    paths.push(new URL(req.url).pathname);
+    return Response.json({
+      status: "ok", service: "codex-chatgpt-web", version: config.releaseVersion,
+      mode: config.mode, accepting_turns: true, pid: process.pid,
+      successful_model_catalog_requests: result ? 1 : 0,
+      last_model_catalog_result: result,
+    });
+  } });
+  config.port = server.port!;
+  mkdirSync(appHome, { recursive: true });
+  writeFileSync(join(appHome, "config.json"), JSON.stringify(config));
+  mkdirSync(join(root, "codex"), { recursive: true });
+  const codexSettings = 'model="chatgpt-web/gpt-6-sol"\nmodel_auto_compact_token_limit=150000\n';
+  writeFileSync(join(root, "codex", "config.toml"), codexSettings);
+  const env = { ...process.env, CODEX_CHATGPT_WEB_HOME: appHome, CODEX_HOME: join(root, "codex") };
+  try {
+    const check = async () => {
+      const report = JSON.parse((await runCli(["doctor", "--json"], env)).stdout);
+      expect(report.checks.find((c: any) => c.id === "proxy").status).toBe("ok");
+      expect(report.checks.find((c: any) => c.id === "codex-compaction").status).toBe("warning");
+      expect(readFileSync(join(root, "codex", "config.toml"), "utf8")).toBe(codexSettings);
+      return report.checks.find((c: any) => c.id === "model-catalog");
+    };
+    expect(await check()).toMatchObject({ status: "error", detail: "HTTP 502; transport; ConnectionRefused" });
+    result = null;
+    expect(await check()).toMatchObject({ status: "warning" });
+    result = { request: 3, at: "2026-10-22T07:54:00Z", status: 200 };
+    expect(await check()).toMatchObject({ status: "ok" });
+    expect(paths).toEqual(["/healthz", "/healthz", "/healthz"]);
+  } finally { server.stop(true); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("production and DEV setup reject retired options before configuration", async () => {
   const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-fixed-connector-"));
   try {
     const env = {
@@ -36,16 +78,22 @@ test("production and DEV setup reject the removed connector-name option before c
       CODEX_CHATGPT_WEB_DEV_HOME: join(root, "dev"),
     };
     for (const command of [["setup"], ["dev", "setup"]]) {
-      const result = await runCli([
-        ...command, "--browser-only", "--app-name", "Other Connector", "--acknowledge-unofficial",
-      ], env);
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toMatch(/Unknown.*arguments: --app-name Other Connector/);
+      for (const option of [["--app-name", "Other Connector"]]) {
+        const result = await runCli([
+          ...command, "--browser-only", ...option, "--acknowledge-unofficial",
+        ], env);
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toMatch(/Unknown.*arguments:/);
+        expect(result.stderr).toContain(option.join(" "));
+      }
     }
     expect(existsSync(join(root, "app", "config.json"))).toBeFalse();
     expect(existsSync(join(root, "dev", "config.json"))).toBeFalse();
     const help = await runCli(["--help"], env);
     expect(help.stdout).not.toContain("--app-name");
+    expect(help.stdout).toContain("--saved-chats");
+    expect(help.stdout).toContain("--temporary-chats");
+    expect(help.stdout).toContain("--ordinary-chats");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -55,16 +103,19 @@ test("production and DEV setup reject conflicting conversation modes before conf
   const root = mkdtempSync(join(tmpdir(), "codex-web-conversation-flags-"));
   try {
     for (const command of [["setup"], ["dev", "setup"]]) {
-      const result = await runCli([
-        ...command, "--browser-only", "--fresh-conversation", "--retained-conversation",
-      ], {
-        ...process.env,
-        CODEX_HOME: join(root, "codex"),
-        CODEX_CHATGPT_WEB_HOME: join(root, "app"),
-        CODEX_CHATGPT_WEB_DEV_HOME: join(root, "dev"),
-      });
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain("Choose --fresh-conversation or --retained-conversation");
+      for (const [enable, disable] of [["--fresh-conversation", "--retained-conversation"], ["--temporary-chats", "--ordinary-chats"], ["--temporary-chats", "--saved-chats"]]) {
+        const result = await runCli([
+          ...command, "--browser-only", enable, disable,
+        ], {
+          ...process.env,
+          CODEX_HOME: join(root, "codex"),
+          CODEX_CHATGPT_WEB_HOME: join(root, "app"),
+          CODEX_CHATGPT_WEB_DEV_HOME: join(root, "dev"),
+        });
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain(enable === "--temporary-chats"
+          ? "Choose --temporary-chats or --saved-chats/--ordinary-chats" : `Choose ${enable} or ${disable}`);
+      }
     }
     expect(existsSync(join(root, "app", "config.json"))).toBeFalse();
     expect(existsSync(join(root, "dev", "config.json"))).toBeFalse();
@@ -327,7 +378,7 @@ test("DEV browser-only setup persists only the isolated harness profile", async 
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({
       authenticated: true,
-      temporary: true,
+      newChat: true,
       solAvailable: true,
       extraHighAvailable: false,
       proAvailable: false,

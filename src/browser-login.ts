@@ -55,6 +55,7 @@ interface LoginVerificationMarker {
 
 const SYSTEM_LOGIN_TIMEOUT_MS = 10 * 60_000;
 const SYSTEM_LOGIN_STOP_TIMEOUT_MS = 5_000;
+const LOGIN_STORAGE_ROOT_DOMAINS = ["chatgpt.com", "openai.com"] as const;
 const CHATGPT_ORIGIN = new URL(CHATGPT_TEMPORARY_CHAT_URL).origin;
 
 function browserProcessExited(browser: ChildProcess): boolean {
@@ -261,7 +262,7 @@ export async function captureSystemBrowserLogin(
   const profileDir = mkdtempSync(join(profileParent, "login-profile-"));
   try { chmodSync(profileDir, 0o700); } catch {}
   process.stdout.write(
-    "Sign in with your passkey in the dedicated Chrome window. When Temporary Chat is ready, return to Codex Web GPT and choose Continue.\n",
+    "Sign in with your passkey in the dedicated Chrome window. When ChatGPT is ready, return to Codex Web GPT and choose Continue.\n",
   );
 
   let capture: SystemBrowserLoginCapture | undefined;

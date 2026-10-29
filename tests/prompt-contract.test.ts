@@ -142,6 +142,38 @@ test("inline and staged history escape Markdown delimiters without changing deco
   expect(decoded.messages[1].content).toContain("\\u0060");
 });
 
+test("multipart JSON shields the rich user renderer's delimiters while preserving every decoded value", () => {
+  const parsed = request("high");
+  // The harmless source from #886 changed after Send despite an exact stage acknowledgement.
+  const content = 'Use "quoted text", <placeholder>, **bold**, _name_, ~~old~~, [label](https://example.com).\n\n### Heading\nC:\\tmp\\file\n'.repeat(700)
+    + 'Literal \\u0022 \\u005c \\n; Unicode 中文 😀; tab\t and CR\r.';
+  parsed.context.systemPrompt = [content];
+  parsed.context.messages[1]!.content = content;
+  const capabilities = { localToolsEnabled: true, solAvailable: true, extraHighAvailable: true, proAvailable: true };
+  const token = undefined;
+  const inline = compileChatGptWebPrompt(parsed, capabilities, token);
+  const inlineJson = inline.text.match(/<codex_context_json>\n(.+)\n<\/codex_context_json>/s)![1]!;
+  expect(inlineJson).toContain("https://example.com");
+  expect(JSON.parse(inlineJson).system).toEqual([content]);
+  for (const parts of [2, 6] as const) {
+    const compiled = compileChatGptWebPrompt(parsed, capabilities, token, { experimentalMultipartParts: parts });
+    const records = compiled.multipart!.parts.flatMap(payload => {
+      expect(payload).not.toContain('\\"quoted text\\"');
+      expect(payload).not.toContain("<placeholder>");
+      expect(payload).not.toContain("**bold**");
+      expect(payload).not.toContain("_name_");
+      expect(payload).not.toContain("~~old~~");
+      expect(payload).not.toContain("[label]");
+      expect(payload).not.toContain("https:");
+      expect(payload).not.toContain("### Heading");
+      expect(payload).not.toContain("C:\\\\tmp");
+      return JSON.parse(payload).records;
+    });
+    expect(records.find(record => record.kind === "system").content).toBe(content);
+    expect(records.find(record => record.kind === "message" && record.message_index === 1).message.content).toBe(content);
+  }
+});
+
 test("history handle cleanup works on decoded text and preserves native call identities", () => {
   const call = `call_${"A".repeat(32)}`;
   const context = {

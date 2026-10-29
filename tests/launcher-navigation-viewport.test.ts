@@ -1,20 +1,22 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron } from "playwright-core";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
-import { activateChatGptEffortMenu } from "../src/chatgpt-session";
+import { activateChatGptEffortMenu } from "../src/chatgpt-ui/model-picker";
 
 test.skipIf(!process.env.LAUNCHER_TEST_ELECTRON)("navigated Electron task pages stay usable before delayed resources finish", async () => {
   const userData = mkdtempSync(join(tmpdir(), "launcher-navigation-"));
+  const log = join(userData, "fixture.log");
   const env = Object.fromEntries(Object.entries(process.env)
     .filter(([key, value]) => key !== "ELECTRON_RUN_AS_NODE" && value !== undefined)) as Record<string, string>;
-  const app = await _electron.launch({
-    executablePath: process.env.LAUNCHER_TEST_ELECTRON,
-    args: [resolve("launcher/tests/fixtures/navigation-viewport.cjs"), `--user-data-dir=${userData}`], env,
-  });
+  let app: Awaited<ReturnType<typeof _electron.launch>> | undefined;
   try {
+    app = await _electron.launch({
+      executablePath: process.env.LAUNCHER_TEST_ELECTRON,
+      args: [resolve(import.meta.dir, "../launcher/tests/fixtures/navigation-viewport.cjs"), `--user-data-dir=${userData}`, `--fixture-log=${log}`], env,
+    });
     const deadline = Date.now() + 5_000;
     while (!await app.evaluate(() => Boolean((globalThis as any).navigationFixture)) && Date.now() < deadline) {
       await Bun.sleep(20);
@@ -59,7 +61,12 @@ test.skipIf(!process.env.LAUNCHER_TEST_ELECTRON)("navigated Electron task pages 
       }
     }
   } finally {
-    await app.close();
-    rmSync(userData, { recursive: true, force: true });
+    try { await app?.close(); }
+    finally {
+      const diagnostics = existsSync(log) ? readFileSync(log, "utf8") : "";
+      console.error(diagnostics);
+      rmSync(userData, { recursive: true, force: true });
+      expect(diagnostics).not.toContain("fatal:");
+    }
   }
 }, 30_000);

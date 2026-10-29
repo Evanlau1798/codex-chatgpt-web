@@ -54,6 +54,7 @@ test("model selection recognizes Latest in the launcher languages without accept
   for (const [label, accepted] of [
     ["Latest", true], ["Le plus récent", true], ["最新", true], ["最新模型", true], ["최신", true], ["GPT-6 Pro", true], ["GPT-6", true], ["6", true],
     ["GPT-5.6 Sol", false], ["GPT-7 Pro", false], ["Latest preview", false], ["最新模型預覽", false],
+    ["GPT-6 Sol", true], ["GPT-6.1 Sol", false],
   ] as const) {
     const menu = { menu: {
       getByRole: (_role: string, options: { name: RegExp }) => ({
@@ -154,14 +155,14 @@ test("versioned announcements must agree with the requested effort and announced
 test("all recognizable effort evidence must agree across headers and status descriptions", async () => {
   for (const descriptions of [["6 High", "Medium, 2 of 5."], ["6 High", "Medium"],
     ["6 High", "High, 2 of 5."], ["6 High", "中，第 2 項，共 5 項。"],
-    ["High, 3 of 5.", "Medium"], ["6 High", "High, 3 of 6."], ["6 High", "High, 3 of 0."],
+    ["High, 3 of 5.", "Medium"], ["6 High", "High, 3 of 7."], ["6 High", "High, 3 of 0."],
     ["6 High", "Extra    High"], ["6 High", "High, 2 of 5"], ["6 High", "High、2 of 5。"],
     ["6 High", "Medium、3 of 5"]]) {
     expect(chatGptModelFamilyMatches(descriptions, "6", "high")).toBe(false);
     await expect(assertChatGptModelFamily(confirmationFixture("GPT-6", descriptions), "6", "high", 2))
       .rejects.toThrow("could not be selected and verified");
   }
-  for (const descriptions of [["6 High", "High, 3 of 5."], ["6 High", "高，第 3 項，共 5 項。"],
+  for (const descriptions of [["6 High", "High, 3 of 6."], ["6 High", "High, 3 of 5."], ["6 High", "高，第 3 項，共 5 項。"],
     ["6 Élevé", "Élevé, 3 sur 5."], ["6 High", "High, 3 of 5"], ["6 High", "High、3 of 5。"]]) {
     expect(chatGptModelFamilyMatches(descriptions, "6", "high")).toBe(true);
     await assertChatGptModelFamily(confirmationFixture("GPT-6", descriptions), "6", "high", 2);
@@ -199,6 +200,31 @@ test("foreign version prefixes remain contradictory before punctuation or adjace
   for (const header of ["６：", "GPT-6—", "6、"])
     await assertChatGptModelFamily(confirmationFixture("GPT-6", [header, "High, 3 of 5."]), "6", "high", 2);
 });
+
+test("explicit Astra Max verifies the requested Pro route without accepting Ultra or another model", () => {
+  expect(chatGptModelFamilyMatches(["6 Astra Max"], "6", "max")).toBeTrue();
+  expect(chatGptUsageModelFromAnnouncements(["6 Astra Max"])).toBe("gpt-6-pro");
+  for (const description of ["6 Astra Ultra", "6 Astra High", "6 Sol Max", "6.1 Astra Max", "6 Max"]) {
+    expect(chatGptModelFamilyMatches([description], "6", "max")).toBeFalse();
+    expect(chatGptUsageModelFromAnnouncements([description])).toBe("pro-unknown");
+  }
+});
+
+test("Simplified Chinese effort announcements preserve exact model and effort verification (#911)", () => {
+  for (const [label, effort] of [["即时", "low"], ["中", "medium"], ["高", "high"]] as const) {
+    expect(chatGptModelFamilyMatches([`GPT-6 Sol ${label}，第 3 项，共 3 项`, `6 ${label}`], "6", effort)).toBeTrue();
+    expect(chatGptModelFamilyMatches([`5.6 ${label}`], "6", effort)).toBeFalse();
+    expect(chatGptModelFamilyMatches([`6 Astra ${label}`], "6", effort)).toBeFalse();
+    expect(chatGptModelFamilyMatches([`6 ${label}`, "6 Pro"], "6", effort)).toBeFalse();
+  }
+  for (const effort of ["low", "medium", "xhigh", "max"] as const) {
+    expect(chatGptModelFamilyMatches(["6 高"], "6", effort)).toBeFalse();
+  }
+  for (const label of ["超高", "高级", "高 reasoning", "高 6.1"]) {
+    expect(chatGptModelFamilyMatches([`6 ${label}`], "6", "high")).toBeFalse();
+  }
+});
+
 
 test("model verification accepts Unicode announcement punctuation without weakening identity", () => {
   for (const separator of ["、", "，", "،", "؛", "：", "—", "。", ",", ";"]) {

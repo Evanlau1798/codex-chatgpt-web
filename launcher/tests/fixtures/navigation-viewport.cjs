@@ -1,5 +1,16 @@
 // Delayed-resource navigation reproduction reported in issue #804 by @xianengqi.
 const { app, BrowserWindow, WebContentsView } = require("electron");
+const fs = require("node:fs");
+const logPath = process.argv.find(value => value.startsWith("--fixture-log="))?.slice("--fixture-log=".length);
+const stage = message => {
+  const line = `[navigation fixture ${process.pid}] ${message}\n`;
+  process.stderr.write(line);
+  if (logPath) fs.appendFileSync(logPath, line);
+};
+const fail = error => { stage(`fatal: ${error?.stack || String(error)}`); app.exit(1); };
+process.on("uncaughtException", fail);
+process.on("unhandledRejection", fail);
+stage("starting");
 const { createServer } = require("node:http");
 const { BrowserHost } = require("../../electron/browser-host.cjs");
 
@@ -54,6 +65,7 @@ app.whenReady().then(async () => {
     await view.webContents.loadURL(`about:blank#${id}`);
   }
   host.syncViewVisibility();
+  stage("ready");
   global.navigationFixture = {
     host, url: `http://127.0.0.1:${server.address().port}/page`,
     release() {
@@ -62,8 +74,11 @@ app.whenReady().then(async () => {
     },
   };
   app.on("before-quit", () => {
+    // Exercise late turn callbacks when native window teardown precedes host.destroy().
+    stage("before-quit");
     global.navigationFixture.release();
     server.close();
     server.closeAllConnections();
   });
+  app.on("will-quit", () => stage("will-quit"));
 });

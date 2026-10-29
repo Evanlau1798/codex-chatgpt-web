@@ -67,6 +67,10 @@ test("window state is stored atomically with owner-only permissions", () => {
     };
     writeWindowState(file, state);
     assert.deepEqual(readWindowState(file, displays), state);
+    const contents = "\uFEFF" + fs.readFileSync(file, "utf8");
+    fs.writeFileSync(file, contents);
+    assert.deepEqual(readWindowState(file, displays), state);
+    assert.equal(fs.readFileSync(file, "utf8"), contents);
     if (process.platform !== "win32") assert.equal(fs.statSync(file).mode & 0o077, 0);
     assert.equal(fs.readdirSync(root).some((name) => name.includes(".tmp-")), false);
   } finally {

@@ -178,15 +178,20 @@ async function ensureWithinDeadline(
     await waitForChatGptMutationPoll(UI_SETTLE_MS, signal);
     personalizedCount = await runChatGptMutationStep(() => personalized.count(), deadline, signal);
     unpersonalizedCount = await runChatGptMutationStep(() => unpersonalized.count(), deadline, signal);
+    if (personalizedCount === 0 && unpersonalizedCount === 0 && await prove()) {
+      await capture("personalization-already-enabled");
+      return "already-personalized";
+    }
+    let recovered = false;
     if (personalizedCount === 0 && unpersonalizedCount === 0 && recoverOwnedPersonalization
-      && await runChatGptOwnedMutationStep(recoverOwnedPersonalization, deadline, signal)) {
+      && (recovered = await runChatGptOwnedMutationStep(recoverOwnedPersonalization, deadline, signal))) {
       await capture("personalization-owned-experiment-enabled");
       await waitForChatGptMutationPoll(UI_SETTLE_MS, signal);
       personalizedCount = await runChatGptMutationStep(() => personalized.count(), deadline, signal);
       unpersonalizedCount = await runChatGptMutationStep(() => unpersonalized.count(), deadline, signal);
     }
     if (personalizedCount === 0 && unpersonalizedCount === 0) {
-      if (await prove()) {
+      if (recovered && await prove()) {
         await capture("personalization-already-enabled");
         return "already-personalized";
       }

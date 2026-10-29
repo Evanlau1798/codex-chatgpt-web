@@ -12,8 +12,8 @@ import {
 } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { matchesPath as contains } from "./environment-paths";
-import { environmentFromTurnContext } from "./codex-rollout-permissions";
+import { matchesPath as contains, pathIdentity } from "./environment-paths";
+import { environmentFromTurnContext, absolutePaths } from "./codex-rollout-permissions";
 import { expandUserPath } from "../../config";
 import { findTopLevelAssignment } from "../../codex-integration-document";
 import type { CodexTool } from "../../types";
@@ -468,9 +468,11 @@ function validateMetadataConsistency(
     throw new Error(`ChatGPT Web ${owner} workspace metadata does not contain its Codex rollout cwd`);
   }
   if ((workspaceRootsDeclared || environment.sandboxPolicy.type !== "dangerFullAccess")
-    && lineage.workspaceRoots.some(root => !environment.roots.some(rolloutRoot => (
-    contains(rolloutRoot, root) || contains(root, rolloutRoot)
-  )))) {
+    && lineage.workspaceRoots.some(root => (
+      !environment.roots.some(rolloutRoot => contains(rolloutRoot, root) || contains(root, rolloutRoot))
+      && !(environment.sandboxPolicy.type === "dangerFullAccess"
+        && pathIdentity(root) === pathIdentity(environment.cwd))
+    ))) {
     throw new Error(`ChatGPT Web ${owner} workspace metadata conflicts with its Codex rollout roots`);
   }
 }
@@ -518,7 +520,11 @@ export function resolveCurrentCodexRolloutEnvironment(options: {
     try {
       const size = fstatSync(fd).size;
       if (!Number.isSafeInteger(size) || size <= 0) throw new Error("Codex rollout is empty");
-      validateSessionMeta(firstRolloutRecord(fd, size), lineage);
+      const session = firstRolloutRecord(fd, size);
+      validateSessionMeta(session, lineage);
+      const sessionPayload = record(session.payload)!;
+      const runtimeWorkspaceRoots = sessionPayload.runtime_workspace_roots === undefined
+        ? undefined : absolutePaths(sessionPayload.runtime_workspace_roots, "runtime_workspace_roots");
       const latest = latestRolloutPayload(fd, size, "turn_context");
       if (!latest) throw new Error("Codex rollout has no complete turn context");
       if (latest.turn_id !== turnId && (compactionSourceTurnId === undefined || latest.turn_id !== compactionSourceTurnId)) {
@@ -527,8 +533,8 @@ export function resolveCurrentCodexRolloutEnvironment(options: {
         }
         continue;
       }
-      const environment = environmentFromTurnContext(latest, latest.turn_id as string, tools);
-      const workspaceRootsDeclared = latest.workspace_roots !== undefined;
+      const environment = environmentFromTurnContext(latest, latest.turn_id as string, tools, runtimeWorkspaceRoots);
+      const workspaceRootsDeclared = latest.workspace_roots !== undefined || runtimeWorkspaceRoots !== undefined;
       validateMetadataConsistency(lineage, environment, workspaceRootsDeclared);
       if (options.historicalEnvironmentMessages) {
         verifyHistoricalEnvironmentMessages(fd, size, turnId, options.historicalEnvironmentMessages);

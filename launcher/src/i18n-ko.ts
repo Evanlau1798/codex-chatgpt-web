@@ -139,7 +139,7 @@ export const ko = {
   mcpStepTwo: "로컬 하네스 연결",
   mcpStepTwoBody: "Tunnel ID와 API 키를 붙여넣으세요. 터널은 ChatGPT 플러그인을 사용할 OpenAI 계정과 동일한 계정에 속해야 합니다. 키는 비공개 로컬 저장소에만 저장되며 런처 로그에는 기록되지 않습니다.",
   mcpStepTwoHint: "이 단계가 성공하고 터널이 실행 중이어야 ChatGPT에 MCP 커넥터를 추가할 수 있습니다.",
-  mcpCatalogRequired: "Codex 모델의 설치 및 검증이 완료될 때까지 하네스를 연결할 수 없습니다. 설정으로 돌아가 모델 설치를 클릭하고 Codex를 한 번 다시 시작한 다음 모델 카탈로그 확인이 완료될 때까지 기다리세요.",
+  mcpSetupRequired: "먼저 설정에서 Codex 통합을 설치하세요. Codex가 모델 목록을 새로 고치는 동안에도 MCP를 연결할 수 있습니다.",
   tunnelId: "Tunnel ID",
   runtimeKey: "API 키 (Admin 키 아님)",
   connect: "하네스 연결",

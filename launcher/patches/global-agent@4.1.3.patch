@@ -1,0 +1,13 @@
+diff --git a/dist/classes/HttpsProxyAgent.js b/dist/classes/HttpsProxyAgent.js
+index 180cbc2b9365d7d0ac025764deb588b8686c0682..796a49e19db5123a42edfac899ff239e6115625b 100644
+--- a/dist/classes/HttpsProxyAgent.js
++++ b/dist/classes/HttpsProxyAgent.js
+@@ -31,6 +31,8 @@ class HttpsProxyAgent extends Agent_1.default {
+             }
+             const secureSocket = tls_1.default.connect({
+                 ...configuration.tls,
++                host: configuration.host,
++                servername: configuration.tls.servername ?? (net_1.default.isIP(configuration.host) ? undefined : configuration.host),
+                 socket,
+             });
+             callback(null, secureSocket);

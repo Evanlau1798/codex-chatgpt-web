@@ -39,7 +39,7 @@ test.skipIf(!executablePath)(`Limits account ${scenario} preserves the page and 
         <dialog open>Unrelated dialog</dialog></main>` });
     });
     const page = await context.newPage();
-    const start = "https://chatgpt.com/?temporary-chat=true";
+    const start = "https://chatgpt.com/";
     await page.goto(start);
     const original = await page.content();
     if (["account-change", "plan-change", "payment-change"].includes(scenario)) {

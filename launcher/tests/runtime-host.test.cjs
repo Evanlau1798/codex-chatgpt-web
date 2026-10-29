@@ -177,6 +177,123 @@ test("experimental no-auto-compact preserves a deliberately disconnected Codex r
   assert.equal(disabled, 1);
 });
 
+for (const setting of ["setFreshConversationPerTurn", "setUseSavedChats"]) for (const symlink of [false, true])
+test(`failed ${setting} restores every mutable setup file before restarting the previous runtime (symlink=${symlink})`, async context => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-setup-checkpoint-"));
+  const coreHome = path.join(root, "core");
+  const codexHome = path.join(root, "codex");
+  const configPath = path.join(coreHome, "config.json");
+  const journalPath = path.join(coreHome, "codex", "integration-journal.json");
+  const recoveryJournalPath = path.join(coreHome, "codex", "integration-journal.recovery.json");
+  const keyPath = path.join(coreHome, "secrets", "tunnel-runtime.key");
+  const profileDir = path.join(coreHome, "tunnel", "profiles");
+  const profilePath = path.join(profileDir, "custom.yaml");
+  const codexConfigPath = path.join(codexHome, "config.toml");
+  const sharedDirectory = path.join(root, "shared");
+  const sharedConfigPath = path.join(sharedDirectory, "config.toml");
+  const codexModelsCachePath = path.join(codexHome, "models_cache.json");
+  const oldConfig = {
+    mode: "full",
+    browserHost: "launcher",
+    browserInteractionMode: "automatic",
+    experimentalFreshConversationPerTurn: false,
+    useSavedChats: false,
+    composerPredictionsEnabled: false,
+    releaseVersion: "0.1.16",
+    tunnel: {
+      runtimeKeyFile: keyPath,
+      profileDir,
+      profileName: "custom",
+    },
+  };
+  for (const file of [configPath, journalPath, recoveryJournalPath, keyPath, profilePath, codexConfigPath, codexModelsCachePath]) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+  }
+  fs.writeFileSync(configPath, `${JSON.stringify(oldConfig)}\n`, { mode: 0o600 });
+  fs.writeFileSync(journalPath, "old journal\n", { mode: 0o600 });
+  fs.writeFileSync(recoveryJournalPath, "old recovery journal\n", { mode: 0o600 });
+  fs.writeFileSync(keyPath, "old key\n", { mode: 0o600 });
+  fs.writeFileSync(profilePath, "old profile\n", { mode: 0o600 });
+  fs.mkdirSync(sharedDirectory, { mode: 0o750 });
+  fs.writeFileSync(sharedConfigPath, "old codex config\n", { mode: 0o640 });
+  if (symlink) {
+    try { fs.symlinkSync(sharedConfigPath, codexConfigPath); }
+    catch (error) {
+      if (error.code !== "EPERM") throw error;
+      fs.rmSync(root, { recursive: true, force: true });
+      context.skip("File symlinks require permission on this Windows host");
+      return;
+    }
+  } else fs.writeFileSync(codexConfigPath, "old codex config\n", { mode: 0o640 });
+  const linkTarget = symlink ? fs.readlinkSync(codexConfigPath) : null;
+  const linkInode = fs.lstatSync(codexConfigPath).ino;
+  const directoryMode = fs.statSync(sharedDirectory).mode & 0o777;
+  const fileMode = fs.statSync(sharedConfigPath).mode & 0o777;
+  fs.writeFileSync(codexModelsCachePath, "old codex models cache\n", { mode: 0o600 });
+
+  let startAttempts = 0;
+  const readConfig = () => JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const supervisor = {
+    coreHome,
+    configPath,
+    readSetupConfig: readConfig,
+    readConfig,
+    stopForSetup: async () => ({ status: "stopped" }),
+    startIfConfigured: async () => {
+      startAttempts += 1;
+      if (readConfig().releaseVersion !== oldConfig.releaseVersion) {
+        throw new Error("synthetic updated runtime startup failure");
+      }
+      return { status: "ready" };
+    },
+  };
+  const host = new RuntimeHost({
+    app: { getPath: () => path.join(root, "launcher") },
+    logger: { info() {}, warn() {}, error() {} },
+    sourceRoot: "/source",
+    browserDescriptorPath: path.join(coreHome, "runtime", "launcher-browser.json"),
+    codexHome,
+    supervisor,
+  });
+  host.run = async (_name, args) => {
+    if (args.includes("--preflight-only")) return { code: 0, stdout: "", stderr: "" };
+    fs.writeFileSync(configPath, `${JSON.stringify({ ...oldConfig, releaseVersion: "0.2.0", experimentalFreshConversationPerTurn: true, useSavedChats: true })}\n`);
+    fs.writeFileSync(journalPath, "new journal\n");
+    fs.writeFileSync(recoveryJournalPath, "new recovery journal\n");
+    fs.writeFileSync(keyPath, "new key\n");
+    fs.writeFileSync(profilePath, "new profile\n");
+    fs.writeFileSync(codexConfigPath, "new codex config\n");
+    fs.rmSync(codexModelsCachePath);
+    return { code: 0, stdout: "", stderr: "" };
+  };
+
+  try {
+    await assert.rejects(
+      host[setting](true),
+      /synthetic updated runtime startup failure$/,
+    );
+    assert.equal(startAttempts, 2);
+    assert.deepEqual(readConfig(), oldConfig);
+    assert.equal(fs.readFileSync(journalPath, "utf8"), "old journal\n");
+    assert.equal(fs.readFileSync(recoveryJournalPath, "utf8"), "old recovery journal\n");
+    assert.equal(fs.readFileSync(keyPath, "utf8"), "old key\n");
+    assert.equal(fs.readFileSync(profilePath, "utf8"), "old profile\n");
+    assert.equal(fs.readFileSync(codexConfigPath, "utf8"), "old codex config\n");
+    assert.equal(fs.lstatSync(codexConfigPath).isSymbolicLink(), symlink);
+    if (symlink) {
+      assert.equal(fs.lstatSync(codexConfigPath).ino, linkInode);
+      assert.equal(fs.readlinkSync(codexConfigPath), linkTarget);
+    }
+    assert.equal(fs.readFileSync(sharedConfigPath, "utf8"), "old codex config\n");
+    assert.equal(fs.statSync(sharedDirectory).mode & 0o777, directoryMode);
+    assert.equal(fs.statSync(sharedConfigPath).mode & 0o777, fileMode);
+    assert.equal(fs.readFileSync(codexModelsCachePath, "utf8"), "old codex models cache\n");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+
 test("DEV setup child environment removes launcher-rebound production aliases", async () => {
   const fixture = devHostFor(null);
   assert.deepEqual(fixture.host.devSetupEnvironment({
@@ -601,6 +718,38 @@ test("tool approvals opt in and out through setup without refreshing models or c
   }
 });
 
+test("saved-chat ABI uses transactional setup in both profiles and interaction modes", async () => {
+  for (const makeHost of [hostFor, devHostFor]) {
+    for (const mode of ["browser-only", "full"]) {
+      for (const browserInteractionMode of ["automatic", "manual"]) {
+        const existing = { mode, browserInteractionMode, useSavedChats: false, experimentalFreshConversationPerTurn: true, autoApproveToolCalls: true };
+        const fixture = makeHost(existing);
+        fixture.host.getBrowserInteractionMode = () => browserInteractionMode;
+        for (const enabled of [true, false]) {
+          assert.equal((await fixture.host.setUseSavedChats(enabled)).enabled, enabled);
+          const { name, args } = fixture.invocation();
+          assert.equal(name, "use-saved-chats");
+          assert.deepEqual(args.slice(0, makeHost === devHostFor ? 2 : 1), makeHost === devHostFor ? ["dev", "setup"] : ["setup"]);
+          assert.equal(args.includes(`--${mode}`), true);
+          assert.equal(args.includes(enabled ? "--saved-chats" : "--temporary-chats"), true);
+          assert.equal(args.includes(enabled ? "--temporary-chats" : "--saved-chats"), false);
+          assert.equal(args.includes("--ordinary-chats"), false);
+          assert.equal(args.includes(browserInteractionMode === "manual" ? "--zero-risk-browser-interaction" : "--automatic-browser-interaction"), true);
+          assert.equal(args.includes("--restart-service"), makeHost === hostFor);
+          assert.equal(args.includes("--auto-approve-tool-calls"), true);
+          assert.equal(existing.useSavedChats, false, "setup owns persistence and rollback");
+          assert.equal(existing.experimentalFreshConversationPerTurn, true);
+        }
+      }
+    }
+    const missing = makeHost(null);
+    await assert.rejects(() => missing.host.setUseSavedChats(true), /Initialize/);
+    const valid = makeHost({ mode: "browser-only" });
+    await assert.rejects(() => valid.host.setUseSavedChats("true"), /boolean/);
+    assert.equal(valid.invocation(), undefined);
+  }
+});
+
 test("fresh-conversation preference uses production and DEV setup without forcing mode or other preferences", async () => {
   for (const makeHost of [hostFor, devHostFor]) {
     for (const mode of ["browser-only", "full"]) {
@@ -627,16 +776,6 @@ test("fresh-conversation preference uses production and DEV setup without forcin
       await assert.rejects(() => fixture.host.setFreshConversationPerTurn(true), /Initialize|Zero Risk/);
       await assert.rejects(() => fixture.host.setFreshConversationPerTurn(false), /Initialize|Zero Risk/);
       assert.equal(fixture.invocation(), undefined);
-    }
-    for (const interaction of ["automatic", "manual"]) {
-      const saved = makeHost({ mode: "full", browserInteractionMode: interaction }, interaction);
-      for (const enabled of [true, false]) {
-        await saved.host.setUseSavedChats(enabled);
-        assert.equal(saved.invocation().args.includes(enabled ? "--saved-chats" : "--temporary-chats"), true);
-        assert.equal(saved.invocation().args.includes("--full"), true);
-        assert.equal(saved.invocation().args.includes("--fresh-conversation"), false);
-      }
-      await assert.rejects(() => saved.host.setUseSavedChats("true"), /boolean/);
     }
     const fixture = makeHost({ mode: "browser-only", browserInteractionMode: "automatic" });
     await assert.rejects(() => fixture.host.setFreshConversationPerTurn("true"), /boolean/);

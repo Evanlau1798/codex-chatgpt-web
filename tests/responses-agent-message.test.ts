@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { parseRequest } from "../src/responses/parser";
+import { extractChatGptTurnUserRevision } from "../src/adapters/chatgpt-web/environment";
 
 const capabilities = { localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true };
 
@@ -98,4 +99,54 @@ test("agent messages do not invent missing routing identity or fallback content"
   expect(parsed.context.messages[0]).not.toHaveProperty("recipient");
   const messages = inlineMessages(compileChatGptWebPrompt(parsed, capabilities).text);
   expect(messages[0]).toEqual({ role: "agent_message", content: "" });
+});
+
+function delegation() {
+  return {
+    type: "function_call_output", id: "fco_current", name: "send_message_to_thread",
+    namespace: "codex_app",
+    output: "<codex_delegation><source_thread_id>coordinator</source_thread_id><input>Finish &lt;current&gt; &amp; preserve &amp;lt;literal&amp;gt;.</input></codex_delegation>",
+    internal_chat_message_metadata_passthrough: { turn_id: "current" },
+  };
+}
+
+test("native desktop delegation stays an attributed input after an older human task", () => {
+  const item = delegation();
+  const parsed = parseRequest({
+    model: CHATGPT_WEB_MODEL_ID,
+    input: [{ type: "message", role: "user", id: "old", content: "Read goal status only.",
+      internal_chat_message_metadata_passthrough: { turn_id: "old" } }, item],
+    client_metadata: { "x-codex-turn-metadata": JSON.stringify({ thread_id: "target", turn_id: "current" }) },
+  });
+  expect(extractChatGptTurnUserRevision(parsed)).toBe(item.output);
+  expect(parsed.context.messages.at(-1)).toMatchObject({ role: "agentMessage", author: "coordinator",
+    content: item.output });
+  for (const experimentalMultipartParts of [undefined, 2] as const) {
+    const compiled = compileChatGptWebPrompt(parsed, capabilities, undefined, { experimentalMultipartParts });
+    const messages = compiled.multipart ? compiled.multipart.parts.flatMap(part => JSON.parse(part).records)
+      .filter(record => record.kind === "message").map(record => record.message) : inlineMessages(compiled.text);
+    expect(messages.at(-1)).toEqual({ role: "agent_message", author: "coordinator",
+      content: item.output });
+    expect(messages[0]).toEqual({ role: "user", content: "Read goal status only." });
+  }
+});
+
+test("ordinary tool results and malformed delegation text are never promoted", () => {
+  const invalid = [
+    { ...delegation(), call_id: "actual_call" },
+    { ...delegation(), namespace: "another_app" },
+    { ...delegation(), name: "read_file" },
+    { ...delegation(), id: "" },
+    { ...delegation(), internal_chat_message_metadata_passthrough: {} },
+    { ...delegation(), output: delegation().output.replace("&lt;current&gt;", "<current>") },
+    { ...delegation(), output: delegation().output.replace("&amp;", "&unknown;") },
+    { ...delegation(), output: delegation().output + "<input>Extra task</input>" },
+  ];
+  for (const item of invalid) {
+    const parsed = parseRequest({ model: CHATGPT_WEB_MODEL_ID, input: [item] });
+    expect(parsed.context.messages[0]?.role).toBe("toolResult");
+  }
+  const user = parseRequest({ model: CHATGPT_WEB_MODEL_ID,
+    input: [{ type: "message", role: "user", content: delegation().output }] });
+  expect(user.context.messages[0]?.role).toBe("user");
 });

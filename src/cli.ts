@@ -195,8 +195,9 @@ async function setupCommand(args: string[]): Promise<void> {
   if (enhancedSession || standardSession) options.useEnhancedWebSessionMode = enhancedSession;
   const savedChats = takeFlag(args, "--saved-chats");
   const temporaryChats = takeFlag(args, "--temporary-chats");
-  if (savedChats && temporaryChats) throw new Error("Choose --saved-chats or --temporary-chats");
-  if (savedChats || temporaryChats) options.useSavedChats = savedChats;
+  const ordinaryChats = takeFlag(args, "--ordinary-chats");
+  if (temporaryChats && (ordinaryChats || savedChats)) throw new Error("Choose --temporary-chats or --saved-chats/--ordinary-chats");
+  if (temporaryChats || ordinaryChats || savedChats) options.useSavedChats = ordinaryChats || savedChats;
   const freshConversation = takeFlag(args, "--fresh-conversation");
   const retainedConversation = takeFlag(args, "--retained-conversation");
   if (freshConversation && retainedConversation) {

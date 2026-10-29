@@ -280,7 +280,7 @@ export interface CodexProviderConfig {
   modelDefaultReasoningEfforts?: Record<string, string>;
   noReasoningModels?: string[];
   chatgptWeb?: {
-    /** ChatGPT custom connector attached to tool-capable temporary chats. */
+    /** ChatGPT custom connector attached to tool-capable chats. */
     appName?: string;
     /** Whether ChatGPT DOM interaction is automatic or explicitly driven by the user. */
     browserInteractionMode?: "automatic" | "manual";
@@ -342,7 +342,7 @@ export interface CodexProviderConfig {
     experimentalSkillAttachments?: boolean;
     /** Explicitly rebuild each automatic turn in a fresh browser conversation. */
     experimentalFreshConversationPerTurn?: boolean;
-    /** Use ordinary ChatGPT history for task conversations. Default: Temporary Chat. */
+    /** Ordinary saved task chats are opt-in; Temporary Chat is the default. */
     useSavedChats?: boolean;
   };
 }

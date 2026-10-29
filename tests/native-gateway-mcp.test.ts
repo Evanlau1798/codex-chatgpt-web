@@ -115,7 +115,7 @@ test("MCP gateway discovers and invokes nested tools while rejecting unsafe wait
       turn_token: token,
       wire_name: "exec",
       input: [
-        "await tools.write_stdin({ session_id: 42, yield_time_ms: 300000 });",
+        "await tools.write_stdin({ session_id: 42, yield_time_ms: 60000 });",
         "await tools.wait({ cell_id: 'cell_test', yield_time_ms: 180000 });",
       ].join("\n"),
     });

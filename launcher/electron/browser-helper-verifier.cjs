@@ -51,8 +51,7 @@ async function runBrowserHelperOperation({ helper, descriptorPath, appName, brok
   if (!helper || typeof helper.executable !== "string" || typeof helper.script !== "string") {
     throw new Error("Browser helper verification command is invalid");
   }
-  if (typeof descriptorPath !== "string" || !descriptorPath || typeof appName !== "string" || !appName
-    || typeof useSavedChats !== "boolean") {
+  if (typeof descriptorPath !== "string" || !descriptorPath || typeof appName !== "string" || !appName) {
     throw new Error("Browser helper verification config is invalid");
   }
   if (!["verify", "inspect", "smoke", "limits"].includes(operation)) {

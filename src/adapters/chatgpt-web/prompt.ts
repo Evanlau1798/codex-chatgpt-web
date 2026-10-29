@@ -9,9 +9,14 @@ import {
   resolveChatGptWebMessageTokenBudget,
   resolveChatGptWebStagingTokenBudget,
   resolveChatGptWebTransportLimits,
+  resolveChatGptWebMultipartContextWindow,
   supportsChatGptWebBiggerContext,
 } from "../../chatgpt-web-models";
+import { restoreCompactionTaskMessages } from "./compaction-continuation";
+import { chatGptTurnUserRevisionHistory, extractChatGptTurnIdentity } from "./environment";
 import { estimateTokens } from "../../lib/token-estimate";
+import { contextTokenBreakdown } from "./prompt-token-diagnostics";
+import { estimateCompiledChatGptWebInputTokens } from "./input-tokens";
 import { selectedSkillFile, skillFileTokens, type ChatGptSkillFile } from "./skill-attachments";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import { isReadableCompactionSummaryText } from "../../responses/compaction";
@@ -76,7 +81,14 @@ export interface CompiledChatGptWebPrompt {
   archiveSha256?: string;
   /** Oldest history items removed by native-style compaction fit recovery; absent on normal turns. */
   trimmedCompactionMessages?: number;
+  /** Numeric counts of the submitted context records, never their contents or identifiers. */
+  contextTokenBreakdown?: ChatGptContextTokenBreakdown;
 }
+
+export type ChatGptContextTokenBreakdown = Partial<Record<
+  "system" | "developer" | "user" | "assistant" | "tool_result" | "agent_message",
+  { records: number; chars: number; tokens: number }
+>>;
 
 export interface CompileChatGptWebPromptOptions {
   /** The same display name used to select the ChatGPT plugin for this turn. */
@@ -84,6 +96,8 @@ export interface CompileChatGptWebPromptOptions {
   captureLunaCheckpoint?: boolean;
   experimentalSkillAttachments?: boolean;
   experimentalMultipartParts?: ChatGptWebMultipartPartCount;
+  /** Numerical submitted-context costs; never content or identifiers. */
+  includeContextTokenBreakdown?: boolean;
   /** Native2 is attached only for bridge-authenticated control operations, not outer work tools. */
   nativeControlConnector?: boolean;
   /** One-shot broker binding for a fresh structured compaction fallback. */
@@ -412,6 +426,16 @@ export function compileChatGptWebPrompt(
       "</codex_transport_resume>",
     ];
   const build = (sourceMessages: readonly CodexMessage[], omittedMessages = 0): CompiledChatGptWebPrompt => {
+    const resume = omittedMessages > 0 ? [
+      "<codex_transport_resume>",
+      `${omittedMessages} earlier history items were omitted to fit this compaction request; the supplied history is incomplete.`,
+      "Preserve still-relevant progress, constraints and pending work from any supplied cumulative checkpoint and the remaining evidence. Do not infer that omitted work was never done or invent missing details.",
+      compactionControlInstruction
+        ? "Submit the checkpoint through the one-shot control operation now; do not write it as ordinary assistant text."
+        : manualControl ? "Produce the requested checkpoint summary now."
+        : "Produce the requested checkpoint summary now without calling tools.",
+      "</codex_transport_resume>",
+    ] : transportResume;
     const images: ChatGptWebPromptImage[] = [];
     const budget = { seen: 0, dropped: Math.max(0, countChatGptContextImages(sourceMessages) - CHATGPT_MAX_INPUT_IMAGES) };
     const skillFiles: ChatGptSkillFile[] = [];
@@ -428,6 +452,9 @@ export function compileChatGptWebPrompt(
     const attachments = {
       ...(skillFiles.length ? { skillFiles } : {}),
       ...(mode.localTools && !manualControl && !parsed._compactionRequest ? { turnToken } : {}),
+      ...(options?.includeContextTokenBreakdown
+        ? { contextTokenBreakdown: contextTokenBreakdown(system, messages, multipartEnabled) }
+        : {}),
     };
     const answerContract = compactionControlInstruction
       ? "Complete this response only through the one-shot compaction handoff control."
@@ -463,7 +490,7 @@ export function compileChatGptWebPrompt(
           ...manualControlContract,
           ...checkpointContract,
           answerContract,
-          ...transportResume,
+          ...resume,
           ...tunneledOutputContract,
         ].join("\n"),
       };
@@ -507,7 +534,7 @@ export function compileChatGptWebPrompt(
             : formatChatGptWebMultipartStage(payload, transactionId, index + 1, multipartParts!).text;
           return estimateTokens(text) > budgets[index]!.tokenLimit || text.length > budgets[index]!.charLimit;
         })) continue;
-        return { text: multipart.commit, images, ...(skillFiles.length ? { skillFiles } : {}), multipart,
+        return { text: multipart.commit, images, ...attachments, multipart,
           ...(turnToken ? { turnToken } : {}), ...(bootstrapLimits ? { bootstrapLimits } : {}) };
       }
       throw new Error("No Bigger Context staging allocation is available");
@@ -533,37 +560,26 @@ export function compileChatGptWebPrompt(
       envelopeJson,
       "</codex_context_json>",
       "```",
-      ...(omittedMessages > 0 ? [
-        "<codex_transport_resume>",
-        `${omittedMessages} earlier history items were omitted to fit this compaction request; the supplied history is incomplete.`,
-        "Preserve still-relevant progress, constraints and pending work from any supplied cumulative checkpoint and the remaining evidence. Do not infer that omitted work was never done or invent missing details.",
-        compactionControlInstruction
-          ? "Submit the checkpoint through the one-shot control operation now; do not write it as ordinary assistant text."
-          : manualControl
-            ? "Produce the requested checkpoint summary now."
-            : "Produce the requested checkpoint summary now without calling tools.",
-        "</codex_transport_resume>",
-      ] : transportResume),
+      ...resume,
       ...tunneledOutputContract,
     ].join("\n");
-    return { text, images, ...(skillFiles.length ? { skillFiles } : {}),
+    return { text, images, ...attachments,
       ...(turnToken ? { turnToken } : {}), ...(bootstrapLimits ? { bootstrapLimits } : {}) };
   };
-  let sourceMessages = withoutSupersededModelSwitchContracts(parsed.context.messages);
+
+  let sourceMessages = withoutSupersededModelSwitchContracts(restoreCompactionTaskMessages(
+    parsed, extractChatGptTurnIdentity(parsed), chatGptTurnUserRevisionHistory(parsed),
+  ));
   const initialMessageCount = sourceMessages.length;
   let compiled = build(sourceMessages);
   if (!parsed._compactionRequest) return compiled;
 
-  // The 110k edge budget was measured for the old single-message compaction envelope. Bigger
-  // Context stages are governed by the same model-specific per-message token and composer limits
-  // as ordinary multipart turns in browser-worker. Applying the legacy byte cap here silently
-  // discarded context that the staged transport can carry; preserve it and let browser preflight
-  // fail explicitly if any atomic record is genuinely too large for one stage.
-  if (compiled.multipart) return compiled;
-
-  const exceedsCompactionBudget = (): boolean => (
-    chatGptPromptJsonBytes(compiled.text) > CHATGPT_COMPACTION_PROMPT_JSON_BYTE_BUDGET
-  );
+  // Preserve the staged capacity, but leave headroom for real transaction handles and ACKs.
+  const exceedsCompactionBudget = (): boolean => compiled.multipart
+    ? estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId) >= 0.97 * resolveChatGptWebMultipartContextWindow(
+      parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID ? CHATGPT_WEB_LUNA_MODEL_ID : CHATGPT_WEB_MODEL_ID,
+      mode.effort, capabilities, compiled.multipart.parts.length, parsed._chatgptModelFamily)
+    : chatGptPromptJsonBytes(compiled.text) > CHATGPT_COMPACTION_PROMPT_JSON_BYTE_BUDGET;
 
   let checkpointIndex = sourceMessages.findLastIndex(message => (
     message.role === "user" && isReadableCompactionSummaryText(message.content)
@@ -575,10 +591,13 @@ export function compileChatGptWebPrompt(
     if (checkpointIndex > discardIndex) checkpointIndex -= 1;
     compiled = build(sourceMessages, initialMessageCount - sourceMessages.length);
   }
-  const encodedBytes = chatGptPromptJsonBytes(compiled.text);
   if (exceedsCompactionBudget()) {
-    throw new Error(
-      `ChatGPT Web compaction prompt still requires ${encodedBytes.toLocaleString("en-US")} JSON bytes after other history was trimmed; ${checkpointIndex >= 0 ? "the cumulative checkpoint and final compaction instruction exceed" : "the final compaction instruction alone exceeds"} the browser compaction budget`,
+    const required = compiled.multipart
+      ? `${estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId).toLocaleString("en-US")} input tokens`
+      : `${chatGptPromptJsonBytes(compiled.text).toLocaleString("en-US")} JSON bytes`;
+    throw new ChatGptWebAdapterError(
+      `ChatGPT Web compaction prompt still requires ${required} after other history was trimmed; ${checkpointIndex >= 0 ? "the cumulative checkpoint and final compaction instruction exceed" : "the final compaction instruction alone exceeds"} the browser compaction budget`,
+      { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
     );
   }
   const trimmedCompactionMessages = initialMessageCount - sourceMessages.length;

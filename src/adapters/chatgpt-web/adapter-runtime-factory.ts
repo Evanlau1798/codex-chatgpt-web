@@ -308,7 +308,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       );
       try {
         const prepared = await prepareChatGptWebContext(broker,
-          compileChatGptWebPrompt(input, turnCapabilities, turnToken, compileOptions),
+          compileChatGptWebPrompt(input, turnCapabilities, turnToken, { ...compileOptions, includeContextTokenBreakdown: true }),
           useEnhancedWebSessionMode, contextTtlMs, traceId);
         if (activeToken !== turnToken) {
           activeToken = turnToken;

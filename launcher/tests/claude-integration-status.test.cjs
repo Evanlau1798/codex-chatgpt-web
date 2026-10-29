@@ -129,5 +129,13 @@ test("keeps the Messages runtime available for Claude without reconnecting Codex
   assert.match(main, /hasRuntimeClient\(\{\s*codexRouteActive: route\.active,\s*claudeIntegrationStatus: runtimeHost\.claudeIntegrationStatus\(\)/);
   const app = fs.readFileSync(path.join(__dirname, "../src/App.tsx"), "utf8");
   assert.match(app, /function hasVerifiedClientIntegration/);
-  assert.match(app, /state\.codexCatalogVerified === true \|\| state\.claudeSetupComplete === true/);
+  const installed = app.match(/function hasClientIntegration\(state: LauncherState\): boolean \{([\s\S]*?)\n\}/)[1];
+  const verifiedBody = app.match(/function hasVerifiedClientIntegration\(state: LauncherState\): boolean \{([\s\S]*?)\n\}/)[1];
+  const verified = new Function("state", `const hasClientIntegration = state => {${installed}}; ${verifiedBody}`);
+  for (const [state, expected] of [
+    [{ coreSetupComplete: true, codexSetupComplete: true, codexCatalogVerified: false }, true],
+    [{ coreSetupComplete: true, claudeSetupComplete: true, codexSetupComplete: false }, true],
+    [{ coreSetupComplete: false, claudeSetupComplete: true }, false],
+    [{ coreSetupComplete: true, codexSetupComplete: false, claudeSetupComplete: false, codexCatalogVerified: true }, false],
+  ]) assert.equal(Boolean(verified(state)), expected);
 });

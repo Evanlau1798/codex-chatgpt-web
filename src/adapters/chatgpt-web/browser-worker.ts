@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { observeChatGptAttachmentUploads } from "./attachment-upload";
+import { ChatGptStreamDiagnostics } from "./stream-diagnostics";
 import { skillFileTokens, validateSkillFiles } from "./skill-attachments";
 import { estimateTokens } from "../../lib/token-estimate";
 import { readChatGptUserMessage } from "./browser-user-message";
@@ -126,29 +127,40 @@ import {
   assertAuthenticatedChatGptPage,
   assertNewChatPage,
   chatGptNewChatUrl,
+  detectChatGptAccountCapabilities,
+  readChatGptEffortCapabilities,
+  waitForChatGptEffortControl,
+  isSelectedChatGptTurnUrl,
+  isTemporaryChatGptUrl,
+  isTemporaryChatGptTurnUrl,
+  chatGptEffortSliderAdvancedTowardTarget,
+} from "../../chatgpt-session";
+import {
   chatGptAssistantTurnSelector,
   chatGptTurnContainerSelector,
-  isSelectedChatGptTurnUrl,
   CHATGPT_ASSISTANT_TURN_SELECTOR,
   CHATGPT_COMPLETION_ACTION_SELECTOR,
+  CHATGPT_USER_TURN_SELECTOR,
+} from "../../chatgpt-ui/turns";
+import {
+  chatGptStopButton,
   CHATGPT_COMPOSER_SELECTOR,
+  CHATGPT_STOP_BUTTON_SELECTOR,
+  CHATGPT_SEND_BUTTON_SELECTOR,
+} from "../../chatgpt-ui/composer";
+import {
+  CHATGPT_UI_VARIANT_SELECTORS,
+  chatGptUiVariantCounts,
+  validateChatGptUiVariantCounts,
+} from "../../chatgpt-ui/observations";
+import {
   CHATGPT_EFFORT_CONTROL_SELECTOR,
   CHATGPT_EFFORT_ITEM_SELECTOR,
   CHATGPT_EFFORT_MENU_SELECTOR,
+  CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR,
   activateChatGptEffortMenu,
-  CHATGPT_EFFORT_SLIDER_SELECTOR,
-  CHATGPT_STOP_BUTTON_SELECTOR,
-  CHATGPT_THINK_BUTTON_SELECTOR,
-  CHATGPT_SEND_BUTTON_SELECTOR,
-  CHATGPT_USER_TURN_SELECTOR,
-  chatGptEffortSliderAdvancedTowardTarget,
-  detectChatGptAccountCapabilities,
-  isTemporaryChatGptUrl,
-  isTemporaryChatGptTurnUrl,
-  readChatGptEffortCapabilities,
   readChatGptEffortSnapshot,
-  waitForChatGptEffortControl,
-} from "../../chatgpt-session";
+} from "../../chatgpt-ui/model-picker";
 import { loginVerificationMarkerPath } from "../../browser-login";
 import {
   connectLauncherBrowserHost,
@@ -351,9 +363,10 @@ function chatGptConnectorUnavailableError(message: string): ChatGptWebAdapterErr
   });
 }
 
-export class ChatGptPromptAttachmentIntegrityError extends Error {
+export class ChatGptPromptAttachmentIntegrityError extends ChatGptWebAdapterError {
   constructor(message: string) {
-    super(message);
+    super(message, { status: 502, errorType: "server_error", code: "prompt_attachment_integrity",
+      retryable: false, retireSession: true });
     this.name = "ChatGptPromptAttachmentIntegrityError";
   }
 }
@@ -887,7 +900,7 @@ export function assertChatGptWebInputWithinLimits(
 
 export const browserStageTimeouts = {
   browserPage: 60_000,
-  temporaryChatPreparation: 150_000,
+  newChatPreparation: 150_000,
   effortSelection: 120_000,
   promptAttachment: CHATGPT_PROMPT_ATTACHMENT_TIMEOUT_MS,
   fileAttachment: 120_000,
@@ -1042,10 +1055,6 @@ export interface ResolvedBrowserConfig {
   useSavedChats: boolean;
 }
 
-export function chatGptStopButton(page: Page): Locator {
-  return page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({visible: true}).last();
-}
-
 export class ChatGptTurnDomHealthTracker {
   private sawResponse = false;
   private missingResponseSince?: number;
@@ -1143,7 +1152,18 @@ export class ChatGptTurnDomHealthTracker {
 }
 
 export const MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS = 8;
-export const CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS = 10 * 60_000;
+
+/**
+ * How stale recorded MCP progress may be and still suppress DOM health checks.
+ *
+ * An outstanding tool call reports liveness regardless of age, so a call that never returns would
+ * otherwise hold a turn open forever — turns carry no deadline unless a caller supplies one. This
+ * bounds the silence since the last recorded activity rather than the turn's total duration, so a
+ * long turn that keeps calling tools is never penalised for taking a long time.
+ */
+export const CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS = CHATGPT_COMPLETION_ACTION_GRACE_MS;
+
+/** Tolerated clock difference between the recording daemon and the observing helper process. */
 export const CHATGPT_EXTERNAL_PROGRESS_CLOCK_SKEW_MS = 5_000;
 
 export function chatGptExternalProgressSuppressesDomHealth(
@@ -1479,7 +1499,7 @@ export class ChatGptBrowserWorker {
 
   inspectSession(detectCapabilities: boolean): Promise<{
     authenticated: true;
-    temporary: true;
+    newChat: true;
     url: string;
     solAvailable?: boolean;
     extraHighAvailable?: boolean;
@@ -1815,7 +1835,7 @@ export class ChatGptBrowserWorker {
     try {
       activation = await activateChatGptEffortMenu(page, currentEffort);
       if (modelFamily) activation = await selectChatGptModelFamily(
-        activation, modelFamily, () => activateChatGptEffortMenu(page, currentEffort),
+        activation, modelFamily, () => activateChatGptEffortMenu(page, currentEffort), mode.effort,
       );
     } catch (error) {
       if (error instanceof ChatGptWebAdapterError) throw error;
@@ -1999,11 +2019,11 @@ export class ChatGptBrowserWorker {
     throw new Error(`ChatGPT did not expose exactly one visible composer (visibleComposers=${count})`);
   }
 
-  /** Prepare a new conversation; account inspection still uses an empty Temporary Chat. */
+  /** Prepare and verify the explicitly selected new-chat surface. */
   private async prepareChatSurface(
     page: Page,
     captureDiagnostic?: (checkpoint: string) => Promise<void>,
-    useSavedChats = false,
+    useSavedChats = this.config.useSavedChats,
     abortSignal?: AbortSignal,
   ): Promise<Locator> {
     throwIfPromptAttachmentAborted(abortSignal);
@@ -2017,15 +2037,15 @@ export class ChatGptBrowserWorker {
         waitUntil: "domcontentloaded",
         timeout: 60_000,
       }), abortSignal);
-      await captureDiagnostic?.(useSavedChats ? "saved-chat-navigation-complete" : "temporary-chat-navigation-complete");
+      await captureDiagnostic?.("new-chat-navigation-complete");
     }
     // A page-read failure is not proof that authentication expired. Preserve the actual
     // observation error; the authenticated-session check below owns login failures.
-    const composer = await this.activeComposer(page, 30_000, abortSignal);
-    throwIfPromptAttachmentAborted(abortSignal);
     if (!useSavedChats && await dismissChatGptTemporaryChatOnboarding(page)) {
       await captureDiagnostic?.("temporary-chat-onboarding-dismissed");
     }
+    const composer = await this.activeComposer(page, 30_000, abortSignal);
+    throwIfPromptAttachmentAborted(abortSignal);
     await captureDiagnostic?.("composer-ready");
     await throwIfChatGptSessionFailureAlert(page);
     await assertAuthenticatedChatGptPage(page);
@@ -2914,8 +2934,11 @@ export class ChatGptBrowserWorker {
     signal?: AbortSignal,
   ): Promise<string> {
     const titles = await this.connectorMentionRowTitles(menuRows, signal);
+    const temporaryChatHint = !this.config.useSavedChats
+      ? "; if this connector is unavailable in Temporary Chat, enable Settings → Saved Chats in the launcher and retry"
+      : "";
     if (titles.length === 0) {
-      return `ChatGPT connector menu did not open after ${triggerAttempts} complete mention trigger attempt(s)`;
+      return `ChatGPT connector menu did not open after ${triggerAttempts} complete mention trigger attempt(s)` + temporaryChatHint;
     }
     if (this.config.appName === CHATGPT_CONNECTOR_NAME && titles.includes(DEV_CHATGPT_CONNECTOR_NAME)) {
       return `ChatGPT exposes the isolated DEV connector ${JSON.stringify(DEV_CHATGPT_CONNECTOR_NAME)},`
@@ -2928,7 +2951,7 @@ export class ChatGptBrowserWorker {
     }
     return `ChatGPT connector menu opened but exposed no row named ${JSON.stringify(this.config.appName)}`
       + ` after ${triggerAttempts} complete mention trigger attempt(s)`
-      + "; create a connector with that exact name before retrying";
+      + "; create a connector with that exact name before retrying" + temporaryChatHint;
   }
 
   private async clearChatGptComposerState(page: Page): Promise<void> {
@@ -2983,6 +3006,12 @@ export class ChatGptBrowserWorker {
     const appResult = menuRows.filter({
       has: page.getByText(this.config.appName, { exact: true }),
     });
+    const selectedComposer = await this.activeComposer(page, 30_000, abortSignal, op);
+    if (await this.connectorIsSelected(selectedComposer, abortSignal)
+      && (await this.attachedPromptText(page, abortSignal, op)).length === 0) {
+      await capture("connector-already-selected");
+      return selectedComposer;
+    }
     await this.ensureConnectorSurface(
       page,
       capture,
@@ -3010,6 +3039,7 @@ export class ChatGptBrowserWorker {
               focused: element === document.activeElement,
             }), undefined, proof.options(10_000));
             if (mention.text !== CHATGPT_CONNECTOR_MENTION_QUERY) {
+              await capture("personalization-proof-menu-missing");
               throw new ChatGptPromptAttachmentIntegrityError(
                 `ChatGPT did not preserve the connector mention (expectedChars=${CHATGPT_CONNECTOR_MENTION_QUERY.length}, actualChars=${mention.text.length}, focused=${mention.focused})`,
               );
@@ -3038,10 +3068,6 @@ export class ChatGptBrowserWorker {
     let composer = await this.activeComposer(page, 30_000, abortSignal, op);
     try {
       if (await this.connectorIsSelected(composer, abortSignal)) {
-        if ((await this.attachedPromptText(page, abortSignal, op)).length === 0) {
-          await capture("connector-already-selected");
-          return composer;
-        }
         // A restored draft can include both the connector and an earlier request. Selecting
         // that pill proves the connector, not an empty composer. Reset the owned draft before
         // attaching this request so it cannot be appended to the previous one.
@@ -3480,7 +3506,7 @@ export class ChatGptBrowserWorker {
     let completed = false;
     try {
       await captureDiagnostic("connector-verification-started");
-      await this.prepareChatSurface(page, captureDiagnostic, this.config.useSavedChats);
+      await this.prepareChatSurface(page, captureDiagnostic);
       // The launcher refreshes its owned ChatGPT document before starting this helper. A second
       // reload here can discard the first catalog's exact mismatch evidence and report a generic
       // menu failure instead of identifying the connector the account actually exposes.
@@ -3538,7 +3564,7 @@ export class ChatGptBrowserWorker {
 
   private async inspectSessionExclusive(detectCapabilities: boolean): Promise<{
     authenticated: true;
-    temporary: true;
+    newChat: true;
     url: string;
     solAvailable?: boolean;
     extraHighAvailable?: boolean;
@@ -3548,14 +3574,14 @@ export class ChatGptBrowserWorker {
     const page = await this.ensurePage();
     await this.prepareChatSurface(page);
     const url = page.url();
-    if (!detectCapabilities) return { authenticated: true, temporary: true, url };
+    if (!detectCapabilities) return { authenticated: true, newChat: true, url };
     const capabilities = await detectChatGptAccountCapabilities(page);
-    return { authenticated: true, temporary: true, url, ...capabilities };
+    return { authenticated: true, newChat: true, url, ...capabilities };
   }
 
   private async smokeTestExclusive(abortSignal?: AbortSignal): Promise<{ effort: string; response: string }> {
     const page = await this.ensurePage();
-    await this.prepareChatSurface(page, undefined, false, abortSignal);
+    await this.prepareChatSurface(page, undefined, this.config.useSavedChats, abortSignal);
     const control = await waitForChatGptEffortControl(page, { signal: abortSignal });
     let account = { solAvailable: false, extraHighAvailable: false, proAvailable: false };
     if (control) {
@@ -4643,6 +4669,9 @@ export class ChatGptBrowserWorker {
     const originalAbortSignal = turn.abortSignal;
     const rejectionAbort = new AbortController();
     const submissionRejection = new ChatGptSubmissionRejectionObserver(error => rejectionAbort.abort(error));
+    const streamDiagnostics = new ChatGptStreamDiagnostics(state => {
+      console.info(`[chatgpt-web] stream_lifecycle ${JSON.stringify({ traceId: turn.traceId, ...state })}`);
+    });
     let lastGenerationProgress = 0;
     const generation = {
       active: () => submissionRejection.hasActiveResponse(),
@@ -4726,6 +4755,7 @@ export class ChatGptBrowserWorker {
       if (!maintenancePage && !launcherSurfaceId) managedPage = page;
       if (launcherSurfaceId || managedPage) registerOwnedChatGptWorkPage(page);
       diagnosticPage = page;
+      await streamDiagnostics.attach(page);
       const rebindLauncherPage = async (
         attempt: number, cause: Error, callerSignal?: AbortSignal, episodeRemainingMs?: () => number,
       ): Promise<void> => {
@@ -4783,6 +4813,7 @@ export class ChatGptBrowserWorker {
             page = connection.page;
             registerOwnedChatGptWorkPage(page);
             diagnosticPage = page;
+            await streamDiagnostics.attach(page);
           }, rebindSignal);
           check();
           console.warn(`[chatgpt-web] browser turn ${turn.traceId} same-page recovery attempt=${attempt} phase=ready`);
@@ -4812,11 +4843,23 @@ export class ChatGptBrowserWorker {
         + ` estimatedInputTokens=${estimatedInputTokens}, images=${prepared.images.length},`
         + ` compactionTrimmedMessages=${prepared.trimmedCompactionMessages ?? 0})`,
       );
+      if (prepared.contextTokenBreakdown) {
+        // Per-record counts are diagnostic, not additive usage: the full estimate also owns
+        // transport framing, acknowledgements, attachments, and the platform reserve.
+        console.info(`[chatgpt-web] context_token_breakdown ${JSON.stringify({
+          traceId: turn.traceId,
+          scope: "submitted",
+          retainedConversation: reuseConversation,
+          estimatedInputTokens,
+          byRole: prepared.contextTokenBreakdown,
+        })}`);
+      }
+
       if (!reuseConversation) {
         await this.runStage(
           turn.traceId,
-          "temporary_chat_preparation",
-          browserStageTimeouts.temporaryChatPreparation,
+          "new_chat_preparation",
+          browserStageTimeouts.newChatPreparation,
           () => this.prepareChatSurface(
             page,
             checkpoint => diagnostics.capture(page, checkpoint),
@@ -4954,6 +4997,7 @@ export class ChatGptBrowserWorker {
                 await this.assertSelectedEffort(page, mode, true, turn.traceId);
                 Object.assign(baseline, await this.captureSubmissionBaseline(page, stage.text, baseline));
                 submissionRejection.begin(page);
+                streamDiagnostics.begin();
                 await submissionRejection.captureAlertBaseline();
               },
               undefined,
@@ -5196,7 +5240,7 @@ export class ChatGptBrowserWorker {
             await this.runStage(
               turn.traceId,
               "connector_catalog_refresh",
-              browserStageTimeouts.temporaryChatPreparation,
+              browserStageTimeouts.newChatPreparation,
               async () => {
                 await page.reload({ waitUntil: "domcontentloaded", timeout: 60_000 });
                 await this.prepareChatSurface(
@@ -5318,6 +5362,7 @@ export class ChatGptBrowserWorker {
           recoveryFinalizationActivated = true;
         }
         submissionRejection.begin(page);
+        streamDiagnostics.begin();
         await submissionRejection.captureAlertBaseline();
         console.info(`[chatgpt-web] final_submission_prepared ${JSON.stringify({
           traceId: turn.traceId, modelFamily: mode.modelFamily, effort: mode.effort,
@@ -6234,6 +6279,7 @@ export class ChatGptBrowserWorker {
     } finally {
       diagnostics.finish(diagnosticCompleted ? "completed" : "failed");
       submissionRejection.dispose();
+      await streamDiagnostics.dispose();
       await Promise.all(usageWrites);
       prepared.release();
       if (turnConnection) {

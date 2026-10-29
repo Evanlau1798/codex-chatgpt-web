@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import type { AppConfig } from "./config";
 import { getConfigDir, getConfigPath, loadConfig, stripUtf8Bom } from "./config";
 import { join } from "node:path";
+import { inspectCodexCompaction } from "./doctor-compaction";
 import { inspectCodexIntegration } from "./codex-integration";
 import { browserLoginStateExists, loginVerificationMarkerPath } from "./browser-login";
 import { getServiceStatus } from "./service";
@@ -61,37 +62,59 @@ function launcherOwnershipError(config: AppConfig, health: Record<string, unknow
   return undefined;
 }
 
-async function proxyCheck(config: AppConfig): Promise<DoctorCheck> {
+function modelCatalogCheck(health: Record<string, unknown>): DoctorCheck {
+  const result = health.last_model_catalog_result as { status?: unknown; failure?: { stage?: unknown; code?: unknown } } | null | undefined;
+  if (!result || !Number.isInteger(result.status)) {
+    return { id: "model-catalog", status: "warning", message: "This runtime has not observed a completed Codex model-list request yet" };
+  }
+  const status = result.status as number;
+  if (status >= 200 && status < 300) {
+    return { id: "model-catalog", status: "ok", message: "Codex's latest model-list request succeeded" };
+  }
+  const stage = ["config", "request", "transport", "upstream", "catalog"].includes(String(result.failure?.stage))
+    ? String(result.failure!.stage) : undefined;
+  const code = typeof result.failure?.code === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(result.failure.code)
+    ? result.failure.code : undefined;
+  return {
+    id: "model-catalog", status: "error", message: "Codex's latest model-list request failed; the local runtime is reachable",
+    detail: [`HTTP ${status}`, stage, code].filter(Boolean).join("; "),
+  };
+}
+
+async function proxyChecks(config: AppConfig): Promise<DoctorCheck[]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 2_000);
   try {
     const response = await fetch(`http://${config.host}:${config.port}/healthz`, { signal: controller.signal });
-    if (!response.ok) return { id: "proxy", status: "error", message: `Responses proxy returned HTTP ${response.status}` };
+    if (!response.ok) return [{ id: "proxy", status: "error", message: `Responses proxy returned HTTP ${response.status}` }];
     const body = await response.json() as Record<string, unknown>;
     if (body.service !== "codex-chatgpt-web" || body.status !== "ok") {
-      return { id: "proxy", status: "error", message: "The configured port belongs to another service" };
+      return [{ id: "proxy", status: "error", message: "The configured port belongs to another service" }];
     }
     if (body.mode !== config.mode) {
-      return { id: "proxy", status: "error", message: `Daemon is running in ${String(body.mode)} mode; config requires ${config.mode}` };
+      return [{ id: "proxy", status: "error", message: `Daemon is running in ${String(body.mode)} mode; config requires ${config.mode}` }];
     }
     if (body.version !== config.releaseVersion) {
-      return { id: "proxy", status: "error", message: `Daemon version is ${String(body.version)}; config requires ${config.releaseVersion}` };
+      return [{ id: "proxy", status: "error", message: `Daemon version is ${String(body.version)}; config requires ${config.releaseVersion}` }];
     }
     if (body.accepting_turns !== true) {
-      return {
+      return [{
         id: "proxy",
         status: "error",
         message: "Responses proxy is still drained and is not accepting Codex turns",
-      };
+      }];
     }
     const ownershipError = launcherOwnershipError(config, body);
     if (ownershipError) {
-      return { id: "proxy", status: "error", message: "Responses proxy ownership could not be verified", detail: ownershipError };
+      return [{ id: "proxy", status: "error", message: "Responses proxy ownership could not be verified", detail: ownershipError }];
     }
-    return { id: "proxy", status: "ok", message: `Responses proxy is healthy on 127.0.0.1:${config.port}` };
+    return [
+      { id: "proxy", status: "ok", message: `Responses proxy is healthy on 127.0.0.1:${config.port}` },
+      modelCatalogCheck(body),
+    ];
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    return { id: "proxy", status: "error", message: "Responses proxy is not reachable", detail };
+    return [{ id: "proxy", status: "error", message: "Responses proxy is not reachable", detail }];
   } finally {
     clearTimeout(timeout);
   }
@@ -149,6 +172,7 @@ export async function runDoctor(): Promise<DoctorReport> {
   }
 
   const codex = inspectCodexIntegration();
+  checks.push(...inspectCodexCompaction(config, codex.configPath));
   if (!codex.installed) {
     checks.push({ id: "codex", status: "error", message: "Codex model route is not installed" });
   } else if (codex.errors.length > 0) {
@@ -174,7 +198,7 @@ export async function runDoctor(): Promise<DoctorReport> {
   } else {
     checks.push({ id: "service", status: "ok", message: "macOS background service is loaded" });
   }
-  checks.push(await proxyCheck(config));
+  checks.push(...await proxyChecks(config));
 
   if (config.mode === "full") {
     const settings = config.tunnel!;

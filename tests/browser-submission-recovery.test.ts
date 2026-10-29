@@ -647,6 +647,7 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap", "fi
     usageSubmission: async () => undefined, recordFinalUsage: undefined,
     estimateTokens, skillFileTokens, estimatedInputTokens: 1,
     generation: { active: () => false, progress() {} },
+    streamDiagnostics: { begin() {} },
     submissionRejection: {
       captureAlertBaseline: async () => {},
       begin() {},

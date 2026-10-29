@@ -16,13 +16,13 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **버전: `6.1.13-Enhanced.1`.** 다운로드 버튼은 항상 최신 공개 Enhanced 릴리스를 엽니다.
+> **버전: `6.1.15-Enhanced.1`.** 다운로드 버튼은 항상 최신 공개 Enhanced 릴리스를 엽니다.
 
 다음 메시지 제안은 기본적으로 꺼져 있으며 Enhanced 설정에 있습니다. 자동 Native 출력의 최종 답변과 동시에 생성하고 로컬 5분 TTL 캐시를 재사용합니다. 캐시가 없으면 제안하지 않으며 추가 Web 요청이나 페이지를 만들지 않습니다.
 
-upstream v6.1.13을 통합하면서 Enhanced 세션, Native2 도구 및 Fast startup을 유지합니다.
+upstream v6.1.15을 통합하면서 Enhanced 세션, Native2 도구 및 Fast startup을 유지합니다.
 
-Enhanced.2는 Native2 복구와 최종 응답 전달을 개선하며, 미완료 작업과 응답의 소유 관계를 유지합니다.
+보존 세션과 compact 교체 페이지도 Temporary Chat을 기본으로 사용하며 기존 Saved Chats 설정을 유지합니다. 네이티브 connector를 먼저 시도하고, 필요한 경우 프로그램이 소유한 임시 작업 페이지에서만 제한된 메모리 호환 복구를 수행합니다. 계정이나 서비스 제한으로 도구 또는 최종 답변 전달이 실패할 수 있으며 복구 성공을 보장하지 않습니다.
 
 **Plus native context (실험적)** 는 Settings의 기본 비활성 옵션이며, 검증된 Plus 계정과 Enhanced 자동 모드에서만 적용됩니다.
 GPT-6／GPT-5.6 Sol 추론 경로는 256,000-token 창과 230,400 tokens 자동 compaction을 선언합니다.
@@ -40,7 +40,7 @@ CLI 설정은 `--plus-native-context`／`--standard-plus-context` 를 지원합�
   <a href="#get-started">시작하기</a> · <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases">업데이트</a> · <a href="docs/architecture.md">아키텍처</a> · <a href="TROUBLESHOOTING.md">문제 해결</a>
 </p>
 
-Codex의 네이티브 모델 선택기에서 Pro를 포함해 계정에 제공되는 ChatGPT Web 모델을 사용하세요. ChatGPT Web의 별도 사용 한도를 사용하므로 Work나 Codex의 사용량은 차감되지 않습니다. 기존 인터페이스, 작업, 이미지, 스트리밍은 그대로 유지됩니다.
+Codex의 네이티브 모델 선택기에서 Pro를 포함해 계정에 제공되는 ChatGPT Web 모델을 사용하세요. 메시지는 로그인된 ChatGPT Web 세션을 통해 전송되며 해당 계정에 적용되는 사용 한도를 따릅니다. 기존 인터페이스, 작업, 이미지, 스트리밍은 그대로 유지됩니다.
 
 Full harness 모드는 MCP를 통해 ChatGPT를 현재 작업의 파일, 터미널, 도구 및 승인 절차에 연결합니다. 대화는 Codex 작업에 계속 연결되어 있으므로 컨텍스트가 늘어나도 작업을 이어갈 수 있습니다.
 
@@ -210,7 +210,7 @@ Full 모드를 활성화하기 전에 전체 [아키텍처](docs/architecture.md
 [보안 모델](docs/security-model.md)을 읽어보세요. 취약점은 [SECURITY.md](SECURITY.md)를 통해
 보고해 주세요.
 
-Temporary Chat은 [ChatGPT의 개인정보 보호 모드](https://help.openai.com/en/articles/8914046-temporary-chat-faq)이며, 프롬프트는 여전히 OpenAI에서 처리됩니다.
+작업에는 기본적으로 임시 채팅을 사용하며 ChatGPT 기록에 남지 않습니다. 대화를 저장하려면 **Save chats in ChatGPT**를 켜세요. 커넥터를 사용할 수 없으면 오류를 표시하며 일반 채팅으로 자동 전환하지 않습니다. 프롬프트는 계속 OpenAI에서 처리됩니다.
 
 검증 범위: [release validation](docs/release-validation.md).
 

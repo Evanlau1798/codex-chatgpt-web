@@ -38,6 +38,7 @@ function rebindFixture(viewport: "pending" | "failed" | "ready", connectMode: "n
     redactChatGptUiDiagnostic: (text: string) => text,
     LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS: 100,
     browserStageTimeouts: { browserPage: 1_000 },
+    streamDiagnostics: { attach: async (page: unknown) => { expect(page).toBe(replacement.page); } },
     notifyLauncherTurn: async () => {},
     connectLauncherBrowserHost: async (_descriptor: string, _budget: number, id: string) => {
       expect(id).toBe("same-surface");

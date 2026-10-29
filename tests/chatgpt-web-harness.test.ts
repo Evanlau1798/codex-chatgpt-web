@@ -68,12 +68,13 @@ async function executeGatewayProgram(
   availableToolNames: string[],
   calls: GatewayProgramCall[],
   omitInventory = false,
+  result?: Record<string, unknown>,
 ): Promise<Array<{ type: "text"; text: string }>> {
   const nestedTools = Object.fromEntries(availableToolNames.map(name => [
     name,
     async (input: unknown) => {
       calls.push({ name, input });
-      return { output: name, exit_code: 0 };
+      return result ?? { output: name, exit_code: 0 };
     },
   ]));
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as new (
@@ -2935,7 +2936,9 @@ describe("ChatGPT outer-native harness v4", () => {
         expect(request.input).toContain('"exec_command"');
         expect(request.input).toContain('"shell_command"');
         const output = request.input?.includes('git status --short') ? "clean" : tempRoot;
-        broker.completeTool(token, request.callId, toolResult({ output, exit_code: 0 }));
+        broker.completeTool(token, request.callId, { content: await executeGatewayProgram(
+          request.input!, ["exec_command"], [], false, { output, exit_code: 0 },
+        ) });
       }
       const pwdRequest = execRequests.find(request => request.input?.includes('"cmd":"pwd"'));
       expect(pwdRequest?.input).toBeString();
@@ -3325,6 +3328,92 @@ describe("ChatGPT outer-native harness v4", () => {
     }
   }, 15_000);
 
+  for (const direct of [true, false]) test(`command polling stays below the MCP deadline, direct=${direct} (#904)`, async () => {
+    const socketPath = brokerTestEndpoint(`cgw-poll-${process.pid}-${direct}`);
+    const broker = TurnBroker.forSocket(socketPath);
+    const environment = extractChatGptTurnEnvironment(parsed(environmentXml));
+    environment.tools = [{ name: "exec", description: "Native gateway", parameters: {}, freeform: true }];
+    if (direct) environment.tools.push({ name: "write_stdin", description: "Poll a command", parameters: {
+      type: "object", properties: { yield_time_ms: { type: "number", maximum: 300_000, default: 180_000 } },
+    } });
+    const token = await broker.register(environment, 300_000);
+    const transport = new StdioClientTransport({ command: process.execPath,
+      args: ["src/cli.ts", "mcp", "--broker-socket", socketPath], cwd: process.cwd(), stderr: "pipe" });
+    const client = new Client({ name: "polling-regression", version: "1" });
+    try {
+      await client.connect(transport);
+      for (const dedicated of [true, false]) {
+        const call = (yield_time_ms: number) => client.callTool({
+          name: dedicated ? "codex_write_stdin" : "codex_tool_call",
+          arguments: { turn_token: token, ...(dedicated
+            ? { session_id: 42, chars: "", yield_time_ms, max_output_tokens: 900 }
+            : { wire_name: "write_stdin", arguments: { session_id: 42, chars: "", yield_time_ms, max_output_tokens: 900 } }) },
+        });
+        const rejected = call(180_000);
+        // A wrong implementation queues a doomed native call. Complete it to
+        // fail promptly, without waiting for the production 90-second deadline.
+        const probe = AbortSignal.timeout(150);
+        const queued = broker.nextToolBatch(token, probe).catch(error => {
+          if (probe.aborted) return [];
+          throw error;
+        });
+        const outcome = await Promise.race([rejected.then(result => ({ result })), queued.then(batch => ({ batch }))]);
+        if ("batch" in outcome) {
+          for (const entry of outcome.batch) broker.completeTool(token, entry.callId, toolResult({ output: "unexpected dispatch" }));
+        }
+        expect((await rejected).isError).toBe(true);
+        expect(await queued).toHaveLength(0);
+
+        const valid = call(60_000);
+        const [request] = await broker.nextToolBatch(token);
+        if (direct) expect(request!.arguments).toEqual({ session_id: 42, chars: "", yield_time_ms: 30_000, max_output_tokens: 900 });
+        else {
+          const calls: GatewayProgramCall[] = [];
+          await executeGatewayProgram(request!.input!, ["write_stdin"], calls);
+          expect(calls).toEqual([{ name: "write_stdin", input: { session_id: 42, chars: "", yield_time_ms: 30_000, max_output_tokens: 900 } }]);
+        }
+        broker.completeTool(token, request!.callId, direct ? toolResult({ output: "partial output", session_id: 42 })
+          : { content: await executeGatewayProgram(request!.input!, ["write_stdin"], [], false, { output: "partial output", session_id: 42 }) });
+        expect((await valid).structuredContent).toMatchObject({ session_id: 42 });
+      }
+      const listed = await client.listTools();
+      expect((listed.tools.find(tool => tool.name === "codex_write_stdin")!.inputSchema.properties!.yield_time_ms as any).maximum).toBe(300_000);
+      if (direct) {
+        const inventoryCall = client.callTool({ name: "codex_tool_inventory", arguments: {
+          turn_token: token, query: "write_stdin", include_schema: true,
+        } });
+        const [query] = await broker.nextToolBatch(token);
+        const content = await executeGatewayProgram(query!.input!, ["write_stdin"], []);
+        broker.completeTool(token, query!.callId, { content });
+        const inventory = await inventoryCall;
+        const listed = (inventory.structuredContent as any).tools[0];
+        expect(listed.parameters.properties.yield_time_ms.maximum).toBe(60_000);
+        expect(listed.parameters.properties.yield_time_ms).not.toHaveProperty("default");
+        expect(environment.tools.find(tool => tool.name === "write_stdin")!.parameters).toMatchObject({
+          properties: { yield_time_ms: { maximum: 300_000, default: 180_000 } },
+        });
+      }
+      for (const yieldMs of [180_000, 60_000]) {
+        const raw = client.callTool({ name: "codex_tool_call", arguments: { turn_token: token, wire_name: "exec",
+          input: `text(await tools.write_stdin({session_id:42,chars:"",yield_time_ms:${yieldMs}}));` } });
+        const [request] = await broker.nextToolBatch(token);
+        const calls: GatewayProgramCall[] = [];
+        const run = executeGatewayProgram(request!.input!, ["write_stdin"], calls, true);
+        if (yieldMs > 60_000) {
+          await expect(run).rejects.toThrow("yield_time_ms");
+          expect(calls).toHaveLength(0);
+        } else {
+          await run;
+          expect(calls).toEqual([{ name: "write_stdin", input: { session_id: 42, chars: "", yield_time_ms: 30_000 } }]);
+        }
+        broker.completeTool(token, request!.callId, toolResult({ session_id: 42 }));
+        await raw;
+      }
+    } finally {
+      await client.close(); broker.revoke(token); await broker.close();
+    }
+  }, 15_000);
+
   test("routes every dedicated direct-token bridge to its exact top-level Codex tool", async () => {
     const socketPath = brokerTestEndpoint(`cgw-h4-mcp-direct-${process.pid}-${Date.now()}`);
     const broker = TurnBroker.forSocket(socketPath);
@@ -3387,7 +3476,7 @@ describe("ChatGPT outer-native harness v4", () => {
         turn_token: token,
         session_id: 42,
         chars: "y\n",
-        yield_time_ms: 180_000,
+        yield_time_ms: 60_000,
         max_output_tokens: 2_000,
       });
       const [writeRequest] = await broker.nextToolBatch(token);
@@ -3548,7 +3637,9 @@ describe("ChatGPT outer-native harness v4", () => {
       expect(execRequest?.input).toContain('"exec_command"');
       expect(execRequest?.input).toContain('"shell_command"');
       expect(execRequest?.input).toContain(JSON.stringify({ cmd: "pwd", workdir: tempRoot }));
-      broker.completeTool(token, execRequest!.callId, toolResult({ output: tempRoot, exit_code: 0 }));
+      broker.completeTool(token, execRequest!.callId, { content: await executeGatewayProgram(
+        execRequest!.input!, ["exec_command"], [], false, { output: tempRoot, exit_code: 0 },
+      ) });
       expect((await execPromise).structuredContent).toEqual({ output: tempRoot, exit_code: 0 });
     } finally {
       await client.close().catch(() => {});

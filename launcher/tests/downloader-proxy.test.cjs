@@ -9,7 +9,10 @@ const { promisify } = require('node:util');
 const http = require('node:http');
 const https = require('node:https');
 const net = require('node:net');
+const { X509Certificate } = require('node:crypto');
 const tlsIdentity = require('./support/downloader-tls.cjs');
+// package.cjs runs electron-builder with Node, independently of the test runner.
+const downloaderRuntime = 'node';
 
 test('the resolved Electron downloader proxy removes vulnerable logging and forwards HTTP', async () => {
   const downloader = createRequire(require.resolve('app-builder-lib')).resolve('@electron/get');
@@ -31,7 +34,7 @@ test('the resolved Electron downloader proxy removes vulnerable logging and forw
         response.on('end', () => process.stdout.write(text));
       }).on('error', error => { console.error(error); process.exitCode = 1; });
     `;
-    const { stdout } = await promisify(execFile)(process.execPath, ['-e', source], {
+    const { stdout } = await promisify(execFile)(downloaderRuntime, ['-e', source], {
       timeout: 10_000,
       windowsHide: true,
       env: { ...process.env, GLOBAL_AGENT_HTTP_PROXY: `http://127.0.0.1:${proxy.address().port}`,
@@ -45,6 +48,9 @@ test('the resolved Electron downloader proxy removes vulnerable logging and forw
 });
 
 test('the resolved downloader proxy preserves HTTPS CONNECT and certificate validation', async () => {
+  const certificate = new X509Certificate(tlsIdentity.cert);
+  assert.equal(certificate.checkHost('localhost'), 'localhost');
+  assert.equal(certificate.checkIP('127.0.0.1'), undefined);
   const downloader = createRequire(require.resolve('app-builder-lib')).resolve('@electron/get');
   const origin = https.createServer(tlsIdentity, (_request, response) => response.end('TLS_OK'));
   const tunnels = new Set();
@@ -80,15 +86,20 @@ test('the resolved downloader proxy preserves HTTPS CONNECT and certificate vali
     const environment = { ...process.env, GLOBAL_AGENT_HTTP_PROXY: '',
       GLOBAL_AGENT_HTTPS_PROXY: `http://127.0.0.1:${proxy.address().port}`, GLOBAL_AGENT_NO_PROXY: '',
       NODE_TLS_REJECT_UNAUTHORIZED: '1', NODE_EXTRA_CA_CERTS: caFile };
-    const { stdout } = await promisify(execFile)(process.execPath, ['-e', source], {
+    const { stdout } = await promisify(execFile)(downloaderRuntime, ['-e', source], {
       timeout: 10_000, windowsHide: true,
       env: environment,
     });
     assert.equal(stdout, 'TLS_OK');
-    await assert.rejects(promisify(execFile)(process.execPath, ['-e', source], {
+    await assert.rejects(promisify(execFile)(downloaderRuntime, ['-e', source], {
       timeout: 10_000, windowsHide: true, env: { ...environment, NODE_EXTRA_CA_CERTS: '' },
     }), error => error.stderr.includes('DEPTH_ZERO_SELF_SIGNED_CERT'));
-    assert.deepEqual(destinations, Array(2).fill(`localhost:${origin.address().port}`));
+    await assert.rejects(promisify(execFile)(downloaderRuntime, ['-e', source.replace('https://localhost:', 'https://other.invalid:')], {
+      timeout: 10_000, windowsHide: true, env: environment,
+    }), error => error.stderr.includes('ERR_TLS_CERT_ALTNAME_INVALID'));
+    assert.deepEqual(destinations, [
+      `localhost:${origin.address().port}`, `localhost:${origin.address().port}`, `other.invalid:${origin.address().port}`,
+    ]);
   } finally {
     for (const socket of tunnels) socket.destroy();
     await Promise.all([proxy, origin].map(server => new Promise(resolve => server.close(resolve))));

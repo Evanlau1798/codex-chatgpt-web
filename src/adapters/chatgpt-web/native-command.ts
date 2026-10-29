@@ -1,6 +1,6 @@
 import { posix, win32 } from "node:path";
 import { GATEWAY_AGENT_WAIT_TOOL_NAMES, gatewayToolNameIsValid } from "./mcp-gateway";
-import { CHATGPT_WEB_AGENT_WAIT_POLL_MS, CONNECTOR_LONG_POLL_SLICE_MS } from "./mcp-tool-inventory";
+import { CHATGPT_WEB_AGENT_WAIT_POLL_MS, CONNECTOR_LONG_POLL_SLICE_MS, CHATGPT_WEB_COMMAND_POLL_MAX_MS, COMMAND_POLL_TRANSPORT_RULE } from "./mcp-tool-inventory";
 
 export const ONE_SHOT_SHELL_TTY_ERROR = "The one-shot shell_command cannot provide a TTY or accept later stdin. Pipe input inside the same command and use APIs compatible with the active platform shell.";
 
@@ -73,6 +73,8 @@ export function transportBoundRawExecProgram(input: string, blockedExecName: str
     `  const blockedExecName = ${JSON.stringify(blockedExecName)};`,
     `  const pollMs = ${CHATGPT_WEB_AGENT_WAIT_POLL_MS};`,
     `  const commandPollMs = ${CONNECTOR_LONG_POLL_SLICE_MS};`,
+    `  const commandPollMaxMs = ${CHATGPT_WEB_COMMAND_POLL_MAX_MS};`,
+    `  const commandPollRule = ${JSON.stringify(COMMAND_POLL_TRANSPORT_RULE)};`,
     "  const registryNames = new Set(Reflect.ownKeys(source));",
     "  if (typeof ALL_TOOLS !== \"undefined\" && Array.isArray(ALL_TOOLS)) {",
     "    for (const tool of ALL_TOOLS) if (typeof tool?.name === \"string\") registryNames.add(tool.name);",
@@ -95,6 +97,7 @@ export function transportBoundRawExecProgram(input: string, blockedExecName: str
     "    } else if (typeof value === \"function\" && typeof name === \"string\" && commandPollNames.has(name)) {",
     "      exposed = args => {",
     "        if (!args || typeof args !== \"object\" || Array.isArray(args)) return Reflect.apply(value, source, [args]);",
+    "        if (name === \"write_stdin\" && args.yield_time_ms !== undefined && (!Number.isInteger(args.yield_time_ms) || args.yield_time_ms < 250 || args.yield_time_ms > commandPollMaxMs)) throw new Error(commandPollRule);",
     "        const key = typeof args.timeout_ms === \"number\" ? \"timeout_ms\" : typeof args.yield_time_ms === \"number\" ? \"yield_time_ms\" : undefined;",
     "        const boundedArgs = !key || args[key] <= commandPollMs ? args : { ...args, [key]: commandPollMs };",
     "        return Reflect.apply(value, source, [boundedArgs]);",

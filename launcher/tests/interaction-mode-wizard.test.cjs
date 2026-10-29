@@ -7,17 +7,21 @@ const wizard = source.slice(source.indexOf("function McpSurface("), source.index
 
 test("inactive mode provisioning does not require the active Automatic catalog", () => {
   const expression = wizard.match(/<PrimaryButton\s+disabled=\{([^{}]+)\}\s+onClick=\{\(\) => void install\(\)\}/)[1];
+  const clientBody = source.match(/function hasClientIntegration\(state: LauncherState\): boolean \{([\s\S]*?)\n\}/)[1];
   const verifiedClientBody = source.match(/function hasVerifiedClientIntegration\(state: LauncherState\): boolean \{([\s\S]*?)\n\}/)[1];
   const disabled = new Function("busy", "manualInteraction", "configuringInactiveMode",
     "clientIntegrationInstalled", "snapshot", "credentialsConfigured", "replacingCredentials",
-    "tunnelId", "runtimeKey", `const hasVerifiedClientIntegration = state => {${verifiedClientBody}}; return (${expression});`);
-  for (const [manual, inactive, installed, catalog, claude, expected] of [
-    [false, true, true, false, false, false], [false, true, false, false, false, false],
-    [false, false, true, false, false, true], [false, false, false, true, false, true],
-    [false, false, true, true, false, false], [true, false, false, false, false, false],
-    [false, false, true, false, true, false], [false, false, false, false, true, true],
+    "tunnelId", "runtimeKey", `const hasClientIntegration = state => {${clientBody}};
+      const hasVerifiedClientIntegration = state => {${verifiedClientBody}}; return (${expression});`);
+  for (const [manual, inactive, installed, core, catalog, claude, expected] of [
+    [false, true, true, false, false, false, false], [false, true, false, false, false, false, false],
+    [false, false, true, true, false, false, false], [false, false, true, false, true, false, true],
+    [false, false, false, true, true, false, true], [true, false, false, false, false, false, false],
+    [false, false, true, true, false, true, false], [false, false, true, false, false, true, true],
   ]) {
-    const args = [false, manual, inactive, installed, { state: { codexCatalogVerified: catalog, claudeSetupComplete: claude } }, false, false, "tunnel", "key"];
+    const args = [false, manual, inactive, installed, { state: { coreSetupComplete: core,
+      codexSetupComplete: installed && !claude, codexCatalogVerified: catalog, claudeSetupComplete: claude } },
+    false, false, "tunnel", "key"];
     assert.equal(disabled(...args), expected);
     assert.equal(disabled(true, ...args.slice(1)), true);
     assert.equal(disabled(...args.slice(0, 8), "", ""), true);

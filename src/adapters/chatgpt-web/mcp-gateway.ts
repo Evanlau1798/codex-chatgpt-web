@@ -1,3 +1,4 @@
+import { assertCommandPollArguments } from "./mcp-tool-inventory";
 import {
   CHATGPT_WEB_AGENT_WAIT_MAX_MS,
   CHATGPT_WEB_AGENT_WAIT_POLL_MS,
@@ -54,6 +55,7 @@ export function gatewayToolParameters(tool: GatewayToolDescriptor, native = true
 }
 
 export function assertGatewayToolArguments(name: string, args: Record<string, unknown>): void {
+  if (name === "write_stdin") assertCommandPollArguments(args);
   if (isGatewayAgentWaitTool(name) && args.timeout_ms !== CHATGPT_WEB_AGENT_WAIT_POLL_MS) {
     throw new Error(`ChatGPT Web wait_agent requires timeout_ms=${CHATGPT_WEB_AGENT_WAIT_POLL_MS}`
       + " so the shared MCP channel remains available to spawned Web agents");

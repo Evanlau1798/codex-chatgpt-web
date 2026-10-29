@@ -4,8 +4,8 @@ import { estimateTokens } from "../../lib/token-estimate";
 import {
   formatChatGptWebMultipartCommit,
   formatChatGptWebMultipartStage,
-  type CompiledChatGptWebPrompt,
-} from "./prompt";
+} from "./prompt-multipart";
+import type { CompiledChatGptWebPrompt } from "./prompt";
 
 const TOKEN_ESTIMATE_TRANSACTION = `ctx_${"0".repeat(32)}`;
 

@@ -177,5 +177,72 @@ test("manual ChatGPT navigation still fails closed on a real load failure", asyn
 
   assert.equal(observed.fixture.turnTabs.has(observed.tab.id), false);
   assert.deepEqual(observed.terminal, ["failed"]);
-  assert.equal(observed.logs.some(([, event]) => event === "browser.manual_tab_initialization_failed"), true);
+  assert.equal(observed.logs.some(([, event]) => event === "browser.manual_tab_navigation_failed"), true);
+});
+
+test("manual navigation events retire completed history without trusting subframes or reusing a suffix", () => {
+  const { ManualTurnController } = require("../electron/manual-turn-controller.cjs");
+  for (const useSavedChats of [false, true]) for (const inPlace of [false, true]) {
+    const clipboard = [];
+    const home = useSavedChats ? "https://chatgpt.com/" : "https://chatgpt.com/?temporary-chat=true";
+    const host = Object.assign(Object.create(BrowserHost.prototype), {
+      turnTabs: new Map(), logger: { info() {}, warn() {} },
+      snapshot: () => ({}), publishState() {}, presentManualTurn() {}, syncViewVisibility() {},
+      removeTurnTab(tab) { this.turnTabs.delete(tab.id); },
+      createManualTurnTab(traceId, helperPid, conversationKey) {
+        const contents = new EventEmitter();
+        contents.setWindowOpenHandler = () => {};
+        const tab = { id: traceId, traceId, helperPid, conversationKey, interactionMode: "manual",
+          status: "running", url: home, view: { webContents: contents } };
+        contents.getURL = () => tab.url;
+        this.turnTabs.set(tab.id, tab);
+        this.bindTurnContents(tab);
+        return tab;
+      },
+    });
+    host.manualTurns = new ManualTurnController({ host, logger: host.logger,
+      clipboard: { writeText: value => clipboard.push(value) } });
+    const key = "a".repeat(64);
+    const first = host.beginManualTurn("manual_initial", process.pid, "original context", key);
+    const tab = host.turnTabs.get(first.tabId);
+    const navigate = (url, mainFrame = true) => tab.view.webContents.emit(
+      inPlace ? "did-navigate-in-page" : "did-start-navigation",
+      ...(inPlace ? [{}, url, mainFrame] : [{}, url, false, mainFrame]),
+    );
+    try {
+      navigate(home);
+      assert.equal(tab.conversationKey, key);
+      host.confirmManualSent(tab.id);
+      host.markManualTurnStarted(tab.traceId, process.pid);
+      host.endManualTurn(tab.traceId, process.pid, "completed", true);
+      navigate("https://example.com/frame", false);
+      assert.equal(tab.conversationKey, key);
+      navigate("https://chatgpt.com/c/another-conversation");
+      assert.equal(tab.conversationKey, undefined);
+      const next = host.beginManualTurn("manual_next", process.pid, "full history plus request", key, "delta only");
+      assert.equal(next.reused, false);
+      assert.notEqual(next.tabId, first.tabId);
+      assert.deepEqual(clipboard, ["original context", "full history plus request"]);
+      host.cancelManualTurn("manual_next", process.pid);
+    } finally {
+      for (const remaining of [...host.turnTabs.values()]) {
+        host.manualTurns.removed(remaining, "cancelled");
+      }
+    }
+  }
+});
+
+test("an aborted manual ChatGPT navigation cannot retire a replacement owner", async () => {
+  const observed = manualTabNavigationFixture(Object.assign(new Error("navigation superseded"), { code: "ERR_ABORTED" }));
+  const contents = observed.tab.view.webContents;
+  const load = contents.loadURL;
+  const replacement = { ...observed.tab, traceId: "replacement-owner" };
+  contents.loadURL = async url => {
+    if (url !== IDLE_BROWSER_URL) observed.fixture.turnTabs.set(observed.tab.id, replacement);
+    return load(url);
+  };
+  await observed.fixture.initializeManualTurnTab(observed.tab);
+  assert.equal(observed.fixture.turnTabs.get(observed.tab.id), replacement);
+  assert.deepEqual(observed.terminal, []);
+  assert.deepEqual(observed.logs, []);
 });

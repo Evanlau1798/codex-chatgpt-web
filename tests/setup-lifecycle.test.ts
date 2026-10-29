@@ -166,7 +166,6 @@ for (const development of [false, true]) for (const interaction of ["manual", "a
       await listener.stop(true);
       const result = await (development ? setupDevProfile : setup)({ ...options, port,
         ...(interaction === "automatic" ? { experimentalFreshConversationPerTurn: true } : {}),
-        useSavedChats: true,
         connectorNameSuffix: "Work",
       });
       expect(calls).toEqual(development ? ["save"] : ["save", "integrate"]);
@@ -174,7 +173,8 @@ for (const development of [false, true]) for (const interaction of ["manual", "a
       expect(result.tunnelReady).not.toBe(true);
       expect(result.connectorSetupRequired).toBe(true);
       expect(saved?.experimentalFreshConversationPerTurn).toBe(interaction === "automatic");
-      expect(saved?.useSavedChats).toBe(true);
+      expect(saved?.useSavedChats).toBe(false);
+      expect(saved).not.toHaveProperty("useTemporaryChats");
       expect(saved?.appName).toBe("Codex Work");
       expect(interaction === "manual" ? saved?.automaticAppName : saved?.manualAppName)
         .toBe(interaction === "automatic" ? "Codex Zero Risk" : development ? "Codex Native2 DEV" : "Codex Native2");

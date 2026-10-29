@@ -19,6 +19,7 @@ import { decodeReasoningEnvelope } from "./reasoning-envelope";
 import { prepareMultiAgentV2Tool } from "./multi-agent-v2";
 import { codexResponsesRequestKind } from "./request-metadata";
 import { CLAUDE_TOOL_RESULT_ERROR_MARKER, isClaudeTranslatedRequestBody } from "../messages/request";
+import { readNativeThreadDelegation } from "./native-context";
 
 function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -581,6 +582,12 @@ export function parseRequest(body: unknown): CodexParsedRequest {
 
       if (effectiveType === "function_call_output") {
         pendingReasoning.length = 0;
+        const delegation = readNativeThreadDelegation(item as Record<string, unknown>);
+        if (delegation) {
+          messages.push({ role: "agentMessage", author: delegation.sourceThreadId,
+            content: delegation.output, timestamp: now });
+          continue;
+        }
         const output = item as { call_id: string; output?: string | unknown[] };
         const toolInfo = findToolById(messages, output.call_id);
         messages.push({

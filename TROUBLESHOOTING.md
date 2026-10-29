@@ -62,16 +62,22 @@ they do not establish the affected desktop account's end-to-end result.
 
 ### Mixed-mode catalog verification
 
-**Install models** updates the Codex route, but a running Codex process keeps its old model catalog.
-Fully quit every Codex Desktop window and Codex CLI process, then reopen Codex while the launcher is
-still running. The launcher should move from **Restart Codex** to a verified catalog state.
+**Install models** updates the Codex route. Once installation finishes, step 3 is complete and you
+can connect MCP. The launcher checks model loading separately; waiting for that check does not
+prevent MCP setup.
+
+A running Codex process can keep its old model catalog. If **(Web)** models are missing, fully quit
+every Codex Desktop window and Codex CLI process, then reopen Codex while the launcher is still
+running. If a **(Web)** model already answers successfully, you do not need to reinstall just because
+the launcher has not observed a new model-list request.
 
 If the models still do not appear:
 
 - confirm that **Codex itself** uses ChatGPT sign-in; signing into the launcher's browser is separate.
   An API-key or signed-out Codex session can show only its built-in catalog without contacting the bridge;
 - open **Setup → Install into Codex** and click **Reinstall** once;
-- check **Settings → Run doctor**;
+- check **Settings → Run doctor**; a healthy local proxy does not mean the upstream model-list
+  request succeeded. Doctor reports its latest result separately;
 - make sure another Codex wrapper is not replacing the route; and
 - export a safe log after the failed catalog check.
 
@@ -213,17 +219,17 @@ window does not automatically transfer that session.
   session. Your usual Chrome profile is not used. Google Chrome must be installed.
 
 If an ordinary login still fails, export a safe log immediately after one attempt. Include the OS,
-launcher version, account tier, sign-in provider, and whether the Temporary Chat composer ever
+launcher version, account tier, sign-in provider, and whether the new chat composer ever
 appeared. Never upload cookies, browser storage, authentication headers, or raw profile files.
 
 ## The browser smoke test fails
 
 The smoke test and real turns use the same current ChatGPT controls. Errors mentioning the effort
-control, composer, send button, Temporary Chat, personalization, or an operational viewport usually
+control, composer, send button, new chat, or an operational viewport usually
 mean that the ChatGPT UI did not expose a structure the bridge can safely prove.
 
 1. Update to the latest release.
-2. Confirm that a normal Temporary Chat can be opened in the launcher and that the account is not
+2. Confirm that a new chat in the selected mode can be opened in the launcher and that the account is not
    showing a login, onboarding, capacity, or rate-limit dialog.
 3. Run the smoke test one more time with the launcher visible.
 4. If the same structural error remains, do not keep retrying. Export a safe log and open a focused
@@ -232,8 +238,24 @@ mean that the ChatGPT UI did not expose a structure the bridge can safely prove.
 Free and Go accounts normally expose Luna and Think without the paid-account effort selector. A
 missing paid selector on those accounts is not itself a sign-in failure.
 Luna and Think use rolling summaries with **Settings → Bigger Context** off. Experimental Bigger
-Context keeps the temporary conversation and sends large histories in parts. If earlier details
+Context keeps the task conversation and sends large histories in parts. If earlier details
 are lost in long Free-account chats, turn Bigger Context off and restart Codex.
+
+## A single message is too large for Bigger Context
+
+`No ChatGPT effort available to this account can carry a Bigger Context stage` is a local
+preflight rejection, before that message is sent to ChatGPT. Bigger Context distributes complete
+messages and tool results across stages; it does not split an individual message or JSON record.
+Increasing the advertised context window or the compaction threshold does not enlarge a stage.
+
+Keep the context limits supplied by the launcher. Split large inputs into smaller messages before
+submission, or put source material in files and ask Codex to read the relevant sections. Keep
+individual tool results bounded too. If an oversized record is already in the task history,
+compact the task or start a fresh task with smaller inputs.
+
+If this still fails on an unmodified release with the default limits, open a new issue with
+**Activity → Export safe log**, the failure time, account tier, model and effort. Distinguish the
+local preflight error from a message-size error shown by ChatGPT after submission.
 
 ## Personalization or connector controls are not found
 
@@ -382,6 +404,20 @@ approval review**, disable that optional Codex review setting and restart Codex.
 sandbox and explicit approvals still apply; this only prevents an unavailable native model from
 being inserted as an extra reviewer after the Web tool call already completed.
 
+## Long-running commands and MCP deadlines
+
+Each MCP invocation has a 90-second deadline. Command polling through `codex_write_stdin`,
+`codex_tool_call`, or the native `exec` gateway accepts `yield_time_ms` up to 60,000 ms.
+Longer waits are rejected before dispatch without retiring the task. Return after each poll;
+if the result still has a `session_id`, use a separate call to collect more output.
+The command continues running between polls. Changing `stallTimeoutSec` does not change the
+MCP invocation deadline.
+
+After updating, if ChatGPT still advertises a five-minute maximum for `codex_write_stdin`,
+recreate the current mode's connector with the same Tunnel and permissions to load its updated
+tool schema. Existing connectors receive an explicit validation error for an excessive wait;
+the bridge does not silently shorten the requested duration.
+
 ## `Reconnecting`, `stream disconnected`, or `ChatGPT failed`
 
 These are result boundaries, not one diagnosis. The bridge uses them when it cannot prove a complete
@@ -401,6 +437,16 @@ Do not assume that a generic 502 means the Tunnel is broken. Since v4.0.7, a nat
 outlives its turn binding is reported explicitly as `codex_tool_timeout` and retired rather than
 being presented as an ambiguous proxy success.
 
+If Stop disappears before the final answer, the bridge allows up to ten minutes without new
+observable response activity. A visible error or a completed empty answer has its own check.
+An idle timeout does not establish why ChatGPT stopped responding. Keep the original ChatGPT tab
+when reporting this case, and mention whether its final answer appeared after the error.
+
+For repeated compaction, the safe log includes `context_token_breakdown`: character and token
+counts grouped by instruction/message role, without their contents. These counts distinguish a
+large fixed instruction load from growing conversation history. They cover individual submitted
+records; the full input estimate also includes transport framing, attachments and platform reserve.
+
 ## Saved task environment cannot be read
 
 If an interrupted shutdown damages `runtime/thread-environments.json`, start a fresh Codex task.
@@ -412,6 +458,19 @@ environment may still need to be restarted.
 If the error remains or reports invalid workspace/permission records, export **Activity → Export
 safe log** and include the exact error. Keep the preserved file private; do not delete your launcher
 settings or upload the saved task environments.
+
+## A custom compaction limit causes `context_window_exceeded`
+
+Run **Settings → Run doctor**. A global or default-profile `model_auto_compact_token_limit` overrides
+the model's advertised threshold. A value chosen for a native model may exceed a Web model's
+limit. Remove that override to use per-model defaults, then restart Codex. Also check any
+`model_context_window` override; a context window smaller than the compaction threshold can fail
+before compaction starts. Doctor reports conflicting saved settings without editing them.
+
+Doctor cannot inspect command-line or project-specific overrides. If the error remains, include
+the selected model, launcher/Codex versions, these two settings and the failure time with your safe
+log. Do not post your entire configuration or credentials. An error message alone does not prove
+that these settings caused the failure.
 
 ## Native compaction returns `404 Not Found`
 

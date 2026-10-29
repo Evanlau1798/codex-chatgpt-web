@@ -17,13 +17,15 @@ for (const scenario of ["slow-startup", "slow-cancellation", "startup-stall"] as
       import { join } from "node:path";
       const scenario = ${JSON.stringify(scenario)};
       const realNow = Date.now;
+      const realPerformanceNow = performance.now.bind(performance);
       let elapsed = 0, requests = 0, kills = 0;
       Date.now = () => realNow() + elapsed;
+      Object.defineProperty(performance, "now", { value: () => realPerformanceNow() + elapsed });
       process.argv[2] = process.execPath;
       const timers = [];
       const nativeTimeout = globalThis.setTimeout;
       globalThis.setTimeout = (callback, ms, ...args) => {
-        if (ms === 15_000 || ms === 30_000) timers.push(ms);
+        if (ms > 10_000 && ms <= 30_000) timers.push(ms);
         if (scenario === "startup-stall" && ms === 30_000) queueMicrotask(callback);
         return nativeTimeout(callback, ms, ...args);
       };
@@ -34,7 +36,7 @@ for (const scenario of ["slow-startup", "slow-cancellation", "startup-stall"] as
       Bun.spawn = (_command, options) => {
         if (scenario === "startup-stall") {
           let finish;
-          return { exited: new Promise(resolve => finish = resolve), stdout: new Blob([]).stream(),
+          return { exitCode: null, exited: new Promise(resolve => finish = resolve), stdout: new Blob([]).stream(),
             stderr: new Blob([]).stream(), kill() { kills++; finish(1); } };
         }
         if (scenario === "slow-startup") elapsed += 16_000;
@@ -53,7 +55,8 @@ for (const scenario of ["slow-startup", "slow-cancellation", "startup-stall"] as
           kill() { throw new Error("Unexpected real-time watchdog expiry in controlled clock fixture"); } };
       };
       try {
-        await import(${JSON.stringify(script.href)});
+        const { runCancellationSmoke } = await import(${JSON.stringify(script.href)});
+        await runCancellationSmoke([process.execPath]);
         console.log(JSON.stringify({ ok: true, requests, timers, kills }));
       } catch (error) {
         console.log(JSON.stringify({ ok: false, error: error.message, requests, timers, kills }));
@@ -72,13 +75,16 @@ for (const scenario of ["slow-startup", "slow-cancellation", "startup-stall"] as
       if (scenario === "slow-startup") {
         expect(result.ok).toBeTrue();
         expect(output).toContain("NATIVE_CODEX_BROWSER_TAB_CANCEL_SMOKE_OK");
-        expect(result.timers).toEqual([30_000, 15_000]);
+        expect(result.timers[0]).toBe(30_000);
+        expect(result.timers).toHaveLength(2);
+        expect(result.timers[1]).toBeGreaterThan(14_000);
+        expect(result.timers[1]).toBeLessThanOrEqual(15_000);
       } else if (scenario === "slow-cancellation") {
         expect(result.ok).toBeFalse();
         expect(result.error).toContain("cancellation did not terminate within the smoke deadline");
       } else {
         expect(result.ok).toBeFalse();
-        expect(result.error).toContain("Codex made 0 Responses requests");
+        expect(result.error).toContain("Codex startup did not reach provider cancellation");
         expect(result.kills).toBe(1);
         expect(result.timers).toEqual([30_000]);
       }

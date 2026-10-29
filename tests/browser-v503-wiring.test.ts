@@ -3,14 +3,14 @@ import { readFileSync } from "node:fs";
 
 test("effort selection uses structural menu and slider indices instead of localized labels", () => {
   const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
-  const sessionSource = readFileSync(new URL("../src/chatgpt-session.ts", import.meta.url), "utf8");
+  const sessionSource = readFileSync(new URL("../src/chatgpt-ui/model-picker.ts", import.meta.url), "utf8");
   expect(workerSource).toContain("mode.uiEffortIndex");
   expect(workerSource).toContain("CHATGPT_EFFORT_MENU_SELECTOR");
   expect(workerSource).toContain("CHATGPT_EFFORT_ITEM_SELECTOR");
   expect(sessionSource).toContain('[role="menu"]:has([role="menuitemradio"], [data-model-reasoning-effort-slider])');
   expect(sessionSource).toContain('[role="group"]:has([role="menuitemradio"], [data-model-reasoning-effort-slider])');
   expect(sessionSource).toContain('[role="menuitemradio"]');
-  expect(sessionSource).toContain('[data-model-reasoning-effort-slider] [role="slider"]');
+  expect(sessionSource).toContain('sliderContainer.locator(\'[role="slider"]\')');
   expect(sessionSource).not.toContain(":popover-open");
   expect(sessionSource).not.toContain("data-radix-collection-item");
   expect(workerSource).toContain('sliderContainer.waitFor({ state: "visible"');
@@ -45,7 +45,7 @@ test("effort selection handles the known ChatGPT rate-limit dialog before menu a
 test("retained turns recheck effort and failed rebound pages remain diagnosable", () => {
   const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
   const selection = source.slice(
-    source.indexOf('"temporary_chat_preparation"'),
+    source.indexOf('"new_chat_preparation"'),
     source.indexOf('await diagnostics.capture(page, "effort-selection-complete")'),
   );
   expect(selection).toContain("let mode = await this.runStage");

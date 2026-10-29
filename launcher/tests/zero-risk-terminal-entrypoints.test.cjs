@@ -5,7 +5,7 @@ const { readFileSync } = require("node:fs");
 const { createRequire } = require("node:module");
 const { dirname } = require("node:path");
 const { runInNewContext } = require("node:vm");
-const { BrowserHost } = require("../electron/browser-host.cjs");
+const { BrowserHost, IDLE_BROWSER_URL } = require("../electron/browser-host.cjs");
 const { ManualTurnController } = require("../electron/manual-turn-controller.cjs");
 
 function fixture() {
@@ -85,17 +85,19 @@ for (const [name, event] of [
   assert.equal(contents.isDestroyed(), true);
 });
 
-for (const [name, error, superseded] of [
+for (const stage of ["idle", "chat"]) for (const [name, error, superseded] of [
   ["real failure", new Error("initial navigation failed"), false],
   ["aborted code", Object.assign(new Error("navigation replaced"), { code: "ERR_ABORTED" }), true],
   ["aborted numeric code", { code: -3 }, true],
   ["aborted message", new Error("ERR_ABORTED (-3) loading ChatGPT"), true],
-]) test(`manual initial navigation handles ${name} without losing terminal semantics`, async () => {
+]) test(`manual ${stage} navigation handles ${name} without losing terminal semantics`, async () => {
   const { host, contents } = fixture();
   host.turnTabs.clear();
-  Object.assign(contents, {
-    setZoomFactor() {}, loadURL: async () => { throw error; },
-  });
+  let currentUrl = "about:blank";
+  Object.assign(contents, { getURL: () => currentUrl, setZoomFactor() {}, loadURL: async url => {
+    if (stage === "idle" || url !== IDLE_BROWSER_URL) throw error;
+    currentUrl = url;
+  } });
   const path = require.resolve("../electron/browser-host.cjs");
   const localRequire = createRequire(path);
   const module = { exports: {} };
@@ -117,7 +119,7 @@ for (const [name, error, superseded] of [
   const sent = host.manualTurns.waitSent(tab.traceId, tab.helperPid);
   const terminal = host.manualTurns.waitTerminal(tab.traceId, tab.helperPid);
   await new Promise(resolve => setImmediate(resolve));
-  if (superseded) {
+  if (stage === "chat" && superseded) {
     assert.equal(host.turnTabs.get(tab.id), tab);
     assert.equal(host.manualTurns.terminals.has(tab.traceId), false);
     assert.equal(tab.manualState, "awaiting-user");

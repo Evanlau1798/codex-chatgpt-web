@@ -99,6 +99,12 @@ and development connectors installed without renaming, refreshing, or deleting e
 
 ## Browser lifecycle
 
+ChatGPT DOM contracts live in [`src/chatgpt-ui`](../src/chatgpt-ui/README.md), grouped
+by composer, model picker and turn renderer. Each component records its historical
+evidence and regression coverage. Model policy and turn ownership remain outside
+that layer. Diagnostic checkpoints identify observed structural variants without
+copying message content; a variant's age never selects or retires it automatically.
+
 The desktop launcher owns one persistent Electron partition and up to five task-bound browser
 tabs. Each task/model/effort/compaction epoch owns one exact `WebContentsView` lease; sequential
 native messages reuse that surface, while each message receives a fresh turn-bound MCP token and

@@ -1,4 +1,4 @@
-import { chatGptTurnUserRevisionHistory, extractChatGptCompactionSourceRevision, extractChatGptTurnIdentity } from "../adapters/chatgpt-web/environment";
+import { chatGptTurnUserRevisionHistory, extractChatGptCompactionSourceRevision, extractChatGptTurnIdentity, findChatGptCompactionSourceRevision } from "../adapters/chatgpt-web/environment";
 import { rememberCompactionContinuation } from "../adapters/chatgpt-web/compaction-continuation";
 import type { CodexParsedRequest } from "../types";
 import { decodeCompactionSummary, extractCompactUserMessages } from "./compaction";
@@ -24,9 +24,14 @@ export function rememberCompletedCompaction(
   const identity = extractChatGptTurnIdentity(parsed);
   if (!identity.threadId || !identity.turnId) return;
   const source = extractChatGptCompactionSourceRevision(parsed);
-  const sources = replacement ? [source, extractChatGptCompactionSourceRevision({
-    ...parsed, _rawBody: { ...(parsed._rawBody as object), input: replacement },
-  }, { recoverCheckpoint: false })] : [source];
+  const sources = [source];
+  if (replacement) {
+    // A native child can retain only contextual user items, with no instruction alias.
+    const retained = findChatGptCompactionSourceRevision({
+      ...parsed, _rawBody: { ...(parsed._rawBody as object), input: replacement },
+    }, { recoverCheckpoint: false });
+    if (retained) sources.push(retained);
+  }
   if (!replacement && compactionItem) {
     // Native v2 retains user messages but drops synthetic delegated tool outputs. Match the
     // exact retained instruction from the validated input, as the v1 replacement does above.

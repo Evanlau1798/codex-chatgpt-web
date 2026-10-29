@@ -37,7 +37,7 @@ test("Limits exposes only hashed account identity and distinguishes personal and
   let accountId = "account-personal";
   let structure = "personal";
   const page = {
-    url: () => "https://chatgpt.com/?temporary-chat=true",
+    url: () => "https://chatgpt.com/",
     evaluate: async () => ({ userId: "user-id", accountId, structure, planType: "pro", needsAttention: false }),
   };
   const personal = await readChatGptUsageAccount(page as never);

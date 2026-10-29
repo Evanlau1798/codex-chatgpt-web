@@ -59,6 +59,7 @@ Setup options:
   --fresh-conversation         Fresh chat per turn (automatic Original mode only)
   --retained-conversation      Disable fresh chat per turn (default)
   --saved-chats                Save Codex/Claude task chats to ChatGPT history (API stays Temporary)
+  --ordinary-chats             Alias of --saved-chats
   --temporary-chats            Use Temporary Chat for task conversations (default)
   --composer-predictions       Opt into same-final suggestions with a local TTL cache (Enhanced)
   --no-composer-predictions    Disable next-message suggestions (default)

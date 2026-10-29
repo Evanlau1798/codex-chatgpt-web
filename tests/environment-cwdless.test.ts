@@ -21,19 +21,16 @@ function request(markup: string, workspaces: Record<string, unknown> = { [primar
   };
 }
 
-test("Codex 0.150 filesystem-only multi-folder context uses its first workspace root", () => {
-  expect(extractChatGptTurnEnvironment(request(
+test("Codex filesystem-only multi-folder context cannot derive cwd from its first workspace root", () => {
+  expect(() => extractChatGptTurnEnvironment(request(
     `<filesystem><workspace_roots><root>${primary}</root><root>${additional}</root></workspace_roots></filesystem>`,
-  ))).toEqual({
-    cwd: primary, roots: [primary, additional], writableRoots: [primary, additional],
-    sandboxPolicy: { type: "dangerFullAccess" }, tools: [],
-  });
+  ))).toThrow("missing cwd");
 });
 
-test("projectless filesystem-only context does not require git workspace metadata", () => {
-  expect(extractChatGptTurnEnvironment(request(
+test("projectless filesystem-only context still requires native cwd authority", () => {
+  expect(() => extractChatGptTurnEnvironment(request(
     `<filesystem><workspace_roots><root>${primary}</root></workspace_roots></filesystem>`, {},
-  )).cwd).toBe(primary);
+  ))).toThrow("missing cwd");
 });
 
 for (const malformed of [

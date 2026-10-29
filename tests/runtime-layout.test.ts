@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -15,6 +15,7 @@ import {
   installedBunExecutable,
   loadConfig,
   loadConfigForSetup,
+  saveConfig,
   providerConfig,
   resolveBrokerEndpoint,
   runtimeCommandForProcess,
@@ -371,7 +372,7 @@ test("manual provider configuration preserves a distinct backend without guessin
   });
 });
 
-test("conversation preferences survive reload; saved chats also apply to Zero Risk", () => {
+test("retired chat preferences are removed without changing current configuration", () => {
   const root = join(tmpdir(), `codex-web-fresh-config-${process.pid}-${Date.now()}`);
   roots.push(root);
   process.env.CODEX_CHATGPT_WEB_HOME = root;
@@ -402,9 +403,32 @@ test("conversation preferences survive reload; saved chats also apply to Zero Ri
   config.experimentalFreshConversationPerTurn = "true";
   persist();
   expect(() => loadConfig()).toThrow("experimentalFreshConversationPerTurn");
-  config.experimentalFreshConversationPerTurn = false;
-  config.useSavedChats = "true";
-  persist();
+});
+
+test("Temporary Chat defaults on and preserves the legacy saved-chat preference across config reloads", () => {
+  const root = join(tmpdir(), `codex-temporary-config-${process.pid}-${Date.now()}`);
+  roots.push(root);
+  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  mkdirSync(root, { recursive: true });
+  const path = join(root, "config.json");
+  const original: Record<string, unknown> = { ...defaultConfig("browser-only"), useSavedChats: false };
+  expect(original.useSavedChats).toBe(false);
+  delete original.useSavedChats;
+  writeFileSync(path, JSON.stringify(original));
+  expect(loadConfig().useSavedChats).toBe(false);
+  for (const useSavedChats of [true, false]) {
+    writeFileSync(path, JSON.stringify({ ...original, useSavedChats }));
+    for (const loaded of [loadConfig(), loadConfigForSetup()]) {
+      expect(loaded.useSavedChats).toBe(useSavedChats);
+      for (const browserInteractionMode of ["automatic", "manual"] as const) {
+        expect(providerConfig({ ...loaded, browserInteractionMode }).chatgptWeb!.useSavedChats).toBe(useSavedChats);
+      }
+      saveConfig(loaded);
+      expect(loadConfig().useSavedChats).toBe(useSavedChats);
+      expect(JSON.parse(readFileSync(path, "utf8"))).toHaveProperty("useSavedChats", useSavedChats);
+    }
+  }
+  writeFileSync(path, JSON.stringify({ ...original, useSavedChats: "true" }));
   expect(() => loadConfig()).toThrow("useSavedChats");
 });
 

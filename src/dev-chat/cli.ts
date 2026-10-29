@@ -364,9 +364,10 @@ export async function runDevCommand(args: string[]): Promise<void> {
     const skillAttachments = takeFlag(args, "--skill-attachments");
     const inlineSkills = takeFlag(args, "--inline-skills");
     if (skillAttachments && inlineSkills) throw new Error("Choose --skill-attachments or --inline-skills");
-    const savedChats = takeFlag(args, "--saved-chats");
     const temporaryChats = takeFlag(args, "--temporary-chats");
-    if (savedChats && temporaryChats) throw new Error("Choose --saved-chats or --temporary-chats");
+    const ordinaryChats = takeFlag(args, "--ordinary-chats");
+    const savedChats = takeFlag(args, "--saved-chats");
+    if (temporaryChats && (ordinaryChats || savedChats)) throw new Error("Choose --temporary-chats or --saved-chats/--ordinary-chats");
     const freshConversation = takeFlag(args, "--fresh-conversation");
     const retainedConversation = takeFlag(args, "--retained-conversation");
     if (freshConversation && retainedConversation) {
@@ -404,13 +405,13 @@ export async function runDevCommand(args: string[]): Promise<void> {
         ? { browserInteractionMode: manualBrowserInteraction ? "manual" as const : "automatic" as const }
         : {}),
       ...(enhancedSession || standardSession ? { useEnhancedWebSessionMode: enhancedSession } : {}),
+      ...(temporaryChats || ordinaryChats || savedChats ? { useSavedChats: ordinaryChats || savedChats } : {}),
       ...(biggerContext || standardContext ? { experimentalBiggerContext: biggerContext } : {}),
       ...(predictions || noPredictions ? { composerPredictionsEnabled: predictions } : {}),
       ...(skillAttachments || inlineSkills ? { experimentalSkillAttachments: skillAttachments } : {}),
       ...(plusNativeContext || standardPlusContext ? { experimentalPlusNativeContext: plusNativeContext } : {}),
       ...(noAutoCompact || autoCompact ? { experimentalNoAutoCompact: noAutoCompact } : {}),
       ...(freshConversation || retainedConversation ? { experimentalFreshConversationPerTurn: freshConversation } : {}),
-      ...(savedChats || temporaryChats ? { useSavedChats: savedChats } : {}),
       ...(tunnelId ? { tunnelId } : {}),
       ...(runtimeKeyFile ? { runtimeKeyFile } : {}),
     });

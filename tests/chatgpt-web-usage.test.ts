@@ -8,6 +8,7 @@ import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
 import { resolveBiggerContextMultipartParts, resolveEnhancedRecoveryMultipartParts, chatGptUsageInputForRound, estimateChatGptWebInputTokens, estimateChatGptWebUsage } from "../src/adapters/chatgpt-web/usage";
 import type { CodexParsedRequest } from "../src/types";
 import { resolveChatGptWebMessageTokenBudget, resolveChatGptWebStagingTokenBudget } from "../src/chatgpt-web-models";
+import { parseRequest } from "../src/responses/parser";
 
 const capabilities = { localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true };
 
@@ -19,6 +20,40 @@ function request(text: string): CodexParsedRequest {
     options: { reasoning: "high" },
   };
 }
+
+test.each([undefined, 2] as const)("context diagnostics separate instructions from history without logging contents (%s parts)", parts => {
+  const parsed = parseRequest({
+    model: "gpt-5.6-sol",
+    instructions: "PRIVATE_SYSTEM top-level instructions ".repeat(100),
+    input: [
+      { type: "additional_tools", role: "developer", tools: [{ type: "function", name: "PRIVATE_TOOL", parameters: { type: "object" } }] },
+      { type: "message", role: "developer", content: "PRIVATE_DEVELOPER instructions" },
+      { type: "message", role: "user", content: "PRIVATE_USER request" },
+      { type: "message", role: "assistant", content: "PRIVATE_ANSWER" },
+      { type: "function_call_output", call_id: "PRIVATE_CALL", output: "PRIVATE_RESULT" },
+    ],
+    reasoning: { effort: "high" },
+  });
+  const options = { experimentalMultipartParts: parts };
+  const plain = compileChatGptWebPrompt(parsed, capabilities, undefined, options);
+  const measured = compileChatGptWebPrompt(parsed, capabilities, undefined, { ...options, includeContextTokenBreakdown: true });
+  const { contextTokenBreakdown: counts, ...prompt } = measured;
+  expect(prompt).toEqual(plain);
+  expect(estimateCompiledChatGptWebInputTokens(measured, parsed.modelId))
+    .toBe(estimateCompiledChatGptWebInputTokens(plain, parsed.modelId));
+  expect(Object.keys(counts!).sort()).toEqual(["assistant", "developer", "system", "tool_result", "user"]);
+  expect(counts!.developer!.records).toBe(1); // additional_tools is a registry, not a developer message.
+  expect(counts!.system!.tokens).toBeGreaterThan(counts!.user!.tokens);
+  expect(JSON.stringify(counts)).not.toContain("PRIVATE");
+  const { sanitizeForExport } = require("../launcher/electron/logging.cjs");
+  const logLine = `[chatgpt-web] context_token_breakdown ${JSON.stringify({ byRole: counts })}`;
+  expect(sanitizeForExport(logLine)).toBe(logLine);
+  for (const group of Object.values(counts!)) {
+    expect(Object.keys(group).sort()).toEqual(["chars", "records", "tokens"]);
+    expect(group.records).toBe(1);
+    expect(group.tokens).toBeGreaterThan(0);
+  }
+});
 
 test("usage counts the configured plugin name carried by the submitted prompt", () => {
   const parsed = request("Inspect the repository.");

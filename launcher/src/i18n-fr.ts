@@ -131,7 +131,7 @@ export const fr = {
   mcpStepTwo: "Connecter l’environnement local",
   mcpStepTwoBody: "Collez l’identifiant du tunnel et la clé API. Le tunnel doit appartenir au compte OpenAI qui utilisera le plugin ChatGPT. La clé reste dans le stockage local privé et n’est jamais écrite dans les journaux du lanceur.",
   mcpStepTwoHint: "Vous pourrez ajouter le connecteur MCP dans ChatGPT après la réussite de cette étape et le démarrage du tunnel.",
-  mcpCatalogRequired: "La connexion est indisponible tant que les modèles Codex ne sont pas installés et vérifiés. Revenez à Installation, installez les modèles, redémarrez Codex et attendez la fin de la vérification du catalogue.",
+  mcpSetupRequired: "Installez d’abord l’intégration Codex dans Setup. Vous pouvez connecter MCP pendant que Codex actualise sa liste de modèles.",
   tunnelId: "Identifiant du tunnel",
   runtimeKey: "Clé API (pas une clé Admin)",
   connect: "Connecter l’environnement",

@@ -1,3 +1,7 @@
+import { rememberCompactionContinuation } from "../src/adapters/chatgpt-web/compaction-continuation";
+import { extractChatGptTurnIdentity } from "../src/adapters/chatgpt-web/environment";
+import { SUMMARY_PREFIX } from "../src/responses/compaction";
+import { filesystemEnvironmentXml } from "./environment-fixture";
 import { afterEach, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -280,3 +284,106 @@ for (const shape of ["plain", "grouped-tagged", "grouped-untagged"] as const)
       expect(() => store.resolve(request)).toThrow("no canonical rollout");
     },
   );
+
+for (const cwdless of [false, true]) test.each(["v1", "v2"])(`%s compaction continuation validates a later same-turn midnight delta (cwdless=${cwdless})`, format => {
+    const { codexHome, request, rolloutPath } = resumedRootFixture();
+    const body = request._rawBody as { input: Array<Record<string, unknown>> };
+    const previous = body.input[0]!;
+    previous.internal_chat_message_metadata_passthrough = { turn_id: rolloutParentId };
+    const summary = `Midnight after completed compaction ${format}`;
+    rememberCompactionContinuation({ ...request, _compactionRequest: true }, extractChatGptTurnIdentity(request), [
+      { turnId: rolloutParentId, content: previous.content },
+    ], summary);
+    const current = {
+      type: "message", role: "user", id: "msg_compacted_environment",
+      internal_chat_message_metadata_passthrough: {
+        turn_id: rolloutTurnId, content_item_kinds: ["agents_md.instructions", "environments.environment_context"],
+      },
+      content: [{ type: "input_text", text: "# AGENTS.md instructions\n<INSTRUCTIONS>Preserve work.</INSTRUCTIONS>" },
+        { type: "input_text", text: cwdless ? environmentXml.replace(/<cwd>[^<]+<\/cwd>/, "") : environmentXml }],
+    };
+    if (cwdless) {
+      current.content.shift();
+      current.content[0]!.text = current.content[0]!.text.replace("<environment_context>",
+        "<environment_context><current_date>2026-10-20</current_date>");
+    }
+    const environmentPart = current.content.at(-1)!;
+    const delta = {
+      type: "message", role: "user", id: "msg_after_compaction_midnight",
+      internal_chat_message_metadata_passthrough: {
+        turn_id: rolloutTurnId, content_item_kinds: ["environments.environment_context"],
+      },
+      content: [{ type: "input_text", text: `<environment_context>
+<current_date>2026-10-21</current_date><timezone>America/New_York</timezone>
+<filesystem><workspace_roots><root>${root}</root></workspace_roots>${dangerFullAccessProfileXml}</filesystem>
+<subagents><agent name="/root/reviewer" /></subagents></environment_context>` }],
+    };
+    body.input = [current, previous, format === "v1"
+      ? { type: "message", role: "user", content: [{ type: "input_text", text: `${SUMMARY_PREFIX}\n${summary}` }] }
+      : { type: "compaction", encrypted_content: encodeCompactionSummary(summary) }, delta];
+    const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome);
+    expect(store.resolve(request).cwd).toBe(root);
+    const base = environmentPart.text;
+    environmentPart.text = base.replaceAll(root, resolve(root, "unproven-base"));
+    expect(() => store.resolve(request)).toThrow();
+    environmentPart.text = base;
+    // A second claim in the rebuilt base message must not be skipped by the
+    // calendar scan, which starts after that entire message (#884 review).
+    for (const text of [environmentXml.replaceAll(root, resolve(root, "conflicting-cwd")), environmentXml]) {
+      current.content.push({ type: "input_text", text });
+      expect(() => store.resolve(request)).toThrow();
+      current.content.pop();
+    }
+    expect(store.resolve(request).cwd).toBe(root);
+    const valid = delta.content[0]!.text;
+    for (const malformed of [
+      valid.replaceAll(root, resolve(root, "ungranted")),
+      valid.replace(dangerFullAccessProfileXml, readOnlyProfileXml),
+      valid.replace("</environment_context>", "<cwd>/unexpected</cwd></environment_context>"),
+      valid.replace("</subagents>", '<agent name="bad" cwd="/unexpected" /></subagents>'),
+    ]) {
+      delta.content[0]!.text = malformed;
+      expect(() => store.resolve(request)).toThrow();
+    }
+    delta.content[0]!.text = valid;
+    body.input.push({ ...current, id: "msg_duplicate_full_environment", content: [{ type: "input_text", text: environmentXml }] });
+    expect(() => store.resolve(request)).toThrow();
+    body.input.pop();
+    const native = readFileSync(rolloutPath, "utf8");
+    writeFileSync(rolloutPath, native.replaceAll(rolloutTurnId, rolloutParentId));
+    expect(() => store.resolve(request)).toThrow();
+    writeFileSync(rolloutPath, native);
+    expect(store.resolve(request).cwd).toBe(root);
+    rmSync(rolloutPath);
+    expect(() => store.resolve(request)).toThrow();
+  });
+
+for (const mode of ["workspace-write", "read-only"] as const) for (const networkAccess of [false, true]) {
+    test(`compaction plus midnight keeps native ${mode} network=${networkAccess}`, () => {
+      const { codexHome, request, body, delta, rolloutPath } = managedMidnightFixture(mode, networkAccess);
+      const previous = body.input[0]!;
+      previous.internal_chat_message_metadata_passthrough = { turn_id: rolloutParentId };
+      const summary = `Managed compaction plus midnight ${mode} ${networkAccess}`;
+      rememberCompactionContinuation({ ...request, _compactionRequest: true }, extractChatGptTurnIdentity(request), [
+        { turnId: rolloutParentId, content: previous.content },
+      ], summary);
+      const profile = mode === "workspace-write" ? workspaceWriteProfileXml : readOnlyProfileXml;
+      body.input = [{ type: "message", role: "user", id: "msg_managed_compacted_environment",
+        internal_chat_message_metadata_passthrough: {
+          turn_id: rolloutTurnId, content_item_kinds: ["environments.environment_context"],
+        }, content: [{ type: "input_text", text: filesystemEnvironmentXml(profile) }] }, previous,
+      { type: "compaction", encrypted_content: encodeCompactionSummary(summary) }, delta];
+      (request._rawBody as { input: typeof body.input }).input = body.input;
+      const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome);
+      const actual = store.resolve(request);
+      expect(actual.sandboxPolicy).toMatchObject({ type: mode === "workspace-write" ? "workspaceWrite" : "readOnly", networkAccess });
+      expect(actual.writableRoots).toEqual(mode === "workspace-write" ? [root] : []);
+      const original = delta.content[0]!.text;
+      delta.content[0]!.text = original.replace('<entry access="read"><special>:root</special></entry>',
+        '<entry access="write"><special>:root</special></entry>');
+      expect(() => store.resolve(request)).toThrow();
+      delta.content[0]!.text = original;
+      rmSync(rolloutPath);
+      expect(() => store.resolve(request)).toThrow();
+    });
+  }

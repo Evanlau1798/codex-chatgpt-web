@@ -295,6 +295,22 @@ export function resolveChatGptWebMessageTokenBudget(
   ));
 }
 
+/** A multipart transaction still shares one model window and the existing message budgets. */
+export function resolveChatGptWebMultipartContextWindow(
+  backendModel: ChatGptWebAutomaticBackendModel,
+  effort: ChatGptWebAdapterEffort,
+  capabilities: ChatGptWebAccountCapabilities,
+  partCount: number,
+  modelFamily?: ChatGptWebModelFamily,
+  useEnhancedWebSessionMode = false,
+): number {
+  const { contextWindow } = resolveChatGptWebContextLimits(backendModel, effort,
+    { ...capabilities, experimentalBiggerContext: !useEnhancedWebSessionMode }, useEnhancedWebSessionMode, modelFamily);
+  const onePart = resolveChatGptWebMessageTokenBudget(backendModel, effort, capabilities)
+    + CHATGPT_WEB_PLATFORM_RESERVE_TOKENS + 1;
+  return Math.min(contextWindow, onePart * partCount);
+}
+
 /** Keep repeated Plus Instant uploads within the ordinary pre-compaction input target. */
 export function resolveChatGptWebStagingTokenBudget(
   backendModel: ChatGptWebAutomaticBackendModel,

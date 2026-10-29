@@ -14,22 +14,7 @@ const languageTypes = read("launcher", "src", "types.ts");
 const electronMain = read("launcher", "electron", "main.cjs");
 const stateSource = read("launcher", "electron", "state.cjs");
 const languages = JSON.parse(read("launcher", "electron", "languages.json"));
-const loadI18nModule = () => {
-  const modules = {};
-  const load = file => {
-    const exportsObject = {};
-    new Function("exports", "require", ts.transpileModule(read("launcher", "src", file), {
-      compilerOptions: { module: ts.ModuleKind.CommonJS },
-    }).outputText)(exportsObject, name => modules[name]);
-    return exportsObject;
-  };
-  modules["./zero-risk-copy"] = load("zero-risk-copy.ts");
-  modules["./i18n-ja"] = load("i18n-ja.ts");
-  modules["./i18n-ko"] = load("i18n-ko.ts");
-  modules["./i18n-zh-tw"] = load("i18n-zh-tw.ts");
-  modules["./i18n-fr"] = load("i18n-fr.ts");
-  return load("i18n.ts");
-};
+const loadI18nModule = require("./support/i18n.cjs");
 
 test("every declared launcher language is wired across state, IPC, onboarding, and Settings", () => {
   assert.deepEqual(Object.keys(languages), ["en", "zh-CN", "zh-TW", "ja", "ko", "fr"]);
@@ -68,6 +53,58 @@ test("runtime health messages are localized without rewriting unknown failures",
   assert.match(read("launcher", "src", "settings-surface.tsx"), /<DoctorSummary copy=\{copy\} language=\{language\} report=\{doctor\}/);
 });
 
+
+test("runtime localization preserves literal plugin names, endpoints and all catalog states", () => {
+  const { copyFor, localizeRuntimeMessage } = loadI18nModule();
+  for (const language of Object.keys(languages).filter(language => language !== "en")) {
+    const copy = copyFor(language);
+    for (const name of ["Codex Native2", "Native $&", "Native $'", "Native $`", "Native $1",
+      'Native "quoted"', "Native \\path", "Native \u2028X", "Native \u2029X"]) {
+      assert.equal(localizeRuntimeMessage(copy, `ChatGPT connector ${JSON.stringify(name)} is available`, "connector", language),
+        copy.doctorConnectorAvailable.replace("{name}", () => name));
+    }
+    assert.equal(localizeRuntimeMessage(copy, "Responses proxy is healthy on 127.0.0.1:17841", "proxy", language),
+      copy.doctorProxyHealthy.replace("{endpoint}", () => "127.0.0.1:17841"));
+    for (const [message, expected] of [
+      ["This runtime has not observed a completed Codex model-list request yet", copy.doctorCatalogPending],
+      ["Codex's latest model-list request succeeded", copy.doctorCatalogReady],
+      ["Codex's latest model-list request failed; the local runtime is reachable", copy.doctorCatalogFailed],
+    ]) assert.equal(localizeRuntimeMessage(copy, message, "model-catalog", language), expected);
+  }
+});
+
+test("DoctorSummary translates known warning and error checks while preserving unknown failures", () => {
+  const vm = require("node:vm");
+  const { copyFor, localizeRuntimeMessage } = loadI18nModule();
+  const source = read("launcher", "src", "app-shared.tsx");
+  const ast = ts.createSourceFile("app-shared.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const summary = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "DoctorSummary");
+  assert.ok(summary);
+  const sandbox = { localizeRuntimeMessage, Icon: "Icon", StateDot: "StateDot",
+    element: (type, props, ...children) => ({ type, props, children }) };
+  const js = ts.transpileModule(summary.getText(ast).replace(/^export /, ""), { compilerOptions: {
+    target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React, jsxFactory: "element",
+  }, fileName: "summary.tsx" }).outputText;
+  vm.runInNewContext(js + "\nrender = DoctorSummary;", sandbox);
+  const spans = tree => !tree || typeof tree !== "object" ? [] : Array.isArray(tree)
+    ? tree.flatMap(spans) : [...(tree.type === "span" ? tree.children : []), ...spans(tree.children)];
+  for (const language of Object.keys(languages)) {
+    const copy = copyFor(language);
+    const raw = "Unknown backend failure with literal $& and 127.0.0.1:17841";
+    for (const status of ["ok", "warning", "error"]) {
+      const checks = [
+        ["This runtime has not observed a completed Codex model-list request yet", copy.doctorCatalogPending],
+        ["Codex's latest model-list request succeeded", copy.doctorCatalogReady],
+        ["Codex's latest model-list request failed; the local runtime is reachable", copy.doctorCatalogFailed],
+      ];
+      const rendered = sandbox.render({ copy, language, report: { ok: status === "ok", checks: [
+        ...checks.map(([message]) => ({ id: "model-catalog", status, message })),
+        { id: "unknown", status, message: raw },
+      ] } });
+      assert.deepEqual(spans(rendered), [...checks.map(([message, translated]) => language === "en" ? message : translated), raw]);
+    }
+  }
+});
 
 test("plugin setup and Zero Risk instructions show configured names in every language", () => {
   const { copyFor } = loadI18nModule();

@@ -49,6 +49,7 @@ function requireAutomaticBrowserInspection(host, operation) {
   }
 }
 
+const NEW_CHAT_URL = TEMPORARY_CHAT_URL;
 const CHATGPT_ORIGIN = "https://chatgpt.com";
 const IDLE_BROWSER_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Chtml%3E%3Chead%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3ECodex%20Web%20GPT%3C%2Ftitle%3E%3C%2Fhead%3E%3Cbody%3E%3C%2Fbody%3E%3C%2Fhtml%3E#codex-web-gpt-browser-host";
 const PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS = 10_000;
@@ -333,6 +334,8 @@ class BrowserHost {
     publishState,
     getUseSavedChats = () => false,
     getMaxBrowserTabs = () => MAX_BROWSER_TABS,
+    showWindow = () => {},
+    clipboardApi = clipboard,
   }) {
     if (typeof getConnectorName !== "function") {
       throw new Error("Browser host connector-name resolver is unavailable");
@@ -363,6 +366,8 @@ class BrowserHost {
     this.profile = profile;
     this.publishState = publishState;
     this.getUseSavedChats = getUseSavedChats;
+    this.showWindow = showWindow;
+    this.clipboard = clipboardApi;
     this.runBrowserHelperOperation = runBrowserHelperOperation;
     this.verifyConnectorWithBrowserHelper = verifyConnectorWithBrowserHelper;
     this.surfaceId = randomBytes(24).toString("base64url");
@@ -430,7 +435,8 @@ class BrowserHost {
         backgroundThrottling: true,
       },
     });
-    window.contentView.addChildView(this.view);
+    // Browser surfaces stay below native launcher notices, including new tabs.
+    window.contentView.addChildView(this.view, 0);
     this.windowVisibilityListener = () => this.syncViewVisibility();
     for (const event of WINDOW_VISIBILITY_EVENTS) {
       this.window.on(event, this.windowVisibilityListener);
@@ -636,8 +642,8 @@ class BrowserHost {
     };
     this.turnTabs.set(id, tab);
     this.syncPowerSaveBlocker();
-    this.window.contentView.addChildView(view);
-    if (interactionShield) this.window.contentView.addChildView(interactionShield);
+    this.window.contentView.addChildView(view, 0);
+    if (interactionShield) this.window.contentView.addChildView(interactionShield, 1);
     this.presentTurnView(tab, manual);
     interactionShield?.setBounds(this.bounds);
     interactionShield?.setVisible(false);
@@ -659,16 +665,37 @@ class BrowserHost {
 
   async initializeManualTurnTab(tab) {
     const contents = tab.view.webContents;
+    const chatUrl = tab.url;
     try {
       await loadCommittedBrowserSurface(contents, IDLE_BROWSER_URL);
-      if (this.turnTabs.get(tab.id) !== tab || contents.isDestroyed()) return;
-      await contents.loadURL(tab.url);
     } catch (error) {
       if (this.turnTabs.get(tab.id) !== tab || contents.isDestroyed()) return;
-      if (isAbortedNavigationError(error)) return;
       this.logger.error("browser.manual_tab_initialization_failed", {
-        tabId: tab.id, traceId: tab.traceId,
-        message: error instanceof Error ? error.message : String(error),
+        tabId: tab.id,
+        traceId: tab.traceId,
+        ...navigationErrorForLog(error),
+      });
+      this.manualTurns?.removed(tab, "failed");
+      this.removeTurnTab(tab, true);
+      return;
+    }
+    if (this.turnTabs.get(tab.id) !== tab || contents.isDestroyed()) return;
+    try {
+      await contents.loadURL(chatUrl);
+    } catch (error) {
+      if (this.turnTabs.get(tab.id) !== tab || contents.isDestroyed()) return;
+      if (isAbortedNavigationError(error)) {
+        this.logger.info("browser.manual_tab_navigation_superseded", {
+          tabId: tab.id,
+          traceId: tab.traceId,
+          ...navigationErrorForLog(error),
+        });
+        return;
+      }
+      this.logger.error("browser.manual_tab_navigation_failed", {
+        tabId: tab.id,
+        traceId: tab.traceId,
+        ...navigationErrorForLog(error),
       });
       this.manualTurns?.removed(tab, "failed");
       this.removeTurnTab(tab, true);
@@ -1084,10 +1111,10 @@ class BrowserHost {
     });
     await new Promise((resolve, reject) => {
       let settled = false;
-      let reloadStarted = false;
+      let mainNavigationStarted = false;
       const cleanup = () => {
         clearTimeout(timeout);
-        contents.off("did-start-loading", onStarted);
+        contents.off("did-start-navigation", onStarted);
         contents.off("did-stop-loading", onStopped);
         contents.off("did-finish-load", onFinished);
         contents.off("did-fail-load", onFailed);
@@ -1101,9 +1128,11 @@ class BrowserHost {
         if (error) reject(error);
         else resolve();
       };
-      const onStarted = () => { reloadStarted = true; };
-      const onStopped = () => { if (reloadStarted) finish(); };
-      const onFinished = () => { if (reloadStarted) finish(); };
+      const onStarted = (details) => {
+        if (details.isMainFrame && !details.isSameDocument) mainNavigationStarted = true;
+      };
+      const onStopped = () => { if (mainNavigationStarted) finish(); };
+      const onFinished = () => { if (mainNavigationStarted) finish(); };
       const onFailed = (_event, errorCode, errorDescription, url, mainFrame) => {
         if (!mainFrame || errorCode === -3) return;
         finish(new Error(`ChatGPT hard refresh failed: ${errorDescription} (${url})`));
@@ -1117,7 +1146,7 @@ class BrowserHost {
         if (!contents.isDestroyed()) contents.stop();
       }, timeoutMs);
       timeout.unref?.();
-      contents.on("did-start-loading", onStarted);
+      contents.on("did-start-navigation", onStarted);
       contents.on("did-stop-loading", onStopped);
       contents.on("did-finish-load", onFinished);
       contents.on("did-fail-load", onFailed);
@@ -1640,6 +1669,7 @@ class BrowserHost {
   }
 
   syncViewVisibility() {
+    if (this.destroyed || this.window.isDestroyed?.()) return;
     const windowVisible = this.window.isVisible() && !this.window.isMinimized();
     const visible = windowVisible
       && browserViewVisible(this.visible, this.surfaceActive, this.boundsReady);
@@ -1754,7 +1784,7 @@ class BrowserHost {
       : { webPreferences: { partition: this.partition, contextIsolation: true, nodeIntegration: false, sandbox: true } });
     this.authView = authView;
     this.authNavigationError = null;
-    this.window.contentView.addChildView(authView);
+    this.window.contentView.addChildView(authView, 0);
     authView.setBounds(this.bounds);
     authView.setVisible(false);
     authView.webContents.setZoomFactor(this.state.zoomFactor);
@@ -1869,9 +1899,10 @@ class BrowserHost {
     this.syncViewVisibility();
     this.logger.info("browser.auth_surface_closed");
     if (refreshMain && this.manualOperation === "ChatGPT login" && !this.view.webContents.isDestroyed()) {
-      void this.view.webContents.loadURL(TEMPORARY_CHAT_URL).catch((error) => {
+      void this.view.webContents.loadURL(NEW_CHAT_URL).catch((error) => {
         this.logger.error("browser.auth_refresh_failed", {
-          message: error instanceof Error ? error.message : String(error),
+          origin: navigationOriginForLog(NEW_CHAT_URL),
+          ...navigationErrorForLog(error),
         });
       });
     }
@@ -1915,7 +1946,7 @@ class BrowserHost {
     if (inspectSession) requireAutomaticBrowserInspection(this, "ChatGPT session inspection");
     this.show();
     if (!this.selectedTurnTab() && this.view.webContents.getURL() === IDLE_BROWSER_URL) {
-      await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+      await this.view.webContents.loadURL(NEW_CHAT_URL);
       if (inspectSession) await this.probeAuthentication();
     }
     return this.snapshot();
@@ -2237,7 +2268,7 @@ class BrowserHost {
         this.logger.info("browser.login_opened");
         const current = this.view.webContents.getURL();
         if (this.primaryNavigationError || this.reauthenticationRequired || !current.startsWith(CHATGPT_ORIGIN)) {
-          await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+          await this.view.webContents.loadURL(NEW_CHAT_URL);
         }
         const session = await this.probeAuthentication();
         if (!session.authenticated) {
@@ -2337,7 +2368,7 @@ class BrowserHost {
   async resetFailedPasskeyLogin() {
     await this.clearOwnedSessionForPasskey();
     const contents = this.view.webContents;
-    await contents.loadURL(TEMPORARY_CHAT_URL);
+    await contents.loadURL(NEW_CHAT_URL);
     const browser = await this.probeAuthentication();
     if (browser.authenticated) throw new Error("Partial passkey session remained authenticated after cleanup");
     this.setState({ authenticated: false, loading: false, status: "signed-out", message: "Sign in to ChatGPT" });
@@ -2362,7 +2393,7 @@ class BrowserHost {
       for (const cookie of state.cookies) await contents.session.cookies.set(cookie);
       contents.session.flushStorageData();
       await contents.session.cookies.flushStore();
-      await contents.loadURL(TEMPORARY_CHAT_URL);
+      await contents.loadURL(NEW_CHAT_URL);
       if (state.localStorage.length > 0) {
         const entries = javaScriptLiteral(state.localStorage);
         await contents.executeJavaScript(`(() => {
@@ -2371,7 +2402,7 @@ class BrowserHost {
           }
           for (const entry of ${entries}) localStorage.setItem(entry.name, entry.value);
         })()`, true);
-        await contents.loadURL(TEMPORARY_CHAT_URL);
+        await contents.loadURL(NEW_CHAT_URL);
       }
       result = await this.waitForAuthenticated(60_000);
       await this.runSessionInspection(false);
@@ -2422,7 +2453,7 @@ class BrowserHost {
         message: "Signing out of ChatGPT",
         status: "loading",
       });
-      await contents.loadURL(TEMPORARY_CHAT_URL);
+      await contents.loadURL(NEW_CHAT_URL);
       const browser = await this.probeAuthentication();
       if (browser.authenticated) {
         throw new Error("ChatGPT session remained authenticated after local session data was cleared");
@@ -2441,7 +2472,7 @@ class BrowserHost {
       this.setState({ status: "loading", message: "Checking saved ChatGPT session" });
       if (!isTemporaryChatUrl(this.view.webContents.getURL())) {
         try {
-          await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+          await this.view.webContents.loadURL(NEW_CHAT_URL);
         } catch (error) {
           // ChatGPT may replace the home navigation with its sign-in page. The
           // observed auth URL is a signed-out state, not a broken installation.
@@ -2497,16 +2528,15 @@ class BrowserHost {
         return this.snapshot();
       }
       const probe = (contents) => runBrowserPageScript(contents, `(async () => {
-        const expectedUrl = new URL(${JSON.stringify(TEMPORARY_CHAT_URL)});
+        const expectedUrl = new URL(${JSON.stringify(NEW_CHAT_URL)});
         const readSurface = () => {
           const composer = ${visibleElementScript(COMPOSER_SELECTOR)};
           const actualUrl = new URL(location.href);
           return {
             url: actualUrl.href,
             composer: Boolean(composer),
-            temporary: actualUrl.origin === expectedUrl.origin
-              && actualUrl.pathname === expectedUrl.pathname
-              && actualUrl.searchParams.get("temporary-chat") === "true",
+            newChat: actualUrl.origin === expectedUrl.origin
+              && actualUrl.pathname === expectedUrl.pathname,
             readyState: document.readyState,
           };
         };
@@ -2518,30 +2548,30 @@ class BrowserHost {
       })()`).catch(() => ({
         url: "",
         composer: false,
-        temporary: false,
+        newChat: false,
         sessionAuthenticated: false,
         sessionCheckError: "ChatGPT session verification could not inspect the browser. Retry after the page finishes loading.",
         readyState: "unknown",
       }));
       let result = await probe(this.view.webContents);
       if (this.destroyed || revision !== this.authenticationRevision) return this.snapshot();
-      if (!(result.composer && result.temporary && result.sessionAuthenticated)
+      if (!(result.composer && result.newChat && result.sessionAuthenticated)
         && this.authView
         && !this.authView.webContents.isDestroyed()) {
         const authResult = await probe(this.authView.webContents);
         if (authResult.sessionAuthenticated) {
           const completedAuthView = this.authView;
           this.closeAuthView(completedAuthView, true, false);
-          await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+          await this.view.webContents.loadURL(NEW_CHAT_URL);
           url = this.view.webContents.getURL();
           result = await probe(this.view.webContents);
         }
       }
       if (this.manualOperation === "ChatGPT login"
         && result.sessionAuthenticated
-        && !result.temporary
+        && !result.newChat
         && !this.view.webContents.isDestroyed()) {
-        await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+        await this.view.webContents.loadURL(NEW_CHAT_URL);
         url = this.view.webContents.getURL();
         result = await probe(this.view.webContents);
       }
@@ -2622,6 +2652,7 @@ class BrowserHost {
       descriptorPath: this.descriptorPath,
       appName: connectorName,
       operation: "smoke",
+      useSavedChats: this.getUseSavedChats(),
       logger: this.logger,
     });
     const evidence = result?.value;
@@ -2694,11 +2725,12 @@ class BrowserHost {
       descriptorPath: this.descriptorPath,
       appName: connectorName,
       operation: "inspect",
+      useSavedChats: false,
       payload: { detectCapabilities },
       logger: this.logger,
     });
     const inspected = result?.value;
-    if (!inspected || inspected.authenticated !== true || inspected.temporary !== true || typeof inspected.url !== "string") {
+    if (!inspected || inspected.authenticated !== true || inspected.newChat !== true || typeof inspected.url !== "string") {
       throw new Error("Browser helper returned invalid ChatGPT session evidence");
     }
     if (detectCapabilities
@@ -2721,6 +2753,7 @@ class BrowserHost {
         descriptorPath: this.descriptorPath,
         appName: this.connectorName(),
         operation: "limits",
+        useSavedChats: false,
         logger: this.logger,
       });
       const plan = result?.value;
@@ -2847,5 +2880,5 @@ module.exports = {
   loadCommittedBrowserSurface,
   navigationErrorForLog,
   navigationOriginForLog,
-  TEMPORARY_CHAT_URL,
+  NEW_CHAT_URL,
 };

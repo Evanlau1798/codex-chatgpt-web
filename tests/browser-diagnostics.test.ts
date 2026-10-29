@@ -5,6 +5,20 @@ import { join } from "node:path";
 import type { Page } from "playwright-core";
 import { chromium } from "playwright-core";
 import { ChatGptBrowserDiagnostics, readChatGptUpstreamFailureUiState, sanitizeChatGptBrowserDiagnosticState } from "../src/adapters/chatgpt-web/browser-diagnostics";
+import { CHATGPT_UI_VARIANT_SELECTORS, chatGptUiVariantCounts } from "../src/chatgpt-ui/observations";
+
+test("diagnostic capture retains validated UI variant counts without exposing page data", async () => {
+  const root = mkdtempSync(join(tmpdir(), "variant-diagnostics-"));
+  const variants = Object.fromEntries(Object.keys(CHATGPT_UI_VARIANT_SELECTORS).map(name => [name, { attached: 1, rendered: 1 }]));
+  const page = { evaluate: async (callback: unknown) => callback === chatGptUiVariantCounts ? variants : {},
+    locator: () => ({ evaluateAll: async () => undefined }) } as unknown as Page;
+  try {
+    await new ChatGptBrowserDiagnostics("variant_trace", root, true).capture(page, "verification");
+    const directory = readdirSync(root)[0]!;
+    const envelope = JSON.parse(readFileSync(join(root, directory, "01-verification.json"), "utf8"));
+    expect(envelope.uiVariants).toEqual(variants);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("composer diagnostics recognize native textarea editability without recording its content", async () => {
   const root = mkdtempSync(join(tmpdir(), "textarea-diagnostics-"));
@@ -133,7 +147,7 @@ test("connector verification records only capabilities even when screenshots are
     process.env.CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS = "1";
     const page = {
       evaluate: async (evaluator: Function) => {
-        verificationEvaluator = evaluator.toString();
+        if (evaluator !== chatGptUiVariantCounts) verificationEvaluator = evaluator.toString();
         return {
           composerVisible: true, connectorSelected: false, mentionMenuVisible: false,
           effortControlVisible: false, effortItemsVisible: false, menuVisible: false,
@@ -297,8 +311,10 @@ test("scopes diagnostic capture to the bound assistant turn", async () => {
     let evaluateSource = "";
     const page = {
       evaluate: async (callback: unknown, argument: unknown) => {
-        evaluateSource = String(callback);
-        evaluateArgument = argument;
+        if (callback !== chatGptUiVariantCounts) {
+          evaluateSource = String(callback);
+          evaluateArgument = argument;
+        }
         return diagnosticState;
       },
       screenshot: async () => Buffer.from("png"),

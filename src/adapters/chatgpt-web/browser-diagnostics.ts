@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { Page } from "playwright-core";
 import { chatGptResponseStructureLogEntries, chatGptResponseStructures } from "./browser-response-structure";
 import { chatGptInteractionState } from "./browser-interaction-state";
+import { CHATGPT_UI_VARIANT_SELECTORS, chatGptUiVariantCounts, validateChatGptUiVariantCounts } from "../../chatgpt-ui/observations";
 import { atomicWriteFile, getConfigDir } from "../../config";
 import {
   CHATGPT_ASSISTANT_TURN_SELECTOR,
@@ -135,6 +136,9 @@ export class ChatGptBrowserDiagnostics {
       const responseStructure = await withChatGptBrowserObservationTimeout(
         Promise.resolve().then(() => page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR).evaluateAll(chatGptResponseStructures)),
       ).catch(() => undefined);
+      const uiVariants = await withChatGptBrowserObservationTimeout(
+        page.evaluate(chatGptUiVariantCounts, CHATGPT_UI_VARIANT_SELECTORS),
+      ).then(validateChatGptUiVariantCounts).catch(() => undefined);
       const failed = /turn-failed|response-stalled/.test(checkpoint);
       // Verification remains content-free and normal captures avoid extra DOM work.
       // Detailed actionability probes run only for a failing owned turn.
@@ -151,6 +155,7 @@ export class ChatGptBrowserDiagnostics {
         traceId: this.traceId,
         checkpoint,
         ...(responseStructure ? { responseStructure } : {}),
+        ...(uiVariants ? { uiVariants } : {}),
         ...(safeInteraction !== undefined ? { interaction: safeInteraction } : {}),
         ...(error !== undefined ? { error: this.contentFree ? verificationFailure(error) : diagnosticError(error) } : {}),
         state: sanitizeChatGptBrowserDiagnosticState(state),
@@ -160,6 +165,7 @@ export class ChatGptBrowserDiagnostics {
       this.writeEnvelope(jsonPath, envelope);
 
       if (failed) {
+        if (uiVariants) console.info(`[chatgpt-web] ui_variants ${JSON.stringify({ traceId: this.traceId, checkpoint: stem, variants: uiVariants })}`);
         console.info(`[chatgpt-web] page_state ${JSON.stringify({
           traceId: this.traceId, checkpoint: stem,
           ...(stateError ? { unavailable: true } : { state: sanitizeChatGptBrowserDiagnosticState(state) }),

@@ -55,10 +55,21 @@ const steps = new Map<string, number>();
 const failures: string[] = [];
 let childRequests = 0;
 let authenticatedSteering = false;
-let childStarted!: () => void;
-let steeringQueued!: () => void;
-const childReady = new Promise<void>(resolve => { childStarted = resolve; });
-const steeringReady = new Promise<void>(resolve => { steeringQueued = resolve; });
+let childTurnId: string | undefined;
+const childToolStarted = join(root, "child-tool-started");
+const childToolRelease = join(root, "child-tool-release");
+const childToolScript = join(root, "child-tool.ts");
+// Keep the native child in the same turn after it records assistant output.
+// Queuing steering before streaming its first answer lets newer Codex versions
+// consume that steering before the answer, which does not exercise this regression.
+writeFileSync(childToolScript, `import { existsSync, writeFileSync } from "node:fs";
+writeFileSync(process.argv[2]!, "ready");
+const deadline = Date.now() + 30_000;
+while (!existsSync(process.argv[3]!)) {
+  if (Date.now() >= deadline) throw new Error("Fixture steering was not delivered");
+  await Bun.sleep(10);
+}
+`);
 const namespaces = new Map(["spawn_agent", "send_input", "wait_agent"].map(name => [name, { namespace: "multi_agent_v1", name }]));
 type InputItem = Record<string, any>;
 
@@ -80,10 +91,26 @@ async function* tool(name: string, args: unknown): AsyncGenerator<AdapterEvent> 
   yield { type: "done", stopReason: "tool_use", endTurn: false };
 }
 
-async function* answer(text: string, ready?: Promise<void>): AsyncGenerator<AdapterEvent> {
-  if (ready) await ready;
+async function* answer(text: string): AsyncGenerator<AdapterEvent> {
   yield { type: "text_delta", text, phase: "final_answer" };
   yield { type: "done", stopReason: "stop", endTurn: true };
+}
+
+async function* initialChild(): AsyncGenerator<AdapterEvent> {
+  yield { type: "text_delta", text: "INITIAL_CHILD_PROGRESS", phase: "commentary" };
+  const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
+  yield* tool("exec_command", {
+    cmd: [process.execPath, childToolScript, childToolStarted, childToolRelease].map(quote).join(" "),
+    login: false, yield_time_ms: 10_000,
+  });
+}
+
+async function waitForChildTool(): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  while (!existsSync(childToolStarted)) {
+    if (Date.now() >= deadline) throw new Error("Native child did not execute the fixture tool");
+    await Bun.sleep(10);
+  }
 }
 
 async function* failure(error: Error): AsyncGenerator<AdapterEvent> { throw error; }
@@ -109,11 +136,19 @@ const server = Bun.serve({
       steps.set(threadId, step + 1);
       const input = body.input as InputItem[];
       if (child) childRequests += 1;
-      const environment = store.resolve(parseRequest(body));
+      const parsed = parseRequest(body);
+      const environment = store.resolve(parsed);
       if (environment.cwd !== project || !environment.roots.includes(auxiliary)) {
         throw new Error("Resolved authority lost the primary or auxiliary workspace");
       }
+      if (child && step === 0) {
+        childTurnId = metadata.turn_id;
+        const commandTool = parsed.context.tools?.find(tool => tool.name === "exec_command");
+        if (!commandTool) throw new Error("Native child does not expose exec_command for the steering fixture");
+        if (commandTool.namespace) namespaces.set("exec_command", { namespace: commandTool.namespace, name: "exec_command" });
+      }
       if (child && step === 1) {
+        if (!childTurnId || metadata.turn_id !== childTurnId) throw new Error("Fixture steering started a different native turn");
         const users = input.filter(item => item.type === "message" && item.role === "user");
         if (users.length < 3 || users.some(item => item.internal_chat_message_metadata_passthrough?.turn_id !== metadata.turn_id)) {
           throw new Error("Fixture did not exercise attributed same-turn native steering");
@@ -122,20 +157,19 @@ const server = Bun.serve({
           throw new Error("Native metadata now includes auxiliary roots; revise this regression fixture");
         }
         if (!input.some(item => item.type === "message" && item.role === "assistant")) {
-          throw new Error("Fixture did not deliver steering after the initial assistant answer");
+          throw new Error("Fixture did not deliver steering after the initial assistant output");
         }
         authenticatedSteering = true;
       }
       if (child) {
-        childStarted();
-        stream = answer(step === 0 ? "INITIAL_CHILD_FINAL" : "STEERED_CHILD_FINAL", step === 0 ? steeringReady : undefined);
+        stream = step === 0 ? initialChild() : answer("STEERED_CHILD_FINAL");
       } else if (step === 0) {
         stream = tool("spawn_agent", { message: "Return the bounded fixture result.", fork_context: false, model: "chatgpt-web/pro" });
       } else if (step === 1) {
-        await childReady;
+        await waitForChildTool();
         stream = tool("send_input", { target: spawnedId(input), message: "Finish with the current result.", interrupt: false });
       } else if (step === 2) {
-        steeringQueued();
+        writeFileSync(childToolRelease, "ready");
         stream = tool("wait_agent", { targets: [spawnedId(input)], timeout_ms: 10_000 });
       } else stream = answer("ROOT_DONE");
     } catch (error) {
@@ -159,7 +193,7 @@ const child = Bun.spawn([
   codex, "exec", "--skip-git-repo-check", "--json", "--dangerously-bypass-approvals-and-sandbox",
   "--add-dir", auxiliary, "--model", "chatgpt-web/pro", "Run the bounded child steering fixture.",
 ], { cwd: project, env: environment, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-const timeout = setTimeout(() => { childStarted(); steeringQueued(); child.kill(); }, 60_000);
+const timeout = setTimeout(() => { writeFileSync(childToolRelease, "timeout"); child.kill(); }, 60_000);
 try {
   const [exitCode, stdout, stderr] = await Promise.all([
     child.exited, new Response(child.stdout).text(), new Response(child.stderr).text(),
@@ -178,8 +212,7 @@ try {
   process.stdout.write("NATIVE_CODEX_STEERING_ENVIRONMENT_SMOKE_OK\n");
 } finally {
   clearTimeout(timeout);
-  childStarted();
-  steeringQueued();
+  writeFileSync(childToolRelease, "cleanup");
   await server.stop(true);
   rmSync(root, { recursive: true, force: true });
 }

@@ -74,7 +74,7 @@ test("disabled predictions and opt-in cache misses return null before adapter cr
 
 test("prediction cache misses cannot forward history, tools or output schemas to a Web turn", async () => {
   const config = { ...defaultConfig("full"), proAvailable: true, experimentalBiggerContext: true,
-    experimentalSkillAttachments: true, useSavedChats: true };
+    experimentalSkillAttachments: true };
   const before = structuredClone(config);
   for (const model of ["chatgpt-web/gpt-6-pro", "chatgpt-web/gpt-5.6-sol"]) {
     const body = { ...base, model, tools: [{ type: "function", name: "exec_command", parameters: { type: "object" } }],

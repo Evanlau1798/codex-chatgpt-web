@@ -7,6 +7,7 @@ import {
   CHATGPT_WEB_PLATFORM_RESERVE_TOKENS,
   isChatGptWebZeroRiskBackendModel,
   resolveChatGptWebContextLimits,
+  resolveChatGptWebMultipartContextWindow,
   resolveChatGptWebMessageTokenBudget,
   resolveChatGptWebTransportLimits,
   supportsChatGptWebBiggerContext,
@@ -105,8 +106,6 @@ export function resolveBiggerContextMultipartParts(
     false,
     parsed._chatgptModelFamily,
   );
-  const contextWindow = resolveChatGptWebMessageTokenBudget(backendModel, mode.effort, capabilities)
-    + CHATGPT_WEB_PLATFORM_RESERVE_TOKENS + 1;
   const compile = (parts?: ChatGptWebMultipartPartCount): CompiledChatGptWebPrompt => compileChatGptWebPrompt(
     parsed,
     capabilities,
@@ -121,11 +120,8 @@ export function resolveBiggerContextMultipartParts(
     parsed,
     capabilities,
     mode.effort,
-    messages => Math.min(
-      resolveChatGptWebContextLimits(backendModel, mode.effort,
-        { ...capabilities, experimentalBiggerContext: true }, false, parsed._chatgptModelFamily).contextWindow,
-      contextWindow * Math.min(messages, CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER),
-    ),
+    messages => resolveChatGptWebMultipartContextWindow(backendModel, mode.effort, capabilities,
+      Math.min(messages, CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER), parsed._chatgptModelFamily),
   );
   if (initialParts === undefined && fits(inline)) return undefined;
   if (initialParts !== CHATGPT_BIGGER_CONTEXT_PARTS && fits(compile(2))) return 2;

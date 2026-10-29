@@ -62,6 +62,7 @@ function readState(filePath) {
         : false;
     }
     delete state.useNewCompactMode;
+    delete state.useTemporaryChats;
     if (parsed.coreSetupComplete === true
       && parsed.codexSetupComplete === undefined
       && parsed.claudeSetupComplete === undefined) {
@@ -175,6 +176,7 @@ function createStateStore(filePath) {
     },
     update(patch) {
       const next = normalizeContextModes({ ...state, ...patch, version: 1 });
+      delete next.useTemporaryChats;
       writeState(filePath, next);
       state = next;
       return structuredClone(next);

@@ -246,7 +246,8 @@ for (const largeRecovery of [false, true]) test(
       expect(turn.externalProgress).toBeUndefined();
       expect(turn.retryPromptForAnswer).toBeUndefined();
       expect(prepared.multipart?.parts.length).toBe(largeRecovery ? 2 : undefined);
-      const preparedContext = prepared.multipart?.parts.join("\n") ?? prepared.modelInputText ?? prepared.text;
+      const preparedContext = prepared.multipart ? JSON.stringify(prepared.multipart.parts.map(part => JSON.parse(part)))
+        : prepared.modelInputText ?? prepared.text;
       expect(preparedContext).toContain("CANONICAL_RECOVERY_RESULT");
       expect(preparedContext).toContain("Continue after the V2 boundary");
       expect(prepared.multipart?.commit ?? prepared.text).toContain("final-answer recovery");

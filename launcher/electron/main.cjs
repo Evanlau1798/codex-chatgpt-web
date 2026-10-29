@@ -21,7 +21,8 @@ const {
   shell,
   Tray,
 } = require("electron");
-const { BrowserHost } = require("./browser-host.cjs");
+const { BrowserHost, navigationErrorForLog } = require("./browser-host.cjs");
+const { SessionReminderView } = require("./session-reminder-view.cjs");
 const { openBrowserLogin } = require("./browser-login-flow.cjs");
 const { BrowserControlServer } = require("./control-server.cjs");
 const { LimitsController } = require("./limits-controller.cjs");
@@ -548,7 +549,7 @@ function syncBrowserPreferences(stateStore, config) {
     && (config?.browserInteractionMode ?? "automatic") === "automatic";
   const current = stateStore.read();
   if (runtimeHost?.currentOperation()) return current;
-  const retentionChanged = current.experimentalFreshConversationPerTurn !== enabled || current.useSavedChats !== useSavedChats
+  const retentionChanged = current.useSavedChats !== useSavedChats || current.experimentalFreshConversationPerTurn !== enabled
     || current.experimentalBiggerContext !== biggerContextEnabled;
   if (!retentionChanged && current.composerPredictionsEnabled === composerPredictionsEnabled
     && current.autoApproveToolCalls === autoApproveToolCalls
@@ -569,6 +570,26 @@ function syncBrowserPreferences(stateStore, config) {
 }
 
 function registerIpc({ logger, stateStore }) {
+  const dismissSessionReminder = () => {
+    const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
+    send("launcher:state-changed", state);
+    return state;
+  };
+  const logoutChatGpt = async () => {
+    await runtimeStartup;
+    const browser = await browserHost.logout();
+    const state = dismissSessionReminder();
+    return { browser, state };
+  };
+  const sessionReminder = new SessionReminderView({ parent: mainWindow, loadRenderer, logger,
+    getLanguage: () => stateStore.read().language || "en",
+    onAction: async action => {
+      if (action === "dismiss") return dismissSessionReminder();
+      const result = await logoutChatGpt();
+      send("launcher:session-reminder-logged-out");
+      return result;
+    },
+  });
   const runtimeChannels = new Set([
     "launcher:setup-core", "launcher:setup-mcp", "launcher:uninstall-integration",
     "launcher:composer-predictions", "launcher:bigger-context", "launcher:skill-attachments", "launcher:fresh-conversation-per-turn",
@@ -657,6 +678,7 @@ function registerIpc({ logger, stateStore }) {
 
   handle("launcher:browser-bounds", (event, bounds) => {
     browserHost?.setBounds(validateBounds(bounds), event.sender.getZoomFactor());
+    sessionReminder.position();
     return true;
   });
   handle("launcher:browser-surface-active", (_event, active) => browserHost.setSurfaceActive(active === true));
@@ -687,17 +709,8 @@ function registerIpc({ logger, stateStore }) {
     return browser;
   });
   handle("launcher:browser-passkey-login-continue", () => runtimeHost.continuePasskeyLogin());
-  handle("launcher:browser-logout", async () => {
-    const browser = await browserHost.logout();
-    const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-    send("launcher:state-changed", state);
-    return { browser, state };
-  });
-  handle("launcher:session-reminder-dismiss", () => {
-    const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-    send("launcher:state-changed", state);
-    return state;
-  });
+  handle("launcher:browser-logout", logoutChatGpt);
+  handle("launcher:session-reminder-dismiss", dismissSessionReminder);
   handle("launcher:browser-smoke", async () => {
     if (stateStore.read().browserInteractionMode === "manual") {
       throw new Error("Browser smoke testing is disabled in Zero Risk mode");
@@ -1368,6 +1381,7 @@ async function start() {
     partition: LAUNCHER_PROFILE.browserPartition,
     profile: LAUNCHER_PROFILE.kind,
     publishState: (state) => send("launcher:browser-state", state),
+    showWindow: showMainWindow,
   });
   await browserHost.ready();
   const updaterRuntimeRoot = runtimeRootProvider();

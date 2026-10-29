@@ -4,7 +4,7 @@ import { extractChatGptTurnUserRevision } from "../src/adapters/chatgpt-web/envi
 import { defaultConfig } from "../src/config";
 import { compactRequest, responseRequest } from "../src/server";
 
-test("v1 goal compaction authorizes the human instruction retained by Codex", async () => {
+test("v1 goal compaction preserves the authenticated current goal over an older retained human instruction", async () => {
   const config = defaultConfig("full");
   const metadata = { thread_id: "thread_goal_compaction", turn_id: "turn_goal_continuation" };
   const source = {
@@ -47,7 +47,7 @@ test("v1 goal compaction authorizes the human instruction retained by Codex", as
   }), config, () => ({
     name: "goal-continuation",
     async runTurn(parsed, _incoming, emit) {
-      expect(extractChatGptTurnUserRevision(parsed)).toEqual(source.content);
+      expect(extractChatGptTurnUserRevision(parsed)).toEqual(goal.content);
       emit({ type: "text_delta", text: "Goal continued", phase: "final_answer" });
       emit({ type: "done", stopReason: "stop", endTurn: true });
     },

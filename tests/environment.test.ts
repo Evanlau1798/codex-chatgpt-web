@@ -1,5 +1,5 @@
 import { chatGptTurnRoundKey } from "../src/adapters/chatgpt-web/turn-execution-key";
-import { isChatGptCompactionContinuation } from "../src/adapters/chatgpt-web/environment";
+import { extractChatGptTurnEnvironmentClaim, isChatGptCompactionContinuation } from "../src/adapters/chatgpt-web/environment";
 import { beforeEach, afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -1038,4 +1038,44 @@ test("fresh trusted tasks do not erase unfamiliar or invalid permission records"
         expect(readdirSync(stateRoot)).toEqual(["thread-environments.json"]);
       }
     }
+  });
+
+test("a filesystem-only multi-folder diff does not declare cwd", () => {
+    const primary = resolve(root, "workspace-primary");
+    const additional = resolve(root, "workspace-additional");
+    const cwdlessEnvironment = `<environment_context>
+  <current_date>2026-09-02</current_date>
+  <timezone>UTC</timezone>
+  <filesystem><workspace_roots><root>${primary}</root><root>${additional}</root></workspace_roots>${dangerFullAccessProfileXml}</filesystem>
+</environment_context>`;
+
+    const request = currentWire({
+      workspace: primary,
+      environmentXml: cwdlessEnvironment,
+    });
+    expect(extractChatGptTurnEnvironmentClaim(request).environment).toEqual({
+      roots: [primary, additional],
+      writableRoots: [primary, additional],
+      sandboxPolicy: { type: "dangerFullAccess" },
+      tools: [],
+    });
+    expect(() => extractChatGptTurnEnvironment(request)).toThrow("missing cwd");
+  });
+
+test("a single projectless workspace root does not declare cwd either", () => {
+    const primary = resolve(root, "projectless-primary");
+    const cwdlessEnvironment = `<environment_context>
+  <filesystem><workspace_roots><root>${primary}</root></workspace_roots>${dangerFullAccessProfileXml}</filesystem>
+</environment_context>`;
+    const request = currentWire({ environmentXml: cwdlessEnvironment });
+    const body = request._rawBody as { client_metadata: { "x-codex-turn-metadata": string } };
+    body.client_metadata["x-codex-turn-metadata"] = JSON.stringify({
+      thread_id: "thread_current",
+      turn_id: "turn_current",
+      sandbox: "none",
+      workspaces: {},
+    });
+
+    expect(extractChatGptTurnEnvironmentClaim(request).environment).toMatchObject({ roots: [primary] });
+    expect(() => extractChatGptTurnEnvironment(request)).toThrow("missing cwd");
   });

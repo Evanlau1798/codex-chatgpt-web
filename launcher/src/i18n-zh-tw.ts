@@ -139,7 +139,7 @@ export const zhTW = {
   mcpStepTwo: "連線本機 Harness",
   mcpStepTwoBody: "貼上 Tunnel ID 與 API key。Tunnel 必須屬於將使用該 ChatGPT 外掛的同一個 OpenAI 帳戶。金鑰只保存在本機私人儲存中，絕不會寫入啟動器日誌。",
   mcpStepTwoHint: "只有此步驟成功且 Tunnel 正在執行後，才能在 ChatGPT 中新增 MCP 連接器。",
-  mcpCatalogRequired: "在 Codex 模型安裝並驗證完成前，無法連線 Harness。請返回「設定」，點選「安裝模型」，重新啟動一次 Codex，並等待模型清單驗證完成。",
+  mcpSetupRequired: "請先在 Setup 安裝 Codex 整合。Codex 更新模型清單期間也可以連線 MCP。",
   tunnelId: "Tunnel ID",
   runtimeKey: "API key（不是 Admin key）",
   connect: "連線 Harness",

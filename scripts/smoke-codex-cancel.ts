@@ -1,131 +1,169 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { resolveLifecycleExecutable } from "./lifecycle-smoke/paths";
 import { bridgeToResponsesSSE } from "../src/bridge";
 import { defaultConfig } from "../src/config";
 import { augmentNativeModelCatalog } from "../src/model-catalog";
 import type { AdapterEvent } from "../src/types";
-import { resolveLifecycleExecutable } from "./lifecycle-smoke/paths";
 
-const codex = resolve(process.argv[2] ?? resolveLifecycleExecutable("codex"));
-if (!existsSync(codex)) throw new Error(`Codex executable is missing: ${codex}`);
-
-const bundled = Bun.spawnSync([codex, "debug", "models", "--bundled"], {
-  stdin: "ignore",
-  stdout: "pipe",
-  stderr: "pipe",
-  timeout: 15_000,
-});
-if (bundled.exitCode !== 0) {
-  throw new Error(`Could not read bundled Codex models: ${bundled.stderr.toString()}`);
+async function within<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  if (timeoutMs <= 0) throw new Error(message);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([promise, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    })]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
-const config = defaultConfig("browser-only");
-config.proAvailable = true;
-const catalog = augmentNativeModelCatalog(JSON.parse(bundled.stdout.toString()), config);
-const root = join(tmpdir(), `codex-chatgpt-web-cancel-${process.pid}-${Date.now()}`);
-const codexHome = join(root, "codex");
-mkdirSync(codexHome, { recursive: true });
-writeFileSync(join(root, "models.json"), `${JSON.stringify(catalog)}\n`);
-
-let responseRequests = 0;
-let beginCancellationDeadline = () => {};
-async function* cancelledStream(): AsyncGenerator<AdapterEvent> {
-  yield {
-    type: "error",
-    message: "The ChatGPT browser tab was closed, so the Codex turn was cancelled.",
-    status: 499,
-    errorType: "client_closed_request",
-    code: "client_cancelled",
-    retryable: false,
-  };
-}
-
-const server = Bun.serve({
-  hostname: "127.0.0.1",
-  port: 0,
-  async fetch(request) {
-    const url = new URL(request.url);
-    if (url.pathname === "/v1/models") return Response.json(catalog);
-    if (url.pathname !== "/v1/responses" || request.method !== "POST") {
-      return new Response("Not found", { status: 404 });
-    }
-    await request.json();
-    responseRequests += 1;
-    if (responseRequests === 1) {
-      beginCancellationDeadline();
-      return new Response(bridgeToResponsesSSE(cancelledStream(), "chatgpt-web/high"), {
-        headers: { "content-type": "text/event-stream", "cache-control": "no-cache" },
-      });
-    }
-    return Response.json({
-      error: {
-        type: "client_closed_request",
-        code: "client_cancelled",
-        message: "The ChatGPT browser tab was closed, so the Codex turn was cancelled.",
-      },
-    }, { status: 400 });
-  },
-});
-
-writeFileSync(join(codexHome, "config.toml"), [
-  'model = "chatgpt-web/high"',
-  'model_provider = "cancel-smoke"',
-  `model_catalog_json = ${JSON.stringify(join(root, "models.json"))}`,
-  "",
-  "[model_providers.cancel-smoke]",
-  'name = "Local cancellation smoke"',
-  `base_url = "http://127.0.0.1:${server.port}/v1"`,
-  'env_key = "OPENAI_API_KEY"',
-  'wire_api = "responses"',
-  "supports_websockets = false",
-  "",
-].join("\n"));
-
-try {
-  let cancellationStartedAt: number | undefined;
-  const child = Bun.spawn([
-    codex,
-    "exec",
-    "--skip-git-repo-check",
-    "--json",
-    "--dangerously-bypass-approvals-and-sandbox",
-    "--model",
-    "chatgpt-web/high",
-    "Wait for the provider cancellation contract.",
-  ], {
-    cwd: root,
-    env: { ...process.env, CODEX_HOME: codexHome, OPENAI_API_KEY: "local-cancel-smoke" },
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
+export async function runCancellationSmoke(command: string[], limits = {
+  startupMs: 30_000,
+  cancellationMs: 15_000,
+  outputMs: 5_000,
+}): Promise<void> {
+  const bundled = Bun.spawnSync([...command, "debug", "models", "--bundled"], {
+    stdin: "ignore", stdout: "pipe", stderr: "pipe",
+    timeout: 15_000,
   });
-  // CLI cold startup is bounded separately; cancellation begins with its provider error.
-  let timeout = setTimeout(() => child.kill(), 30_000);
-  beginCancellationDeadline = () => {
-    cancellationStartedAt = Date.now();
-    clearTimeout(timeout);
-    timeout = setTimeout(() => child.kill(), 15_000);
-  };
-  const [exitCode, stdout, stderr] = await Promise.all([
-    child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ]);
-  clearTimeout(timeout);
+  if (bundled.exitCode !== 0) {
+    throw new Error(`Could not read bundled Codex models: ${bundled.stderr.toString()}`);
+  }
 
-  if (exitCode === 0) throw new Error(`Codex reported cancellation as success:\n${stdout}`);
-  if (responseRequests !== 2) {
-    throw new Error(`Codex made ${responseRequests} Responses requests; expected one streamed failure and one terminal replay`);
+  const config = defaultConfig("browser-only");
+  config.proAvailable = true;
+  const catalog = augmentNativeModelCatalog(JSON.parse(bundled.stdout.toString()), config);
+  const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-cancel-"));
+  const codexHome = join(root, "codex");
+
+  let responseRequests = 0;
+  let cancellationAt: number | undefined;
+  const cancellationSent = Promise.withResolvers<void>();
+  let child: Bun.Subprocess<"ignore", "pipe", "pipe"> | undefined;
+  let server: ReturnType<typeof Bun.serve> | undefined;
+  try {
+    mkdirSync(codexHome, { recursive: true });
+    writeFileSync(join(root, "models.json"), `${JSON.stringify(catalog)}\n`);
+    async function* cancelledStream(): AsyncGenerator<AdapterEvent> {
+      yield {
+        type: "error",
+        message: "The ChatGPT browser tab was closed, so the Codex turn was cancelled.",
+        status: 499,
+        errorType: "client_closed_request",
+        code: "client_cancelled",
+        retryable: false,
+      };
+    }
+
+    server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/models") return Response.json(catalog);
+        if (url.pathname !== "/v1/responses" || request.method !== "POST") {
+          return new Response("Not found", { status: 404 });
+        }
+        await request.json();
+        responseRequests += 1;
+        if (responseRequests === 1) {
+          return new Response(bridgeToResponsesSSE(cancelledStream(), "chatgpt-web/high", undefined, undefined, undefined,
+            undefined, 2_000, { onTerminal: () => {
+              cancellationAt = performance.now();
+              cancellationSent.resolve();
+            } }), {
+            headers: { "content-type": "text/event-stream", "cache-control": "no-cache" },
+          });
+        }
+        return Response.json({
+          error: {
+            type: "client_closed_request",
+            code: "client_cancelled",
+            message: "The ChatGPT browser tab was closed, so the Codex turn was cancelled.",
+          },
+        }, { status: 400 });
+      },
+    });
+
+    writeFileSync(join(codexHome, "config.toml"), [
+      'model = "chatgpt-web/high"',
+      'model_provider = "cancel-smoke"',
+      `model_catalog_json = ${JSON.stringify(join(root, "models.json"))}`,
+      "",
+      "[model_providers.cancel-smoke]",
+      'name = "Local cancellation smoke"',
+      `base_url = "http://127.0.0.1:${server.port}/v1"`,
+      'env_key = "OPENAI_API_KEY"',
+      'wire_api = "responses"',
+      "supports_websockets = false",
+      "",
+    ].join("\n"));
+
+    child = Bun.spawn([
+      ...command,
+      "exec",
+      "--skip-git-repo-check",
+      "--json",
+      "--dangerously-bypass-approvals-and-sandbox",
+      "--model",
+      "chatgpt-web/high",
+      "Wait for the provider cancellation contract.",
+    ], {
+      cwd: root,
+      env: { ...process.env, CODEX_HOME: codexHome, OPENAI_API_KEY: "local-cancel-smoke" },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const output = Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    // Attach a handler immediately; the stream readers run while startup is pending.
+    void output.catch(() => {});
+    const exited = child.exited.then(code => ({ code, at: performance.now() }));
+    await within(Promise.race([
+      cancellationSent.promise,
+      exited.then(() => {
+        if (cancellationAt === undefined) throw new Error("Codex exited before receiving cancellation");
+      }),
+    ]), limits.startupMs, "Codex startup did not reach provider cancellation");
+    const remaining = limits.cancellationMs - (performance.now() - cancellationAt!);
+    const exit = await within(exited, remaining, "Codex cancellation did not terminate within the smoke deadline");
+    if (exit.at - cancellationAt! >= limits.cancellationMs) {
+      throw new Error("Codex cancellation did not terminate within the smoke deadline");
+    }
+    const exitCode = exit.code;
+    const [stdout, stderr] = await within(output, limits.outputMs, "Codex output pipes did not close after exit");
+
+    if (exitCode === 0) throw new Error(`Codex reported cancellation as success:\n${stdout}`);
+    if (responseRequests !== 2) {
+      throw new Error(`Codex made ${responseRequests} Responses requests; expected one streamed failure and one terminal replay`);
+    }
+    if (!`${stdout}\n${stderr}`.includes("client_cancelled")) {
+      throw new Error(`Codex did not surface the terminal cancellation body:\n${stdout}\n${stderr}`);
+    }
+    process.stdout.write("NATIVE_CODEX_BROWSER_TAB_CANCEL_SMOKE_OK\n");
+  } finally {
+    try {
+      if (child && child.exitCode === null) {
+        child.kill("SIGKILL");
+        await within(child.exited, 2_000, "Could not stop cancellation smoke child");
+      }
+    } finally {
+      try {
+        await server?.stop(true);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
   }
-  if (cancellationStartedAt === undefined || Date.now() - cancellationStartedAt >= 15_000) {
-    throw new Error("Codex cancellation did not terminate within the smoke deadline");
-  }
-  if (!`${stdout}\n${stderr}`.includes("client_cancelled")) {
-    throw new Error(`Codex did not surface the terminal cancellation body:\n${stdout}\n${stderr}`);
-  }
-  process.stdout.write("NATIVE_CODEX_BROWSER_TAB_CANCEL_SMOKE_OK\n");
-} finally {
-  await server.stop(true);
-  rmSync(root, { recursive: true, force: true });
+}
+
+if (import.meta.main) {
+  const codex = resolve(process.argv[2] ?? resolveLifecycleExecutable("codex"));
+  if (!existsSync(codex)) throw new Error(`Codex executable is missing: ${codex}`);
+  await runCancellationSmoke([codex]);
 }

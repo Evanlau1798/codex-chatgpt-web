@@ -2,6 +2,10 @@ import type { Copy } from "./i18n";
 import { zeroRiskCopy } from "./zero-risk-copy";
 
 export const ja: Record<keyof Copy, string> = {
+  newChat: "新しいチャット",
+  doctorCatalogPending: "このランタイムでは Codex のモデル一覧取得の完了をまだ確認していません",
+  doctorCatalogReady: "Codex の最新のモデル一覧取得に成功しました",
+  doctorCatalogFailed: "Codex の最新のモデル一覧取得に失敗しました。ローカルランタイムには接続できます",
   composerPredictions: "次のメッセージ候補",
   composerPredictionsBody: "既定ではオフです。Enhanced 自動モードと Native 出力が有効な場合、最終回答と同時に任意の候補を生成し、ローカルの 5 分間 TTL キャッシュを再利用します。キャッシュがなければ候補を返さず、追加の Web リクエストやページは作成しません。",
   pluginName: "プラグイン名",
@@ -134,7 +138,7 @@ export const ja: Record<keyof Copy, string> = {
   mcpStepTwo: "ローカルハーネスを接続",
   mcpStepTwoBody: "Tunnel ID と API キーを貼り付けます。トンネルは、ChatGPT プラグインを使用する OpenAI アカウントと同じアカウントに属している必要があります。キーは非公開のローカルストレージに保存され、ランチャーログには記録されません。",
   mcpStepTwoHint: "この手順が成功し、トンネルが実行中になってから ChatGPT に MCP コネクタを追加できます。",
-  mcpCatalogRequired: "Codex モデルのインストールと検証が完了するまでハーネスを接続できません。セットアップに戻り、［モデルをインストール］を押して Codex を一度再起動し、モデルカタログの確認が完了するまで待ってください。",
+  mcpSetupRequired: "先にセットアップで Codex 統合をインストールしてください。Codex のモデル一覧の更新中も MCP に接続できます。",
   tunnelId: "Tunnel ID",
   runtimeKey: "API キー（Admin キーではありません）",
   connect: "ハーネスを接続",

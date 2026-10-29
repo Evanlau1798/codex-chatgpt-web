@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Locator, Page } from "playwright-core";
-import { parseChatGptModelAnnouncement, readChatGptModelAnnouncements } from "../../chatgpt-session";
+import { parseChatGptModelAnnouncement, readChatGptModelAnnouncements } from "../../chatgpt-ui/model-picker";
 
 export type ChatGptLimitsPlan = "pro_100" | "pro_200" | "unsupported";
 export type ChatGptUsageModel = "gpt-6-pro" | "gpt-5.6-pro" | "pro-unknown" | "other";
@@ -97,7 +97,8 @@ export function chatGptUsageModelFromAnnouncements(announcements: readonly strin
   for (const text of announcements) {
     const state = parseChatGptModelAnnouncement(text);
     if (!state) continue;
-    if (!/^Pro$/i.test(state.mode)) return "pro-unknown";
+    if (!/^Pro$/i.test(state.mode)
+      && !(state.version === "6" && state.name === "astra" && /^Max$/i.test(state.mode))) return "pro-unknown";
     if (state.version === "6" && (!state.name || state.name === "astra")) families.add("gpt-6-pro");
     else if (state.version === "5.6" && (!state.name || state.name === "sol")) families.add("gpt-5.6-pro");
     else return "pro-unknown";

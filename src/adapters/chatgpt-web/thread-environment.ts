@@ -365,12 +365,15 @@ function validateStoredEnvironment(value: unknown): StoredThreadEnvironment {
   const writableRoots = Array.isArray(parsed.writableRoots) && parsed.writableRoots.length === 0
     ? []
     : absolutePaths(parsed.writableRoots, "writable roots");
-  if (!roots.some(root => contains(root, cwd))) throw new Error("Persisted ChatGPT cwd is outside its roots");
+  const policy = sandboxPolicy(parsed.sandboxPolicy, roots, writableRoots);
+  if (!roots.some(root => contains(root, cwd)) && policy.type !== "dangerFullAccess") {
+    throw new Error("Persisted ChatGPT cwd is outside its roots");
+  }
   return {
     cwd,
     roots,
     writableRoots,
-    sandboxPolicy: sandboxPolicy(parsed.sandboxPolicy, roots, writableRoots),
+    sandboxPolicy: policy,
     updatedAt: parsed.updatedAt,
   };
 }
@@ -395,7 +398,8 @@ function sameAuthority(
     const actual = a.filter(path => !isVisualizationRoot(path));
     return actual.length === expected.size && actual.every(path => expected.has(pathIdentity(path)));
   };
-  return pathIdentity(left.cwd) === pathIdentity(right.cwd)
+  return (left.cwd === undefined || pathIdentity(left.cwd) === pathIdentity(right.cwd))
+    && (right.sandboxPolicy.type === "dangerFullAccess" || left.roots.some(root => contains(root, right.cwd)))
     && right.roots.filter(path => !isVisualizationRoot(path)).every(path => left.roots.some(root => pathIdentity(root) === pathIdentity(path)))
     && left.roots.filter(path => !isVisualizationRoot(path)).every(path =>
       [...right.roots, ...right.writableRoots].some(root => pathIdentity(root) === pathIdentity(path)))
@@ -439,14 +443,17 @@ export class ChatGptThreadEnvironmentStore {
     let directError: unknown;
     try {
       initialClaim = extractChatGptTurnEnvironmentClaim(parsed);
-      directEnvironment = initialClaim.environment;
-      if (this.codexHomes.length > 1
-        || (directEnvironment.sandboxPolicy.type !== "dangerFullAccess" && !initialClaim.statesNetworkAccess)) {
-        // With multiple registered Codex homes no envelope can establish its own
-        // owner. An exact current native rollout must authenticate the request.
+      const environment = initialClaim.environment;
+      const outsideProjectRoots = environment.cwd !== undefined
+        && !environment.roots.some(root => contains(root, environment.cwd!));
+      directEnvironment = environment.cwd === undefined ? undefined : { ...environment, cwd: environment.cwd };
+      if (!directEnvironment || outsideProjectRoots || this.codexHomes.length > 1
+        || (environment.sandboxPolicy.type !== "dangerFullAccess" && !initialClaim.statesNetworkAccess)) {
         directEnvironment = undefined;
         throw new MissingTrustedCodexEnvironmentError(
-          this.codexHomes.length > 1 ? "current native task ownership" : "network access",
+          environment.cwd === undefined ? "cwd"
+            : outsideProjectRoots ? "current native worktree authority"
+            : this.codexHomes.length > 1 ? "current native task ownership" : "network access",
         );
       }
     } catch (error) {
@@ -503,17 +510,26 @@ export class ChatGptThreadEnvironmentStore {
       });
       if (rollout) {
         let rolloutEnvironment = rollout.environment;
-        const calendarDelta = hasCurrentContext && !currentCompaction
-          ? extractChatGptCalendarEnvironmentDelta(parsed) : undefined;
-        const currentClaims = hasCurrentContext ? extractChatGptContinuationEnvironmentClaims(parsed, !!calendarDelta) : [];
+        const rebuiltEnvironmentIndex = currentCompaction && !hasCurrentInstruction
+          ? input.findIndex(value => hasEnvironmentContextFragment(record(value)) && itemTurnId(value) === identity.turnId)
+          : -1;
+        const calendarDelta = hasCurrentContext ? extractChatGptCalendarEnvironmentDelta(parsed,
+          rebuiltEnvironmentIndex >= 0 ? { afterEnvironmentIndex: rebuiltEnvironmentIndex } : undefined) : undefined;
+        const currentClaims = hasCurrentContext ? extractChatGptContinuationEnvironmentClaims(parsed, calendarDelta) : [];
+        if (rebuiltEnvironmentIndex >= 0 && currentClaims.length > 1) {
+          throw new Error("Compaction continuation repeats a current native environment claim");
+        }
         const workspaceClaim = initialClaim ?? currentClaims.at(-1);
         // A full-access rollout without workspace_roots has no native restriction
         // on roots. The current same-cwd request may supply workspace context,
         // but the exact native owner and permission profile remain authoritative.
-        if ((currentCompaction || postCompactionContext) && !rollout.workspaceRootsDeclared
+        if ((currentCompaction || postCompactionContext || (initialClaim && initialClaim.environment.cwd === undefined))
+          && !rollout.workspaceRootsDeclared
           && rolloutEnvironment.sandboxPolicy.type === "dangerFullAccess"
           && workspaceClaim?.environment.sandboxPolicy.type === "dangerFullAccess"
-          && environmentPathIdentity(workspaceClaim.environment.cwd) === environmentPathIdentity(rolloutEnvironment.cwd)) {
+          && (workspaceClaim.environment.cwd === undefined
+            || environmentPathIdentity(workspaceClaim.environment.cwd) === environmentPathIdentity(rolloutEnvironment.cwd))
+          && workspaceClaim.environment.roots.some(root => contains(root, rolloutEnvironment.cwd))) {
           rolloutEnvironment = {
             ...rolloutEnvironment,
             roots: [...workspaceClaim.environment.roots],

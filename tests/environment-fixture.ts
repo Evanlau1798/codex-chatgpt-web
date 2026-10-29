@@ -47,3 +47,7 @@ export function currentWire(
     },
   };
 }
+
+export function filesystemEnvironmentXml(permissionProfileXml: string): string {
+  return `<environment_context><cwd>${root}</cwd><filesystem><workspace_roots><root>${root}</root></workspace_roots>${permissionProfileXml}</filesystem></environment_context>`;
+}

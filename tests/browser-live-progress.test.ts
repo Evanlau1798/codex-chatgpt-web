@@ -4,7 +4,7 @@ import { chromium } from "playwright-core";
 import { chatGptResponseStructureLogEntries, chatGptResponseStructures } from "../src/adapters/chatgpt-web/browser-response-structure";
 import { chatGptInteractionState } from "../src/adapters/chatgpt-web/browser-interaction-state";
 import { ChatGptBrowserObservationTimeoutError, ChatGptBrowserWorker, ChatGptCompletionTracker, ChatGptSubmissionRejectionObserver, ChatGptTurnDomHealthTracker, throwIfChatGptTerminalErrorAlert } from "../src/adapters/chatgpt-web/browser-worker";
-import { chatGptAssistantTurnSelector, chatGptTurnContainerSelector } from "../src/chatgpt-session";
+import { chatGptAssistantTurnSelector, chatGptTurnContainerSelector } from "../src/chatgpt-ui/turns";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
 
 test("the largest response diagnostics survive the launcher's safe-log string limit intact", () => {
@@ -177,6 +177,87 @@ test.each(["requestfinished", "requestfailed"])("owned SSE keeps a quiet respons
   expect(await observer.failure()).toBeUndefined();
   observer.dispose();
   expect(page.listenerCount("response")).toBe(0);
+});
+
+test("a late final after Stop disappears survives the observed #885 timeline", () => {
+  const health = new ChatGptTurnDomHealthTracker();
+  const completion = new ChatGptCompletionTracker();
+  const quiet = { responsePresent: true, running: false, currentText: "", completionActionVisible: false,
+    projection: { rootId: "observed-root", lastNodePresent: true, boundaryStart: "0", boundaryEnd: "42", lastMutationAt: 0, animations: [] } };
+  // The reporter's response finished about 65 seconds after the former 60-second
+  // watchdog expired. Neither the absence of Stop nor a quiet stream proves completion.
+  for (const now of [0, 60_000, 124_999]) {
+    expect(health.update(quiet, now)).toBeUndefined();
+    expect(completion.update(quiet, now)).toEqual({ status: "waiting" });
+  }
+  const final = { ...quiet, currentText: "The requested work is complete.", completionActionVisible: true };
+  expect(health.update(final, 125_000)).toBeUndefined();
+  expect(completion.update(final, 125_000)).toEqual({ status: "waiting" });
+  expect(completion.update(final, 127_000)).toEqual({ status: "complete" });
+});
+
+test("quiet response waiting remains bounded without delaying proven empty completion or lost DOM", () => {
+  const quiet = { responsePresent: true, running: false, currentText: "", completionActionVisible: false };
+  const stalled = new ChatGptTurnDomHealthTracker();
+  expect(stalled.update(quiet, 0)).toBeUndefined();
+  expect(stalled.update(quiet, 599_999)).toBeUndefined();
+  expect(stalled.update(quiet, 600_000)).toContain("without a final answer");
+  const completedEmpty = new ChatGptTurnDomHealthTracker();
+  expect(completedEmpty.update({ ...quiet, completionActionVisible: true }, 0)).toBeUndefined();
+  expect(completedEmpty.update({ ...quiet, completionActionVisible: true }, 10_000))
+    .toContain("completed without a final answer");
+  const vanished = new ChatGptTurnDomHealthTracker();
+  expect(vanished.update({ ...quiet, responsePresent: false }, 0)).toBeUndefined();
+  expect(vanished.update({ ...quiet, responsePresent: false }, 60_000)).toContain("did not create a response DOM");
+});
+
+test.each(["accepted", "late-accepted", "cancelled", "press-failed"])("a blocked Enter command is handled once: %s", async outcome => {
+  const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+  const progress = new ChatGptExternalTurnProgress();
+  const hidden = { filter() { return this; }, last() { return this; }, locator() { return this; }, count: async () => 0,
+    getByTestId() { return this; }, getByText() { return this; }, or() { return this; },
+    isVisible: async () => outcome === "late-accepted" && presses > 0 ? new Promise<boolean>(() => {}) : false };
+  const page = { isClosed: () => false, locator: () => hidden };
+  const controller = new AbortController();
+  let presses = 0;
+  let activationCancelled = false;
+  let submitted = false;
+  const button = {
+    waitFor: async () => {}, isEnabled: async () => true,
+    press: async (_key: string, options: { signal: AbortSignal }) => {
+      presses++;
+      if (outcome === "press-failed") throw new Error("keypress rejected");
+      if (outcome === "accepted") progress.recordToolBatch(1);
+      else if (outcome === "late-accepted") setTimeout(() => progress.recordToolBatch(1), 10);
+      else setTimeout(() => controller.abort(), 10);
+      await new Promise((_resolve, reject) => options.signal.addEventListener("abort", () => {
+        activationCancelled = true;
+        reject(new DOMException("aborted", "AbortError"));
+      }, { once: true }));
+    },
+  };
+  worker.activeComposer = async () => ({ locator: () => ({ locator: () => button }) });
+  // Reproduce a renderer that cannot answer a DOM read after Enter; MCP is still observable.
+  worker.currentSubmissionEvidence = () => new Promise(() => {});
+  const turns = { nth() { return hidden; }, evaluateAll: async () => new Promise(() => {}) };
+  const baseline = { userTurns: turns, responseTurns: turns, initialResponseTurn: { count: 0 }, initialTurnIdentities: [] };
+  const send = worker.sendAttachedPrompt(page, baseline, baseline.initialResponseTurn, undefined, controller.signal,
+    async () => {}, progress).then((evidence: string) => { submitted = true; return evidence; });
+  if (outcome === "accepted" || outcome === "late-accepted") {
+    expect(await send).toBe("mcp_tool_call");
+    expect(submitted).toBeTrue();
+    const boundary = new AbortController();
+    const observation = progress.waitForToolBatchObservation(progress.snapshot().lastToolBatchRevision, boundary.signal);
+    boundary.abort();
+    await expect(observation).rejects.toMatchObject({ name: "AbortError" });
+  } else if (outcome === "cancelled") {
+    await expect(send).rejects.toMatchObject({ name: "AbortError" });
+  } else {
+    await expect(send).rejects.toThrow("keypress rejected");
+  }
+  expect(presses).toBe(1);
+  if (outcome !== "press-failed") expect(activationCancelled).toBeTrue();
+  expect(submitted).toBe(outcome === "accepted" || outcome === "late-accepted");
 });
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("real Enter accepts MCP while the renderer is still busy handling the key", async () => {

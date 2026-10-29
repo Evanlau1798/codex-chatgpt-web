@@ -361,6 +361,7 @@ export class LauncherBrowserHelperClient {
                     ...(prepared.turnToken ? { turnToken: prepared.turnToken } : {}),
                     ...(prepared.skillFiles ? { skillFiles: prepared.skillFiles } : {}),
                     ...(prepared.multipart ? { multipart: prepared.multipart } : {}),
+                    ...(prepared.contextTokenBreakdown ? { contextTokenBreakdown: prepared.contextTokenBreakdown } : {}),
                     ...(prepared.modelInputText ? { modelInputText: prepared.modelInputText } : {}),
                     ...(prepared.transport ? { transport: prepared.transport } : {}),
                     ...(prepared.inlineChars !== undefined ? { inlineChars: prepared.inlineChars } : {}),

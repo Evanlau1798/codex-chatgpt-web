@@ -1,5 +1,5 @@
 import { isNativeOpenPageContext } from "../../responses/native-context";
-import { isNativeAgentsMdContext } from "../../responses/native-context";
+import { isNativeAgentsMdContext, readNativeThreadDelegation } from "../../responses/native-context";
 import { hasEnvironmentContextFragment, isContextualCodexUserMessage } from "./contextual-user-message";
 import { codexTurnMetadataFromBody } from "./environment-identity";
 
@@ -26,6 +26,10 @@ export function isUserOrParentInstruction(
   metadata?: Record<string, unknown>,
 ): item is Record<string, unknown> {
   if (item?.type === "message" && item.role === "user") {
+    const provenance = record(item.internal_chat_message_metadata_passthrough);
+    if (typeof item.id === "string" && item.id && typeof provenance?.turn_id === "string" && provenance.turn_id.trim()
+      && Array.isArray(provenance.content_item_kinds) && provenance.content_item_kinds.length === 1
+      && provenance.content_item_kinds[0] === "goal.internal_context") return true;
     return !isNativeOpenPageContext(item) && !isNativeAgentsMdContext(item) && !isContextualCodexUserMessage(item.content) && !hasEnvironmentContextFragment(item);
   }
   if (item?.type !== "agent_message" || typeof item.id !== "string" || !item.id
@@ -42,14 +46,7 @@ export function isUserOrParentInstruction(
 
 /** The desktop injects cross-task messages as synthetic tool outputs without a call_id. */
 function isDelegatedInstruction(item: Record<string, unknown> | undefined): boolean {
-  if (item?.type !== "function_call_output" || item.name !== "send_message_to_thread"
-    || item.namespace !== "codex_app" || item.call_id !== undefined
-    || typeof item.id !== "string" || !item.id || !itemTurnId(item)?.trim()
-    || typeof item.output !== "string") return false;
-  // The native producer escapes &, < and > in both fields. Reject extra/nested tags and
-  // malformed entities; keep the original text as task content, never environment authority.
-  const fields = /^<codex_delegation>\s*<source_thread_id>([^<>]+)<\/source_thread_id>\s*<input>([^<>]+)<\/input>\s*<\/codex_delegation>$/.exec(item.output.trim());
-  return fields !== null && fields.slice(1).every(text => text.trim() && !/&(?!amp;|lt;|gt;)/.test(text));
+  return !!item && readNativeThreadDelegation(item) !== undefined;
 }
 
 export function isNativeInstruction(

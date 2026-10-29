@@ -30,7 +30,7 @@ function visibleLocator(count: () => number, overrides: Record<string, unknown> 
   return locator;
 }
 
-for (const [label, ariaHidden] of [["Personalized", false], ["Personalized", true], ["Personnalisé", false], ["Personnalisé", true], ["个性化", false], ["個人化", false]] as const) test(`a visible ${label} control is a preflight no-op (aria-hidden=${ariaHidden})`, async () => {
+for (const [label, ariaHidden] of [["Personalized", false], ["Personalized", true], ["Personnalisé", false], ["Personnalisé", true], ["个性化", false], ["个性化", true], ["個人化", false], ["個人化", true]] as const) test(`a visible ${label} control is a preflight no-op (aria-hidden=${ariaHidden})`, async () => {
   const diagnostics: string[] = [];
   const personalized = visibleLocator(() => 1);
   const unpersonalized = visibleLocator(() => 0);

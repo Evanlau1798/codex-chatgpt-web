@@ -63,6 +63,8 @@ import {
   browserToolParameters,
   CHATGPT_WEB_AGENT_WAIT_POLL_MS,
   exactTool,
+  assertCommandPollArguments,
+  COMMAND_POLL_TRANSPORT_RULE,
   execGateway,
   matchingToolInventory,
 } from "./mcp-tool-inventory";
@@ -268,6 +270,7 @@ export async function runChatGptMcpServer(options: {
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
     async (input, extra) => {
+      assertCommandPollArguments(input);
       const { session_id, chars, yield_time_ms, max_output_tokens } = input;
       return withTurn("codex_write_stdin", turnReference(contract, input), extra, claimed => {
         const bound = claimed.environment;
@@ -529,6 +532,9 @@ export async function runChatGptMcpServer(options: {
           }
           if (input !== undefined && args && Object.keys(args).length > 0) {
             throw new Error(`Codex nested tool ${wire_name} accepts either arguments or freeform input, not both`);
+          }
+          if (wire_name === "write_stdin" && input !== undefined) {
+            throw new Error("ChatGPT Web write_stdin requires structured arguments. " + COMMAND_POLL_TRANSPORT_RULE);
           }
           if (isGatewayAgentWaitTool(wire_name) && input !== undefined) {
             throw new Error("ChatGPT Web wait_agent requires structured arguments and a logical timeout_ms from 30000 to 3600000 in 30000 ms steps");
