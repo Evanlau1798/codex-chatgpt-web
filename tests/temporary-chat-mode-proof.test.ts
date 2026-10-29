@@ -1,5 +1,5 @@
+import { launchDomBrowser } from "./support/dom-browser";
 import { expect, test } from "bun:test";
-import { chromium } from "playwright-core";
 import { assertNewChatPage, CHATGPT_TEMPORARY_CHAT_ACTIVE_SELECTOR } from "../src/chatgpt-session";
 
 test.each([false, true])("new-chat verification requires rendered mode to match preference (%s)", async saved => {
@@ -13,7 +13,7 @@ test.each([false, true])("new-chat verification requires rendered mode to match 
 });
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("Temporary Chat proof recognizes captured headers, not hidden or unrelated icons", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const page = await browser.newPage();
     for (const icon of ["codex-icon-chat-bubble-checkmark-dashed-light-20", "chat-bubble-checkmark-dashed-light-20", "chat-temp-checked"]) {

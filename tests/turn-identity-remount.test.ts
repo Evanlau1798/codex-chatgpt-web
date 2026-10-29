@@ -12,6 +12,22 @@ import {
   readChatGptTurnIdentities,
 } from "../src/adapters/chatgpt-web/response-turn-boundary";
 
+function matchesIdentity(text: string, identity: string) {
+  const { createWindow } = require("@mixmark-io/domino");
+  const window = createWindow("<div></div>");
+  const element = window.document.querySelector("div")!;
+  element.textContent = text;
+  const names = ["Node", "Element", "getComputedStyle"] as const;
+  const previous = names.map(name => Object.getOwnPropertyDescriptor(globalThis, name));
+  try {
+    for (const name of names) Object.defineProperty(globalThis, name, { configurable: true, value: window[name] });
+    return chatGptSubmissionIdentityMatches(element, identity);
+  } finally {
+    names.forEach((name, index) => previous[index]
+      ? Object.defineProperty(globalThis, name, previous[index]!) : Reflect.deleteProperty(globalThis, name));
+  }
+}
+
 function surface(keys: string[]) {
   const document = createDocument(keys.map(key => `<section data-turn-key="${key}">
     <div data-user-message-bubble></div><h4 data-conversation-role="assistant"></h4>
@@ -56,23 +72,21 @@ test("Native submissions retain their existing capability and prompt without ano
 test("literal context may contain other non-authorizing identity examples", () => {
   const own = "codexsubmission:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   const example = "codexsubmission:0123456789abcdef0123456789abcdef";
-  const node = (textContent: string) => ({ textContent }) as Element;
   const literal = `Review this source example: "${example}".\n`;
-  expect(chatGptSubmissionIdentityMatches(node(literal + own), own)).toBeTrue();
-  expect(chatGptSubmissionIdentityMatches(node(literal), own)).toBeFalse();
-  expect(chatGptSubmissionIdentityMatches(node(literal + own + " " + own), own)).toBeFalse();
+  expect(matchesIdentity(literal + own, own)).toBeTrue();
+  expect(matchesIdentity(literal, own)).toBeFalse();
+  expect(matchesIdentity(literal + own + " " + own, own)).toBeFalse();
   const native = "turn_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-  expect(chatGptSubmissionIdentityMatches(node(native + " turn_0123456789abcdef0123456789abcdef"), native)).toBeFalse();
+  expect(matchesIdentity(native + " turn_0123456789abcdef0123456789abcdef", native)).toBeFalse();
 });
 
 test("submission identity proof rejects ambiguous and incomplete identities without granting tools", () => {
   for (const identity of ["turn_0123456789abcdef0123456789abcdef", "codexsubmission:0123456789abcdef0123456789abcdef"]) {
-    const node = (textContent: string) => ({ textContent }) as Element;
-    expect(chatGptSubmissionIdentityMatches(node("Rewritten JSON/link labels. " + identity), identity)).toBeTrue();
+    expect(matchesIdentity("Rewritten JSON/link labels. " + identity, identity)).toBeTrue();
     for (const text of ["", identity + "extra", "prefix" + identity, identity + "_tail", "prefix_" + identity, identity + " " + identity]) {
-      expect(chatGptSubmissionIdentityMatches(node(text), identity)).toBeFalse();
+      expect(matchesIdentity(text, identity)).toBeFalse();
     }
-    expect(chatGptSubmissionIdentityMatches(node(identity), "arbitrary identity")).toBeFalse();
+    expect(matchesIdentity(identity, "arbitrary identity")).toBeFalse();
   }
 });
 

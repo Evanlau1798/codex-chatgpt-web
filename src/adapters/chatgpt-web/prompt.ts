@@ -425,6 +425,7 @@ export function compileChatGptWebPrompt(
         : "After reading the complete task context, execute the latest active user request under the capability contract above.",
       "</codex_transport_resume>",
     ];
+  const backendModel = parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID ? CHATGPT_WEB_LUNA_MODEL_ID : CHATGPT_WEB_MODEL_ID;
   const build = (sourceMessages: readonly CodexMessage[], omittedMessages = 0): CompiledChatGptWebPrompt => {
     const resume = omittedMessages > 0 ? [
       "<codex_transport_resume>",
@@ -500,7 +501,6 @@ export function compileChatGptWebPrompt(
       // Equal parts near Instant's maximum can be accepted once and rejected on the next Send.
       // If complete records cannot fit that allocation, plan with the wider available stage mode
       // before submitting anything; no context is truncated and no failed upload is replayed.
-      const backendModel = parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID ? CHATGPT_WEB_LUNA_MODEL_ID : CHATGPT_WEB_MODEL_ID;
       const stagingEfforts = backendModel === CHATGPT_WEB_LUNA_MODEL_ID ? ["low"] as const
         : capabilities.proAvailable ? ["max"] as const : ["low", "medium"] as const;
       const emptyParts = multipart.parts;
@@ -574,27 +574,49 @@ export function compileChatGptWebPrompt(
   let compiled = build(sourceMessages);
   if (!parsed._compactionRequest) return compiled;
 
-  // Preserve the staged capacity, but leave headroom for real transaction handles and ACKs.
+  const multipartTokenCeiling = compiled.multipart ? resolveChatGptWebMultipartContextWindow(
+    backendModel, mode.effort, capabilities, compiled.multipart.parts.length, parsed._chatgptModelFamily,
+  ) : undefined;
+  const multipartInputTokens = (): number => {
+    const transactionId = `ctx_${"0".repeat(32)}`;
+    // Bound the fixed-width ASCII handle in real messages and ACKs instead of a percentage margin.
+    const acknowledgementOverhead = compiled.multipart!.parts.slice(0, -1).reduce((total, payload, index) => {
+      const { acknowledgement } = formatChatGptWebMultipartStage(
+        payload, transactionId, index + 1, compiled.multipart!.parts.length,
+      );
+      return total + Buffer.byteLength(transactionId)
+        + acknowledgement.split(transactionId).reduce((sum, text) => sum + estimateTokens(text, parsed.modelId), 0)
+        - estimateTokens(acknowledgement, parsed.modelId);
+    }, 0);
+    return estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId, [transactionId]) + acknowledgementOverhead;
+  };
   const exceedsCompactionBudget = (): boolean => compiled.multipart
-    ? estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId) >= 0.97 * resolveChatGptWebMultipartContextWindow(
-      parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID ? CHATGPT_WEB_LUNA_MODEL_ID : CHATGPT_WEB_MODEL_ID,
-      mode.effort, capabilities, compiled.multipart.parts.length, parsed._chatgptModelFamily)
+    ? multipartInputTokens() >= multipartTokenCeiling!
     : chatGptPromptJsonBytes(compiled.text) > CHATGPT_COMPACTION_PROMPT_JSON_BYTE_BUDGET;
 
+  // Preserve the newest cumulative checkpoint in either supported text representation.
   let checkpointIndex = sourceMessages.findLastIndex(message => (
-    message.role === "user" && isReadableCompactionSummaryText(message.content)
+    message.role === "user" && isReadableCompactionSummaryText(typeof message.content === "string"
+      ? message.content
+      : message.content.every(part => part.type === "text")
+        ? message.content.map(part => part.type === "text" ? part.text : "").join("\n") : undefined)
   ));
   while (exceedsCompactionBudget() && sourceMessages.length > 1) {
     const discardIndex = checkpointIndex === 0 ? 1 : 0;
     if (discardIndex === sourceMessages.length - 1) break;
     sourceMessages.splice(discardIndex, 1);
     if (checkpointIndex > discardIndex) checkpointIndex -= 1;
+    // Rebuild image references, skill attachments and the omission notice inside the budget.
     compiled = build(sourceMessages, initialMessageCount - sourceMessages.length);
   }
   if (exceedsCompactionBudget()) {
-    const required = compiled.multipart
-      ? `${estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId).toLocaleString("en-US")} input tokens`
-      : `${chatGptPromptJsonBytes(compiled.text).toLocaleString("en-US")} JSON bytes`;
+    if (compiled.multipart) {
+      throw new ChatGptWebAdapterError(
+        `ChatGPT Web compaction still requires ${multipartInputTokens().toLocaleString("en-US")} input tokens after other history was trimmed; the required system context, ${checkpointIndex >= 0 ? "cumulative checkpoint and " : ""}final compaction instruction cannot fit below the ${multipartTokenCeiling!.toLocaleString("en-US")}-token ${compiled.multipart.parts.length === 2 ? "two-part" : "six-part"} ceiling. Reduce the required context before retrying.`,
+        { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
+      );
+    }
+    const required = `${chatGptPromptJsonBytes(compiled.text).toLocaleString("en-US")} JSON bytes`;
     throw new ChatGptWebAdapterError(
       `ChatGPT Web compaction prompt still requires ${required} after other history was trimmed; ${checkpointIndex >= 0 ? "the cumulative checkpoint and final compaction instruction exceed" : "the final compaction instruction alone exceeds"} the browser compaction budget`,
       { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },

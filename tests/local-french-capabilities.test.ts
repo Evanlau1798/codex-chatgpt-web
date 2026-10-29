@@ -1,5 +1,5 @@
+import { launchDomBrowser } from "./support/dom-browser";
 import { expect, test } from "bun:test";
-import { chromium } from "playwright-core";
 import { detectChatGptAccountCapabilities } from "../src/chatgpt-session";
 import { availableChatGptWebModelRoutes, chatGptWebRouteEfforts, requireChatGptWebModelRoute, parseChatGptWebModelCapabilities } from "../src/chatgpt-web-models";
 import { assertChatGptModelFamily, chatGptUnversionedEffortMatches } from "../src/adapters/chatgpt-web/model-selection";
@@ -80,7 +80,7 @@ test("unversioned French descriptions require the exact effort and position", ()
 // Reproduces the current French picker without opening an account or sending messages.
 for (const [label, originalFamily] of [["Le plus récent", "5.6"], ["最新模型", "6"]] as const)
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`Localized picker ${label}: per-family probing, selection verification and restoration`, async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const page = await browser.newPage();
     await page.setContent(`<form><div id="prompt-textarea" contenteditable="true">Brouillon à conserver</div>

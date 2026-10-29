@@ -4348,11 +4348,12 @@ test("replays an ordinary post-tool final after one retained structured compacti
 });
 
 
-test("caps automatic transient-server-error pre-send failures at three retries for one native turn", async () => {
-    const socketPath = brokerTestEndpoint(`cgw-h4-retry-budget-${process.pid}-${Date.now()}`);
+test.each(["upstream_server_error", "chatgpt_delivery_timeout", "multipart_acknowledgement_mismatch"])(
+    "caps automatic pre-send browser sends at three retries for one native turn (%s)", async code => {
+    const socketPath = brokerTestEndpoint(`cgw-h4-retry-${process.pid}-${Date.now()}`);
     const provider: CodexProviderConfig = {
       adapter: "chatgpt-web",
-      baseUrl: `browser://chatgpt-retry-budget-${Date.now()}`,
+      baseUrl: `browser://chatgpt-retry-budget-${code}-${Date.now()}`,
       chatgptWeb: { brokerSocketPath: socketPath, localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true },
     };
     const worker = ChatGptBrowserWorker.forProvider(provider);
@@ -4360,11 +4361,11 @@ test("caps automatic transient-server-error pre-send failures at three retries f
     let browserStarts = 0;
     (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
       browserStarts += 1;
-      // An ambiguous or accepted Send is terminal in Enhanced; only proven pre-send failures may retry.
+      // Activation without canonical results remains terminal; this matrix is pre-send.
       throw new ChatGptWebAdapterError("ChatGPT is temporarily unavailable. Try again in a few minutes.", {
         status: 502,
         errorType: "server_error",
-        code: "upstream_server_error",
+        code,
         retryable: true,
       });
     };
@@ -4377,7 +4378,7 @@ test("caps automatic transient-server-error pre-send failures at three retries f
           event => events.push(event),
         );
         const error = events.at(-1);
-        expect(error).toMatchObject({ type: "error", code: "upstream_server_error" });
+        expect(error).toMatchObject({ type: "error", code });
         expect((error as Extract<AdapterEvent, { type: "error" }>).retryable)
           .toBe(attempt < MAX_CHATGPT_WEB_TURN_RETRIES);
         if (attempt === MAX_CHATGPT_WEB_TURN_RETRIES) {
@@ -4389,6 +4390,127 @@ test("caps automatic transient-server-error pre-send failures at three retries f
     } finally {
       (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
       await TurnBroker.forSocket(socketPath).close();
+    }
+  });
+
+  test.each(["pending", "completed", "late-result"] as const)(
+    "delivery timeout retries only after a dispatched tool has a canonical result (%s)", async resultState => {
+    const socketPath = brokerTestEndpoint(`cgw-delivery-${process.pid}-${Date.now()}`);
+    const provider: CodexProviderConfig = {
+      adapter: "chatgpt-web", baseUrl: `browser://delivery-${resultState}-${Date.now()}`,
+      chatgptWeb: { brokerSocketPath: socketPath, ...toolCapabilities },
+    };
+    const broker = TurnBroker.forSocket(socketPath);
+    const completeTool = spyOn(broker, "completeTool");
+    const worker = ChatGptBrowserWorker.forProvider(provider);
+    const originalRun = worker.run;
+    const deliveryFailure = () => new ChatGptWebAdapterError("Message delivery timed out. Please try again.", {
+      status: 503, errorType: "server_error", code: "chatgpt_delivery_timeout", retryable: true,
+    });
+    let failBrowser!: () => void;
+    const failure = new Promise<never>((_resolve, reject) => { failBrowser = () => reject(deliveryFailure()); });
+    let browserStarts = 0;
+    let invocations = 0;
+    let bindingId = "";
+    let replacementPrompt = "";
+    const command = { cmd: "record-delivery-evidence", workdir: tempRoot };
+    const resultContent = JSON.stringify({ output: "canonical delivery evidence: executed once", exit_code: 0 });
+    worker.run = async turn => {
+      browserStarts += 1;
+      const prepared = await turn.prepare();
+      try {
+        await turn.onSendActivated?.();
+        await turn.onSubmitted?.();
+        if (browserStarts > 1) {
+          replacementPrompt = prepared.text;
+          turn.onTextDelta("Continued from the saved tool result.");
+          return "Continued from the saved tool result.";
+        }
+        const token = prepared.text.match(/turn_token (turn_[A-Za-z0-9_-]+)/)?.[1];
+        if (!token) throw new Error("turn token missing from compiled prompt");
+        ({ bindingId } = await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token }));
+        const invocation = invokeAfterBrowserBoundary(turn, () => {
+          invocations += 1;
+          return callTurnBroker<BrokerToolResult>(socketPath, {
+            method: "invoke", bindingId, wireName: "exec_command", arguments: command,
+          }, 5_000);
+        });
+        const result = await Promise.race([invocation, failure]);
+        expect(result.structuredContent).toEqual(JSON.parse(resultContent));
+        throw deliveryFailure();
+      } finally {
+        prepared.release();
+      }
+    };
+    const initial = rawWireRequest(environmentXml);
+    initial._canonicalContextComplete = true;
+    const executionKey = `${chatGptWebExecutionNamespace(provider)}:${chatGptTurnExecutionKey(initial)}`;
+    try {
+      const first: AdapterEvent[] = [];
+      await createChatGptWebAdapter(provider, { broker }).runTurn!(initial,
+        { headers: new Headers() }, event => first.push(event));
+      const call = first.find((event): event is Extract<AdapterEvent, { type: "tool_call_start" }> =>
+        event.type === "tool_call_start");
+      expect(call?.name).toBe("exec_command");
+      expect(first.at(-1)).toMatchObject({ type: "done", stopReason: "tool_use", endTurn: false });
+      if (!call) throw new Error("broker did not dispatch the native tool");
+      const session = chatGptTurnSessions.find(executionKey)!;
+      expect(session.outstanding().map(request => request.callId)).toEqual([call.id]);
+      expect(session.runtime.mode === "tools" && session.runtime.externalProgress?.snapshot().activeToolCalls).toBe(1);
+
+      if (resultState !== "completed") {
+        failBrowser();
+        const outcome = await session.browserOutcome;
+        expect(outcome).toMatchObject({ type: "error", error: { code: "chatgpt_delivery_timeout" } });
+        expect(session.settledOutcome()).toBe(outcome);
+      }
+
+      const continuation = structuredClone(initial);
+      continuation.context.messages.push({ role: "assistant", timestamp: 3,
+        content: [{ type: "toolCall", id: call.id, name: "exec_command", arguments: command }] });
+      const input = (continuation._rawBody as { input: unknown[] }).input;
+      input.push({ type: "function_call", call_id: call.id, name: "exec_command", arguments: JSON.stringify(command) });
+      if (resultState !== "pending") {
+        continuation.context.messages.push({ role: "toolResult", toolCallId: call.id,
+          toolName: "exec_command", content: resultContent, isError: false, timestamp: 4 });
+        input.push({ type: "function_call_output", call_id: call.id, output: resultContent });
+      }
+
+      const failed: AdapterEvent[] = [];
+      await createChatGptWebAdapter(provider, { broker }).runTurn!(continuation,
+        { headers: new Headers() }, event => failed.push(event));
+      expect(failed.at(-1)).toMatchObject({ type: "error", code: "chatgpt_delivery_timeout",
+        status: 503, retryable: resultState !== "pending" });
+      expect(failed.some(event => event.type === "tool_call_start")).toBeFalse();
+      expect(browserStarts).toBe(1);
+      await expect(callTurnBroker(socketPath, { method: "resolve", bindingId }))
+        .rejects.toThrow("has already finished");
+
+      const replay: AdapterEvent[] = [];
+      await createChatGptWebAdapter(provider, { broker }).runTurn!(continuation,
+        { headers: new Headers() }, event => replay.push(event));
+      expect(replay.some(event => event.type === "tool_call_start")).toBeFalse();
+      expect(invocations).toBe(1);
+      expect(completeTool).toHaveBeenCalledTimes(resultState === "completed" ? 1 : 0);
+      if (resultState === "pending") {
+        expect(replay.at(-1)).toMatchObject({ type: "error", code: "chatgpt_delivery_timeout", retryable: false });
+        expect(browserStarts).toBe(1);
+        expect(replacementPrompt).toBe("");
+      } else {
+        if (resultState === "completed") expect(session.outstanding()).toEqual([]);
+        expect(browserStarts).toBe(2);
+        expect(replay.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
+        const encoded = replacementPrompt.match(/<codex_context_json>\n(.+)\n<\/codex_context_json>/s)?.[1];
+        const envelope = JSON.parse(encoded!) as { messages: Array<Record<string, unknown>> };
+        expect(envelope.messages.filter(message => message.role === "tool_result")).toEqual([
+          expect.objectContaining({ tool_call_id: call.id, tool_name: "exec_command", content: resultContent }),
+        ]);
+      }
+    } finally {
+      worker.run = originalRun;
+      completeTool.mockRestore();
+      await chatGptTurnSessions.retireAndWait(executionKey);
+      await broker.close();
     }
   });
 

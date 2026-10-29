@@ -1,6 +1,7 @@
+import { launchDomBrowser } from "./support/dom-browser";
 // Reproduction contributed by @alexalok in PR #730.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chromium, type Browser } from "playwright-core";
+import { type Browser } from "playwright-core";
 import { readFileSync } from "node:fs";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
@@ -9,7 +10,7 @@ import { detectChatGptAccountCapabilities } from "../src/chatgpt-session";
 
 let browser: Browser;
 beforeAll(async () => {
-  if (process.env.CHATGPT_DOM_TEST_BROWSER) browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  if (process.env.CHATGPT_DOM_TEST_BROWSER) browser = await launchDomBrowser();
 }, 30_000);
 afterAll(async () => { await browser?.close(); });
 
@@ -40,7 +41,7 @@ for (const selected of ["Default Recommended set of models", "GPT-6 Astra"]) {
 
 for (const [effort, label, usageModel] of [["high", "6 Sol High", "other"], ["xhigh", "6 Sol Extra High", "other"], ["max", "6 Astra Max", "gpt-6-pro"]] as const) {
   test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`explicit picker selects exact GPT-6 ${effort} beside GPT-6.1`, async () => {
-    const browser=await chromium.launch({executablePath:process.env.CHATGPT_DOM_TEST_BROWSER,headless:true});
+    const browser=await launchDomBrowser();
     try {
       const page=await browser.newPage();await page.setContent(EXPLICIT_PICKER);
       const worker=Object.create(ChatGptBrowserWorker.prototype) as any;
@@ -52,7 +53,7 @@ for (const [effort, label, usageModel] of [["high", "6 Sol High", "other"], ["xh
 }
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("explicit picker refuses absent GPT-6 Sol and conflicting GPT-6.1 evidence",async()=>{
-  const browser=await chromium.launch({executablePath:process.env.CHATGPT_DOM_TEST_BROWSER,headless:true});
+  const browser=await launchDomBrowser();
   try {
     for(const scenario of ['omitSol','conflictingHeader']){
       const page=await browser.newPage();await page.setContent('<script>window.'+scenario+'=true;</script>'+EXPLICIT_PICKER);

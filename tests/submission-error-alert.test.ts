@@ -1,11 +1,11 @@
+import { launchDomBrowser } from "./support/dom-browser";
 import { expect, test } from "bun:test";
-import { chromium } from "playwright-core";
 import { ChatGptSubmissionRejectionObserver } from "../src/adapters/chatgpt-web/browser-worker";
 
 const tooLong = "The message you submitted was too long, please edit it and resubmit.";
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("a new service size alert survives removal of the current conversation DOM (#874)", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   const observer = new ChatGptSubmissionRejectionObserver();
   try {
     const page = await browser.newPage();
@@ -23,7 +23,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("a new service size alert sur
 }, 20_000);
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("size alerts require a current owned Send and exclude history, quoted text and hidden UI", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   const failures: unknown[] = [];
   const observer = new ChatGptSubmissionRejectionObserver(error => failures.push(error));
   try {

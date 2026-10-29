@@ -1,6 +1,7 @@
 import type { Locator } from "playwright-core";
 import { CHATGPT_THINK_BUTTON_SELECTOR } from "../../chatgpt-session";
 import { withAbort } from "./runtime-lifecycle";
+import { ChatGptWebAdapterError } from "./adapter-error";
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw signal.reason ?? new DOMException("ChatGPT Think selection aborted", "AbortError");
 }
@@ -21,14 +22,19 @@ export async function setChatGptThinkMode(
   throwIfAborted(abortSignal);
   const controls = chatGptThinkButtons(composer);
   let count = await controls.count();
-  if (count === 0 && !enabled) {
-    await captureDiagnostic?.("luna-default-confirmed");
-    return;
-  }
   if (count === 0) {
     // The editor can mount before its controls. Wait for the actual button;
     // typing /think here can become a literal prompt or remove the plugin pill.
-    await controls.first().waitFor({ state: "visible", timeout: 5_000, signal: abortSignal });
+    try {
+      await controls.first().waitFor({ state: "visible", timeout: 5_000, signal: abortSignal });
+    } catch (error) {
+      throwIfAborted(abortSignal);
+      if (!(error instanceof Error) || error.name !== "TimeoutError") throw error;
+      throw new ChatGptWebAdapterError(
+        "ChatGPT's Luna/Think control could not be verified. Run setup again in the launcher, then restart Codex.",
+        { status: 409, errorType: "invalid_request_error", code: "chatgpt_model_controls_unavailable", retryable: false, cause: error },
+      );
+    }
     count = await controls.count();
   }
   if (count === 0) throw new Error("ChatGPT did not expose a visible Think button");

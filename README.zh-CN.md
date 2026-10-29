@@ -19,11 +19,11 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **版本：`6.1.15-Enhanced.1`。** 下载按钮会始终打开最新发布的 Enhanced 版本。
+> **版本：`6.1.16-Enhanced.1`。** 下载按钮会始终打开最新发布的 Enhanced 版本。
 
 下一条消息建议默认关闭，位于 Enhanced 设置；自动 Native 输出在同一次最终提交中生成建议，复用本地 5 分钟 TTL 缓存。缓存未命中就不提供建议，不新增 Web 请求或页面。
 
-已整合上游 v6.1.15，保留 Enhanced 会话、Native2 工具与快速启动。
+已整合上游 v6.1.16，保留 Enhanced 会话、Native2 工具与快速启动。
 
 Temporary Chat 仍为默认模式，包含保留会话及 compact 替换页；已有 Saved Chats 偏好保持不变。先尝试原生 connector，仅在程序持有的临时工作页执行受限的内存兼容恢复。ChatGPT 账号或服务限制仍可能阻止工具访问或最终回答交付，兼容恢复不保证成功。
 

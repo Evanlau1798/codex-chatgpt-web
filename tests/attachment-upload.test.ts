@@ -1,5 +1,6 @@
+import { launchDomBrowser } from "./support/dom-browser";
 import {test,expect} from "bun:test";
-import {chromium,type Browser} from "playwright-core";
+import { type Browser } from "playwright-core";
 import {observeChatGptAttachmentUploads} from "../src/adapters/chatgpt-web/attachment-upload";
 import {ChatGptBrowserWorker} from "../src/adapters/chatgpt-web/browser-worker";
 import {ChatGptWebAdapterError} from "../src/adapters/chatgpt-web/adapter-error";
@@ -10,7 +11,7 @@ const html=`<form><div id="prompt-textarea" contenteditable="true">original mess
 
 async function fixture(run:(browser:Browser,base:string)=>Promise<void>,handler:(request:Request)=>Response|Promise<Response>,document=html){
  const server=Bun.serve({hostname:'127.0.0.1',port:0,fetch:r=>new URL(r.url).pathname==='/'?new Response(document,{headers:{'content-type':'text/html'}}):new URL(r.url).pathname==='/favicon.ico'?new Response(''):handler(r)});
- const browser=await chromium.launch({executablePath:executable,headless:true});
+ const browser=await launchDomBrowser(executable);
  try{await run(browser,`http://127.0.0.1:${server.port}`);}finally{await browser.close();server.stop(true);}
 }
 const prompt={text:'original message',images:[{ref:'codex-input-image-1',imageUrl:'data:image/png;base64,'+Buffer.from('test').toString('base64')}]};

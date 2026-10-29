@@ -62,6 +62,7 @@ function surface(
 ) {
   const hidden = {
     locator() { return this; },
+    evaluateAll: async (read: (elements: Element[]) => unknown) => read([]),
     filter() { return this; }, last() { return this; }, getByText() { return this; }, getByTestId() { return this; },
     isVisible: async () => false, count: async () => 0,
   };

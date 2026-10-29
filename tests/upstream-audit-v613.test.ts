@@ -216,7 +216,7 @@ test("v6.1.3 evidence is content-addressed, references v6.1.2, and reconstructs 
   }
 }, 30_000);
 
-test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8", "v6.1.10", "v6.1.11", "v6.1.12", "v6.1.13", "v6.1.15"])("continuing %s evidence closes source anchors and reconstructs the original merge from retained prerequisites", release => {
+test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8", "v6.1.10", "v6.1.11", "v6.1.12", "v6.1.13", "v6.1.15", "v6.1.16"])("continuing %s evidence closes source anchors and reconstructs the original merge from retained prerequisites", release => {
   const next = JSON.parse(readFileSync(resolve(root, `.github/upstream-audit/${release}.json`), "utf8"));
   if (release === "v6.1.5") {
     expect(next.coverage).toEqual({paths: 54, hunks: 202, testPaths: 21, testCaseDeltas: 61, pending: 0, missing: 0});
@@ -249,8 +249,14 @@ test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8", "v6.1.10", "v6.1.11", "v6.1.1
     expect(next.tag).toEqual({ type: "lightweight", refTarget: next.upstream, object: null, commit: next.upstream, signed: false });
     expect(next.coverage).toEqual({ paths: 115, hunks: 515, testPaths: 47, testCaseDeltas: 190, pending: 0, missing: 0 });
   }
+  if (release === "v6.1.16") {
+    expect(next.baseline).toBe("cd18f2e7462735c10ebeff185df702b97f3a03da");
+    expect(next.semanticBaseline).toBe("6f43747eb5585ca623c0617e729826dfd680c5b7");
+    expect(next.upstream).toBe("b6182818bb14d108a63cfa548b9c6684d82cfacc");
+    expect(next.tag).toEqual({ type: "annotated", refTarget: "2610a0e44ec4a81392dc2da7d8d5d82ed868c074", object: "2610a0e44ec4a81392dc2da7d8d5d82ed868c074", commit: next.upstream, signed: false });
+  }
   const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
-  const publishedObjects = release === "v6.1.7" || release === "v6.1.8" || release === "v6.1.10" || release === "v6.1.11" || release === "v6.1.12" || release === "v6.1.13" || release === "v6.1.15"
+  const publishedObjects = release === "v6.1.7" || release === "v6.1.8" || release === "v6.1.10" || release === "v6.1.11" || release === "v6.1.12" || release === "v6.1.13" || release === "v6.1.15" || release === "v6.1.16"
     ? new Set(git(["rev-list", "--objects", "HEAD"]).split(/\r?\n/).map(line => line.split(" ")[0])) : undefined;
   const retainedTargets = new Map<string, Buffer>();
   if (next.evidence.targetBlobs) {
@@ -280,7 +286,7 @@ test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8", "v6.1.10", "v6.1.11", "v6.1.1
   const textDigest = (text: string) => digest(Buffer.from(text.replaceAll("\r\n", "\n")));
   expect(next.tag.signed).toBeFalse();
   expect(git(["merge-base", next.semanticBaseline, next.upstream])).toBe(next.semanticBaseline);
-  expect(git(["rev-list", "--count", `${next.semanticBaseline}..${next.upstream}`])).toBe(release === "v6.1.15" ? "42" : release === "v6.1.10" ? "14" : release === "v6.1.7" ? "4" : release === "v6.1.8" || release === "v6.1.13" ? "3" : "1");
+  expect(git(["rev-list", "--count", `${next.semanticBaseline}..${next.upstream}`])).toBe(release === "v6.1.16" ? "48" : release === "v6.1.15" ? "42" : release === "v6.1.10" ? "14" : release === "v6.1.7" ? "4" : release === "v6.1.8" || release === "v6.1.13" ? "3" : "1");
   const expectedPaths = git(["diff", "--name-only", next.semanticBaseline, next.upstream]).split(/\r?\n/).sort();
   expect(next.paths.map((item: any) => item.path).sort()).toEqual(expectedPaths);
   expect(new Set(next.paths.map((item: any) => item.path)).size).toBe(expectedPaths.length);
@@ -295,7 +301,7 @@ test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8", "v6.1.10", "v6.1.11", "v6.1.1
     expect(next.obligations.some((entry: any) => entry.id === item.obligation), item.id).toBeTrue();
   }
   expect(new Set(next.tests.map((item: any) => item.id)).size).toBe(next.tests.length);
-  const declaredCases = (text: string, path: string) => upstreamAuditCases(text, path, release !== "v6.1.4", release === "v6.1.15");
+  const declaredCases = (text: string, path: string) => upstreamAuditCases(text, path, release !== "v6.1.4", release === "v6.1.15" || release === "v6.1.16");
   const expectedCases = expectedPaths.filter(path => /(^|\/)(tests?|__tests__)\/|\.test\./.test(path)).flatMap(path => {
     const previous = spawnSync("git", ["show", `${next.semanticBaseline}:${path}`], {cwd: root, encoding: "utf8"});
     const before = previous.status === 0 ? declaredCases(previous.stdout, path) : [];
@@ -315,7 +321,7 @@ test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8", "v6.1.10", "v6.1.11", "v6.1.1
     expect(item.targets.length, item.id).toBeGreaterThan(0);
   }
   const targets = [...next.tests.flatMap((item: any) => item.targets),
-    ...next.obligations.flatMap((item: any) => item.production ?? []), ...next.supplementalTests ?? []];
+    ...next.obligations.flatMap((item: any) => item.production ?? []), ...(next.supplementalTests ?? [])];
   for (const target of targets) {
       if (publishedObjects) expect(publishedObjects.has(target.blob) || retainedTargets.has(target.blob), target.path).toBeTrue();
       const text = blob(target.blob).toString("utf8").replaceAll("\r\n", "\n");

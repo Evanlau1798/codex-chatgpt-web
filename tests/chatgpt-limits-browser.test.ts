@@ -1,12 +1,13 @@
+import { launchDomBrowser } from "./support/dom-browser";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chromium, type Browser } from "playwright-core";
+import { type Browser } from "playwright-core";
 import { detectChatGptLimitsPlan } from "../src/adapters/chatgpt-web/limits";
 
 // Execute the production account reader without real credentials or changing any browser UI.
 const executablePath = process.env.CHATGPT_DOM_TEST_BROWSER;
 let browser: Browser;
 beforeAll(async () => {
-  if (executablePath) browser = await chromium.launch({ executablePath, headless: true });
+  if (executablePath) browser = await launchDomBrowser(executablePath);
 }, 30_000);
 afterAll(async () => { await browser?.close(); });
 for (const scenario of ["pro", "prolite", "unknown", "account-change", "plan-change", "payment-change", "expired", "http-error", "redirect"])

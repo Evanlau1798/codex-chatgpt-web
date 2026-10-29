@@ -12,6 +12,7 @@ import { ChatGptTurnLiveness } from "../src/adapters/chatgpt-web/turn-liveness";
 import { BrowserDiagnosticHistory } from "../src/adapters/chatgpt-web/browser-diagnostic-history";
 import { resolveChatGptWebModelMode } from "../src/adapters/chatgpt-web/model";
 import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_CONTROL_SELECTOR, CHATGPT_STOP_BUTTON_SELECTOR, CHATGPT_TEMPORARY_CHAT_URL, CHATGPT_USER_TURN_SELECTOR } from "../src/chatgpt-session";
+import { chatGptTurnContainerSelector } from "../src/chatgpt-ui/turns";
 import type { BrokerTurnOutputEvent } from "../src/adapters/chatgpt-web/turn-broker-protocol";
 import { activeCompactionToolResultInstruction } from "../src/adapters/chatgpt-web/native-compaction-control";
 import { publishPendingFinalizationOutput, submitTurnOutput, waitForTurnOutput, sealTurnOutput, resetTurnOutput } from "../src/adapters/chatgpt-web/turn-broker-output";
@@ -94,6 +95,8 @@ async function runFixture(options: {
   conversationRoute?: string;
   initialRoute?: string;
   useSavedChats?: boolean;
+  deliveryTimeout?: boolean;
+  finalDuringDeliveryInspection?: boolean;
   progressScenario?: "status" | "native-tool" | "static" | "foreign";
 } = {}) {
   const recoverable = options.emptyStopped || options.postToolRecovery;
@@ -231,6 +234,13 @@ async function runFixture(options: {
     getByText: () => hidden,
     keyboard: { press: async () => { actions.push("composer-end"); } },
     locator: (selector: string) => {
+      if (Array.from({ length: submitted }, (_, index) => chatGptTurnContainerSelector(`current${index || ""}`)).includes(selector)) return Object.assign(response, {
+        evaluateAll: async () => {
+          actions.push("delivery-alert-inspected");
+          if (options.finalDuringDeliveryInspection) submitTurnOutput(channel, "final", FINAL);
+          return options.deliveryTimeout === true;
+        },
+      });
       if (options.manualApproval && selector === '[role="dialog"], [data-testid="tool-approval-card"], [data-codex-approval-surface="true"]') return approvalDialog;
       if (selector === CHATGPT_ASSISTANT_TURN_SELECTOR) return turns;
       if (selector === CHATGPT_STOP_BUTTON_SELECTOR && options.progressScenario) return {
@@ -708,6 +718,7 @@ async function runLateCompletionActionFixture() {
   const clock = spyOn(Date, "now").mockImplementation(() => now);
   const hidden: any = {
     locator() { return this; },
+    evaluateAll: async (read: (elements: Element[]) => unknown) => read([]),
     count: async () => 0, isVisible: async () => false,
     filter() { return this; }, first() { return this; }, last() { return this; }, nth() { return this; },
     getByText() { return this; }, getByRole() { return this; }, getByTestId() { return this; },
@@ -1566,3 +1577,19 @@ for (const scenario of ["status", "native-tool", "static", "foreign"] as const) 
     }
   });
 }
+
+for (const nativeFinal of ["absent", "accepted", "during-inspection"] as const)
+test("delivery alert preserves Native final authority: " + nativeFinal, async () => {
+  const result = await runFixture({ stale: true, emptyStopped: nativeFinal !== "accepted", deliveryTimeout: true,
+    tunneledFinal: nativeFinal === "accepted", finalDuringDeliveryInspection: nativeFinal === "during-inspection" });
+  if (nativeFinal === "absent") {
+    expect(result.error).toMatchObject({ code: "chatgpt_delivery_timeout", status: 503, retryable: true });
+    expect(result.deltas).toEqual([]);
+  } else {
+    expect(result.error).toBeUndefined();
+    expect(result.answer).toBe(FINAL);
+    expect(result.deltas.join("")).toBe(FINAL);
+  }
+  expect(result.actions.filter(action => action === "send")).toHaveLength(1);
+  expect(result.actions.some(action => action.startsWith("recovery:"))).toBeFalse();
+});

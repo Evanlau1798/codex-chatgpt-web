@@ -16,11 +16,11 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **버전: `6.1.15-Enhanced.1`.** 다운로드 버튼은 항상 최신 공개 Enhanced 릴리스를 엽니다.
+> **버전: `6.1.16-Enhanced.1`.** 다운로드 버튼은 항상 최신 공개 Enhanced 릴리스를 엽니다.
 
 다음 메시지 제안은 기본적으로 꺼져 있으며 Enhanced 설정에 있습니다. 자동 Native 출력의 최종 답변과 동시에 생성하고 로컬 5분 TTL 캐시를 재사용합니다. 캐시가 없으면 제안하지 않으며 추가 Web 요청이나 페이지를 만들지 않습니다.
 
-upstream v6.1.15을 통합하면서 Enhanced 세션, Native2 도구 및 Fast startup을 유지합니다.
+upstream v6.1.16을 통합하면서 Enhanced 세션, Native2 도구 및 Fast startup을 유지합니다.
 
 보존 세션과 compact 교체 페이지도 Temporary Chat을 기본으로 사용하며 기존 Saved Chats 설정을 유지합니다. 네이티브 connector를 먼저 시도하고, 필요한 경우 프로그램이 소유한 임시 작업 페이지에서만 제한된 메모리 호환 복구를 수행합니다. 계정이나 서비스 제한으로 도구 또는 최종 답변 전달이 실패할 수 있으며 복구 성공을 보장하지 않습니다.
 

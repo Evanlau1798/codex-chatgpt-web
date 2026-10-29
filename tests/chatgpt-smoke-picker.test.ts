@@ -1,3 +1,4 @@
+import { launchDomBrowser } from "./support/dom-browser";
 import { expect, test } from 'bun:test';
 import { chromium } from 'playwright-core';
 import { ChatGptBrowserWorker } from '../src/adapters/chatgpt-web/browser-worker';
@@ -5,7 +6,7 @@ import { CHATGPT_COMPOSER_SELECTOR } from '../src/chatgpt-session';
 // Sliderless-picker reproduction and initial regression cases contributed in #876.
 for (const scenario of ["immediate", "delayed", "missing-family", "cancelled-slider"])
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`smoke handles a sliderless default picker (${scenario})`, async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const page = await browser.newPage();
     const abort = new AbortController();
@@ -40,6 +41,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`smoke handles a sliderless d
       </script>`);
     expect(await page.locator('[role=slider]').count()).toBe(0);
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+    worker.config = { useSavedChats: false };
     worker.ensurePage = async () => page;
     worker.prepareChatSurface = async () => {};
     worker.activeComposer = async () => page.locator(CHATGPT_COMPOSER_SELECTOR).filter({ visible: true });
@@ -71,15 +73,17 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`smoke handles a sliderless d
   } finally { await browser.close(); }
 }, 15_000);
 
-// Luna has no model/effort control; keep the real probe's full absence budget.
-test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("smoke uses Luna when the composer has no model or effort control", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+// Luna requires positive Think evidence; keep the real probe's full hydration budget.
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("smoke uses Luna when the composer has a verified Think control", async () => {
+  const browser = await launchDomBrowser();
   try {
     const page = await browser.newPage();
     await page.setContent(`<form data-chatgpt-composer>
       <div contenteditable="true" data-composer-markdown role="textbox">Draft</div>
+      <button type="button" aria-pressed="false">Think</button>
     </form>`);
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+    worker.config = { useSavedChats: false };
     worker.ensurePage = async () => page;
     worker.prepareChatSurface = async () => {};
     worker.activeComposer = async () => page.locator(CHATGPT_COMPOSER_SELECTOR).filter({ visible: true });

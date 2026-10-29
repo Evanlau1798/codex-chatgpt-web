@@ -1,5 +1,6 @@
+import { launchDomBrowser } from "./support/dom-browser";
 import { expect, test } from "bun:test";
-import { chromium, type Page } from "playwright-core";
+import { type Page } from "playwright-core";
 import { resolveChatGptToolConfirmation, throwIfChatGptToolApprovalRequired } from "../src/adapters/chatgpt-web/browser-worker";
 
 const domTest = test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER);
@@ -15,7 +16,7 @@ const inlineApproval = `<div>
 </div>`;
 
 async function withPage(run: (page: Page) => Promise<void>) {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try { await run(await browser.newPage()); } finally { await browser.close(); }
 }
 

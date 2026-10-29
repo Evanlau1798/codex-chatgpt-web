@@ -84,6 +84,14 @@ If the models still do not appear:
 A green step 3 followed by a browser-turn error means installation succeeded. Repeating step 3 will
 not repair an unrelated ChatGPT browser or model-turn failure.
 
+If Codex offers **only Luna (Web)** while the launcher's ChatGPT browser shows a paid model picker,
+the saved account capabilities may be wrong. The October 29 control change caused this in v6.1.15
+(#924, #932), including the subsequent Think-button timeout. Once the picker fix is installed, use
+**Setup → Install into Codex → Reinstall** to refresh those capabilities, then fully restart Codex.
+The launcher now requires a recognized model picker or Luna/Think control before saving this
+result. If neither is recognized, report the setup error with a safe log; do not force Luna to run
+under a different selected model.
+
 ### Windows: Cannot bind the local port (EACCES)
 
 `Cannot bind 127.0.0.1:17841: listen EACCES: permission denied` means Windows refused access to

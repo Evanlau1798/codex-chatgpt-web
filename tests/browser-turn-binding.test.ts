@@ -1,6 +1,7 @@
+import { launchDomBrowser } from "./support/dom-browser";
 import { chatGptHtmlToMarkdown } from "../src/adapters/chatgpt-web/markdown";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chromium, type Browser, type Locator, type Page } from "playwright-core";
+import { type Browser, type Locator, type Page } from "playwright-core";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptMarkdownBuffer } from "../src/adapters/chatgpt-web/markdown";
 import { ChatGptMarkdownOwnershipTracker } from "../src/adapters/chatgpt-web/markdown-ownership";
@@ -8,7 +9,7 @@ import { readFileSync } from "node:fs";
 
 let browser: Browser;
 beforeAll(async () => {
-  if (process.env.CHATGPT_DOM_TEST_BROWSER) browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  if (process.env.CHATGPT_DOM_TEST_BROWSER) browser = await launchDomBrowser();
 }, 30_000);
 afterAll(async () => { await browser?.close(); });
 
@@ -165,7 +166,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("an exchange rekeys only with
 }, 30_000);
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("collapsed plugin messages rebind only after their complete text is verified", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
     worker.config = { appName: "Clew review" };
@@ -212,7 +213,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("collapsed plugin messages re
 }, 20_000);
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("auto-linked URLs preserve exact prompt text and reject changed labels or destinations", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const page = await browser.newPage();
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
@@ -234,7 +235,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("auto-linked URLs preserve ex
 });
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("reading a collapsed message restores the viewport and remounts its virtualized active answer", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const page = await browser.newPage();
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
@@ -263,7 +264,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("reading a collapsed message 
 });
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("plain user code blocks preserve the full submitted code and whitespace", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const page = await browser.newPage();
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
@@ -277,7 +278,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("plain user code blocks prese
 });
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("rich-text rebind requires the exact prepared turn token after expansion", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
     const token = "turn_0123456789abcdef0123456789abcdef";
@@ -319,7 +320,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("rich-text rebind requires th
 }, 20_000);
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("rebind reads token boundaries across rendered lines without accepting hidden or ambiguous tokens", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
     const token = "turn_0123456789abcdef0123456789abcdef";
@@ -362,7 +363,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("binds captured Activity befo
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: request => new URL(request.url).pathname === "/backend-api/files/process_upload_stream"
     ? new Response(JSON.stringify({ event: "file.processing.completed", file_id: "fixture-file" }) + "\n", { headers: { "content-type": "application/x-ndjson" } })
     : new Response("<main></main>", { headers: { "content-type": "text/html" } }) });
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   const identity = "codexsubmission:0123456789abcdef0123456789abcdef";
   const foreign = "codexsubmission:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
@@ -461,7 +462,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("binds captured Activity befo
 }, 15_000);
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("paragraph identity survives file preview movement in both response layouts", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     for (const root of ['class="markdown"', 'data-markdown-text-style="assistant-message"']) {
       const page = await browser.newPage();
@@ -491,7 +492,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("paragraph identity survives 
 }, 15_000);
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("CodeMirror language invalidates the response cache and incomplete code is not delivered", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const page = await browser.newPage();
     await page.setContent(readFileSync(new URL("./fixtures/chatgpt-codemirror-reply-2026-10-11.html", import.meta.url), "utf8"));

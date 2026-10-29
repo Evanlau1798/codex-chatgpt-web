@@ -1,14 +1,16 @@
+import { launchDomBrowser } from "./support/dom-browser";
 import { chatGptStopButton, chatGptThinkButtons } from "../src/chatgpt-ui/composer";
 import { expect, test } from "bun:test";
-import { chromium, _electron } from "playwright-core";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { _electron } from "playwright-core";
+import { readFileSync, mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { ChatGptTurnDomHealthTracker, setChatGptThinkMode } from "../src/adapters/chatgpt-web/browser-worker";
 import { CHATGPT_THINK_BUTTON_SELECTOR } from "../src/chatgpt-ui/composer";
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("Think buttons do not require the 6.1.8 icon shape or type slash commands", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const page = await browser.newPage();
     // Exercise the semantic control supported in 6.1.5 without assuming the
@@ -65,7 +67,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("Think buttons do not require
 }, 15_000);
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("Think preserves both plugin pill formats and rejects plugin replacement", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const page = await browser.newPage();
     for (const { markup, identity, replacement } of [
@@ -101,7 +103,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("Think preserves both plugin 
 }, 15_000);
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("hidden duplicate Stop controls cannot turn live generation into an idle timeout", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const page = await browser.newPage();
     await page.setContent('<button data-testid="stop-button">Stop</button>'
@@ -157,11 +159,12 @@ test.skipIf(!process.env.LAUNCHER_TEST_ELECTRON)("captured Stop is independent o
     expect(await chatGptStopButton(page).count()).toBe(0);
   } finally {
     await app.close();
-    rmSync(userData, { recursive: true, force: true });
+    await rm(userData, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }, 20_000);
 
-test.skipIf(!process.env.LAUNCHER_TEST_ELECTRON)("captured Think toggles independently of language without selecting other pills", async () => {
+for (const fixture of ["chatgpt-composer-think.html", "chatgpt-composer-think-2026-10-11.html", "chatgpt-composer-think-2026-10-28.html"])
+test.skipIf(!process.env.LAUNCHER_TEST_ELECTRON)("captured Think toggles independently of language without selecting other pills: " + fixture, async () => {
   const userData = mkdtempSync(join(tmpdir(), "composer-think-"));
   const env = Object.fromEntries(Object.entries(process.env)
     .filter(([key, value]) => key !== "ELECTRON_RUN_AS_NODE" && value !== undefined)) as Record<string, string>;
@@ -171,7 +174,6 @@ test.skipIf(!process.env.LAUNCHER_TEST_ELECTRON)("captured Think toggles indepen
   });
   try {
     const page = await app.firstWindow();
-    for (const fixture of ["chatgpt-composer-think.html", "chatgpt-composer-think-2026-10-11.html", "chatgpt-composer-think-2026-10-28.html"]) {
       const captured = readFileSync(new URL(`./fixtures/${fixture}`, import.meta.url), "utf8");
       for (const label of ["Think", "思考", "Думать", "생각하기", "التفكير", "Unknown future translation"]) {
         await page.setContent(`<form data-chatgpt-composer><div id="prompt-textarea" contenteditable="true"><span data-id="plugin:fixture" data-keyword="Codex Native2" contenteditable="false">Codex Native2</span></div>
@@ -191,10 +193,12 @@ test.skipIf(!process.env.LAUNCHER_TEST_ELECTRON)("captured Think toggles indepen
       }
       // Two genuine controls are ambiguous; do not arbitrarily choose one.
       await page.locator("form").evaluate((form, html) => form.insertAdjacentHTML("beforeend", html), captured);
-      await expect(setChatGptThinkMode(page.locator("#prompt-textarea"), true)).rejects.toThrow("2 visible Think controls");
-    }
+      const ambiguous = await setChatGptThinkMode(page.locator("#prompt-textarea"), true)
+        .then(() => undefined, (error: unknown) => error);
+      expect(ambiguous).toBeInstanceOf(Error);
+      expect((ambiguous as Error).message).toContain("2 visible Think controls");
   } finally {
     await app.close();
-    rmSync(userData, { recursive: true, force: true });
+    await rm(userData, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }, 30_000);

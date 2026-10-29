@@ -2677,8 +2677,8 @@ class BrowserHost {
     const connectorName = validateConnectorName(appName);
     this.setState({ status: "testing", message: "Checking ChatGPT connector" });
     const useSavedChats = this.getUseSavedChats();
-    await this.refreshChatGptHomeDocument(useSavedChats);
     try {
+      await this.refreshChatGptHomeDocument(useSavedChats);
       const brokerSocketPath = typeof this.getBrokerSocketPath === "function"
         ? this.getBrokerSocketPath()
         : undefined;

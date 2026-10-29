@@ -1,5 +1,5 @@
+import { launchDomBrowser } from "./support/dom-browser";
 import { expect, test } from "bun:test";
-import { chromium } from "playwright-core";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import { formatChatGptWebMultipartStage } from "../src/adapters/chatgpt-web/prompt";
 
@@ -10,7 +10,7 @@ const group = (key: string, text: string | undefined, answer: string, complete =
     ${complete ? '<div class="turn-action-controls"><button>Copy</button></div>' : ""}</div>`;
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("a previously acknowledged but unmounted stage cannot acknowledge the next Send when it returns", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const page = await browser.newPage();
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
@@ -28,7 +28,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("a previously acknowledged bu
 });
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("a new multipart user message is accepted before ChatGPT mounts its assistant area", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const page = await browser.newPage();
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
@@ -54,7 +54,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("a new multipart user message
 }, 15_000);
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("pending multipart submissions do not expand their transient user bubble while earlier stages remain accounted for", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
     for (const total of [2, 6]) {
@@ -100,7 +100,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("pending multipart submission
 }, 15_000);
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("acknowledged multipart history can rekey without becoming a new submission", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
     for (const total of [2, 6]) {
@@ -147,7 +147,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("acknowledged multipart histo
 }, 30_000);
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("multipart history does not admit mismatched, unfinished, duplicated or unrelated exchanges", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
     for (const scenario of ["payload", "acknowledgement", "unfinished", "duplicate", "old-remains", "foreign", "not-acknowledged"]) {
@@ -177,7 +177,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("multipart history does not a
 }, 30_000);
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("rekeyed multipart stages verify the full message behind a collapsed middle preview", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
     for (const scenario of ["complete", "changed-hidden-tail", "still-truncated", "wrong-ack", "duplicate-on-expand"]) {

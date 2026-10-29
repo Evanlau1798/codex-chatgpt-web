@@ -1,5 +1,6 @@
+import { launchDomBrowser } from "./support/dom-browser";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chromium, type Browser } from "playwright-core";
+import { type Browser } from "playwright-core";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
@@ -12,7 +13,7 @@ const efforts = ["low", "medium", "high", "xhigh", "max"];
 
 let browser: Browser;
 beforeAll(async () => {
-  if (process.env.CHATGPT_DOM_TEST_BROWSER) browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  if (process.env.CHATGPT_DOM_TEST_BROWSER) browser = await launchDomBrowser();
 }, 30_000);
 afterAll(async () => { await browser?.close(); });
 

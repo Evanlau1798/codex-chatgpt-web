@@ -1,6 +1,6 @@
+import { launchDomBrowser } from "./support/dom-browser";
 import { expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { chromium } from "playwright-core";
 import { chatGptResponseStructureLogEntries, chatGptResponseStructures } from "../src/adapters/chatgpt-web/browser-response-structure";
 import { chatGptInteractionState } from "../src/adapters/chatgpt-web/browser-interaction-state";
 import { ChatGptBrowserObservationTimeoutError, ChatGptBrowserWorker, ChatGptCompletionTracker, ChatGptSubmissionRejectionObserver, ChatGptTurnDomHealthTracker, throwIfChatGptTerminalErrorAlert } from "../src/adapters/chatgpt-web/browser-worker";
@@ -53,7 +53,7 @@ test("a browser security challenge is scoped to the owned submission and never r
 });
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("response diagnostics retain wrapper ownership but omit private text, classes and identifiers", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const page = await browser.newPage();
     await page.setContent('<article><div data-content-search-unit-key="PRIVATE-unit">'
@@ -85,7 +85,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("response diagnostics retain 
 });
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("an owned error survives removal of its assistant subtree without reading another turn", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const page = await browser.newPage();
     await page.setContent('<section data-turn-key="old"><button data-testid="regenerate-thread-error-button">Retry</button></section>'
@@ -114,7 +114,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("an owned error survives remo
 }, 30_000);
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("picker diagnostics distinguish disabled, covered and stalled controls without exposing content", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const page = await browser.newPage();
     await page.setContent('<button id="PRIVATE" disabled aria-disabled="true">PRIVATE account</button>');
@@ -275,7 +275,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("real Enter accepts MCP while
       + 'fetch("/invoke",{method:"POST"});const end=performance.now()+2500;while(performance.now()<end){}}</script>',
       { headers: { "content-type": "text/html" } });
   } });
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const page = await browser.newPage();
     await page.goto(`http://127.0.0.1:${server.port}`);

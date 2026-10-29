@@ -15,6 +15,8 @@ export const codexLifecycleTests = [
   "tests/compaction-continuation-registry.test.ts",
   "tests/compaction-empty-retained-source.test.ts",
   "tests/multipart-compaction-ceiling.test.ts",
+  "tests/multipart-compaction.test.ts",
+  "tests/submitted-delivery-retry.test.ts",
   "tests/compaction-task-context.test.ts",
   "tests/compaction-task-context-review.test.ts",
   "tests/dev-chat-broker.test.ts",

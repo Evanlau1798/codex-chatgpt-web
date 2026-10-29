@@ -1,9 +1,9 @@
+import { launchDomBrowser } from "./support/dom-browser";
 import { expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page } from "playwright-core";
-import { chromium } from "playwright-core";
 import { ChatGptBrowserDiagnostics, readChatGptUpstreamFailureUiState, sanitizeChatGptBrowserDiagnosticState } from "../src/adapters/chatgpt-web/browser-diagnostics";
 import { CHATGPT_UI_VARIANT_SELECTORS, chatGptUiVariantCounts } from "../src/chatgpt-ui/observations";
 
@@ -22,7 +22,7 @@ test("diagnostic capture retains validated UI variant counts without exposing pa
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("composer diagnostics recognize native textarea editability without recording its content", async () => {
   const root = mkdtempSync(join(tmpdir(), "textarea-diagnostics-"));
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const page = await browser.newPage();
     const cases = [

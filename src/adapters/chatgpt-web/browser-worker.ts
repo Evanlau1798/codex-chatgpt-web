@@ -750,6 +750,31 @@ type SelectedChatGptWebModelMode = ChatGptWebModelMode & {
   usageModel?: ChatGptUsageModel;
 };
 
+/** #929 (2026-10-29): only an explicit service alert in the bound response is evidence. */
+export async function throwIfChatGptDeliveryTimeoutAlert(page: Page, response: Locator): Promise<void> {
+  const visible = await response.evaluateAll(containers => {
+    if (containers.length !== 1) return false;
+    const container = containers[0]!;
+    const users = container.querySelectorAll('[data-user-message-bubble]');
+    if (container.hasAttribute('data-turn-key') && users.length !== 1) return false;
+    return [...container.querySelectorAll('[role="alert"]')].some(alert => {
+      if (alert.closest('[data-turn-key], [data-turn-id]') !== container) return false;
+      if (users.length === 1 && !(users[0]!.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING)) return false;
+      if (alert.closest('.markdown, [data-user-message-bubble], [data-message-author-role="user"], [contenteditable="true"]')) return false;
+      for (let node: Element | null = alert; node; node = node.parentElement) {
+        if (node.matches('[hidden], [inert], [aria-hidden="true"]')) return false;
+      }
+      return alert.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+        && /^Message delivery timed out\.\s*Please try again\.$/i.test((alert as HTMLElement).innerText.trim());
+    });
+  });
+  if (!visible || await chatGptStopButton(page).isVisible()) return;
+  throw new ChatGptWebAdapterError(
+    "ChatGPT reported that message delivery timed out. Retry the turn.",
+    { status: 503, errorType: "server_error", code: "chatgpt_delivery_timeout", retryable: true },
+  );
+}
+
 export async function throwIfChatGptToolApprovalRequired(scope: Pick<Locator, "locator">): Promise<void> {
   // The current inline card exposes its question in an alert, without one of the
   // approval wrappers used for automatic clicks. Its displayed plugin name can
@@ -1797,8 +1822,9 @@ export class ChatGptBrowserWorker {
       await throwIfChatGptRateLimitDialog(page);
       const visibleControls = composerForm.locator(CHATGPT_EFFORT_CONTROL_SELECTOR).filter({ visible: true });
       if (await visibleControls.count() > 0) {
-        throw chatGptModelControlUnavailableError(
-          "ChatGPT Luna was selected from a Luna-only capability probe, but the account now exposes a model selector; rerun setup",
+        throw new ChatGptWebAdapterError(
+          "The ChatGPT account exposes a model picker, but the installed Web models only include Luna. Run setup again in the launcher, then restart Codex.",
+          { status: 409, errorType: "invalid_request_error", code: "chatgpt_capabilities_stale", retryable: false },
         );
       }
       // Enable Think during prompt attachment, before fresh connector selection. Ordinary Luna
@@ -2436,6 +2462,7 @@ export class ChatGptBrowserWorker {
         terminalContainer,
         snapshot.completionActionVisible && snapshot.visibleText.length > 0,
       );
+      await throwIfChatGptDeliveryTimeoutAlert(page, terminalContainer);
       const progress = externalProgress?.snapshot();
       if (externalProgress
         && progress
@@ -2467,12 +2494,13 @@ export class ChatGptBrowserWorker {
         const actual = snapshot.visibleText.trim();
         if (actual !== stage.acknowledgement) {
           throw new ChatGptWebAdapterError(
-            `ChatGPT Bigger Context stage returned ${actual.length.toLocaleString("en-US")} characters instead of its exact acknowledgement. The staged task was not committed and will not be retried automatically.`,
+            `ChatGPT Bigger Context stage returned ${actual.length.toLocaleString("en-US")} characters instead of its exact acknowledgement. The staged task was not committed; retry the context transfer.`,
             {
               status: 502,
               errorType: "server_error",
-              code: "multipart_protocol_violation",
-              retryable: false,
+              // Staging carries no live work token and has not committed the task.
+              code: "multipart_acknowledgement_mismatch",
+              retryable: true,
               retireSession: true,
             },
           );
@@ -5487,6 +5515,8 @@ export class ChatGptBrowserWorker {
               const current = await readChatGptAssistantTurnState(responseTurns);
               const binding = bindChatGptAssistantTurn(initialResponseTurn, current);
               if (!binding) throw chatGptWebSurfaceError("ChatGPT lost the stopped response binding", false);
+              // The tunnel rechecks pending Native final output before committing this error.
+              await throwIfChatGptDeliveryTimeoutAlert(page, page.locator(chatGptTurnContainerSelector(binding.id)));
               const running = await chatGptStopButton(page).isVisible() || generation.active();
               const snapshot = await this.responseDomSnapshot(locateChatGptAssistantTurn(responseTurns, binding), undefined, running);
               if (snapshot.stoppedThinkingVisible) {
@@ -5801,6 +5831,7 @@ export class ChatGptBrowserWorker {
         await throwIfChatGptTerminalErrorAlert(responseTurnBinding
           ? page.locator(chatGptTurnContainerSelector(responseTurnBinding.id))
           : responseTurn);
+        if (responseTurnBinding) await throwIfChatGptDeliveryTimeoutAlert(page, page.locator(chatGptTurnContainerSelector(responseTurnBinding.id)));
 
         let currentResponseTurn: ChatGptAssistantTurnState;
         try {

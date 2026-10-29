@@ -123,6 +123,11 @@ for (const development of [false, true]) {
       await expect(configure({ ...options, refreshAccountCapabilities: true })).rejects.toThrow("ChatGPT is signed out");
       expect(inspect).toHaveBeenCalledTimes(1);
       expect(save).toHaveBeenCalledTimes(1);
+      inspect.mockRejectedValue(new Error("Could not identify ChatGPT's model controls"));
+      await expect(configure({ ...options, refreshAccountCapabilities: true }))
+        .rejects.toThrow("Could not identify ChatGPT's model controls");
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(existing).toMatchObject({ solAvailable: true, extraHighAvailable: true, proAvailable: true });
     } finally {
       for (const mock of mocks.reverse()) mock.mockRestore();
       rmSync(root, { recursive: true, force: true });

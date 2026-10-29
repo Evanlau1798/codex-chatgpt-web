@@ -100,6 +100,23 @@ test("composer and effort selectors exclude unrelated editable fields and menu b
   expect(matches(CHATGPT_EFFORT_CONTROL_SELECTOR)).toEqual(["effort", "model", "power-effort"]);
 });
 
+// 2026-10-29, #924: the trigger lost all three older identifying attributes.
+test.each(["选择 ChatGPT 模型", "Select ChatGPT model", ""])("inline reasoning control is structural, independent of label (%s)", label => {
+  const { createDocument } = require("@mixmark-io/domino") as { createDocument(html: string): Document };
+  const document = createDocument(`<form>
+    <button type="button" aria-label="${label}" aria-haspopup="menu"
+      data-composer-navigation-target="reasoning" data-selected-reasoning-effort="max" id="inline">思考强度</button>
+    <button aria-haspopup="menu" data-composer-navigation-target="reasoning"></button>
+    <button aria-haspopup="menu" data-selected-reasoning-effort="max"></button>
+    <button data-composer-navigation-target="reasoning" data-selected-reasoning-effort="max"></button>
+    <button aria-haspopup="dialog" data-composer-navigation-target="reasoning" data-selected-reasoning-effort="max"></button>
+    <button aria-haspopup="menu" data-composer-navigation-target="attachments" data-selected-reasoning-effort="max"></button>
+    <button aria-label="${label}" aria-haspopup="menu"></button>
+    <div role="button" aria-haspopup="menu" data-composer-navigation-target="reasoning" data-selected-reasoning-effort="max"></div>
+  </form>`);
+  expect(Array.from(document.querySelectorAll(CHATGPT_EFFORT_CONTROL_SELECTOR)).map(element => element.id)).toEqual(["inline"]);
+});
+
 test("effort activation binds the owned menu after the control opens", async () => {
   let opened = false;
   const ownedMenu = { isVisible: async () => opened };
@@ -227,15 +244,18 @@ test("effort activation fails closed when neither event exposes a structural sur
     .rejects.toThrow("did not expose its owned menu or structural slider");
 });
 
-test("a complete authenticated composer with no effort selector is Luna-only", async () => {
+test("an authenticated composer without recognized model controls cannot be classified as Luna-only", async () => {
   const effortButton = {
     filter() { return this; },
+    or() { return this; },
+    count: async () => 0,
     last() { return this; },
     isVisible: async () => false,
   };
   const composerForm = {
     count: async () => 1,
     locator: () => effortButton,
+    getByRole: () => effortButton,
   };
   const composer = {
     filter() { return this; },
@@ -252,13 +272,15 @@ test("a complete authenticated composer with no effort selector is Luna-only", a
   await expect(detectChatGptAccountCapabilities(page as never, {
     selectorTimeoutMs: 100,
     stableAbsenceMs: 0,
-  })).resolves.toMatchObject({ solAvailable: false, extraHighAvailable: false, proAvailable: false });
+  })).rejects.toThrow("Could not identify ChatGPT's model controls");
 });
 
-test("a transient effort control does not turn a Luna-only account into Sol", async () => {
+test("a transient effort control cannot establish either paid or Luna capabilities", async () => {
   let visibilityReads = 0;
   const effortButton = {
     filter() { return this; },
+    or() { return this; },
+    count: async () => 0,
     last() { return this; },
     isVisible: async () => {
       visibilityReads += 1;
@@ -268,6 +290,7 @@ test("a transient effort control does not turn a Luna-only account into Sol", as
   const composerForm = {
     count: async () => 1,
     locator: () => effortButton,
+    getByRole: () => effortButton,
   };
   const composers = {
     filter() { return this; },
@@ -283,7 +306,7 @@ test("a transient effort control does not turn a Luna-only account into Sol", as
   await expect(detectChatGptAccountCapabilities(page as never, {
     selectorTimeoutMs: 100,
     stableAbsenceMs: 0,
-  })).resolves.toMatchObject({ solAvailable: false, extraHighAvailable: false, proAvailable: false });
+  })).rejects.toThrow("Could not identify ChatGPT's model controls");
   expect(visibilityReads).toBe(2);
 });
 

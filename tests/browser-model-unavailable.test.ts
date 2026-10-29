@@ -1,6 +1,7 @@
+import { launchDomBrowser } from "./support/dom-browser";
 import { expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { chromium, type Page } from "playwright-core";
+import { type Page } from "playwright-core";
 import { ChatGptSubmissionRejectionObserver, throwIfChatGptTerminalErrorAlert } from "../src/adapters/chatgpt-web/browser-worker";
 import { chatGptTerminalErrorRetryPrompt } from "../src/adapters/chatgpt-web/same-surface-recovery";
 
@@ -109,7 +110,7 @@ test("owned model diagnostics stay bounded and reset with ownership", () => {
 });
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("real owned browser 404 aborts promptly without response DOM or message replay", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   let requests = 0;
   const failures: Error[] = [];
   const observer = new ChatGptSubmissionRejectionObserver(error => failures.push(error));
@@ -135,7 +136,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("real owned browser 404 abort
 }, 15_000);
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("exact live model alert without a retry testid is recognized, ordinary text is not", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const browser = await launchDomBrowser();
   try {
     const page = await browser.newPage();
     await page.setContent('<article id="old"><aside role="alert">Model not found<button>Retry</button></aside></article>'

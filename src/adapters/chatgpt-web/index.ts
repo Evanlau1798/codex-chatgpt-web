@@ -441,6 +441,7 @@ export function createChatGptWebAdapter(
                 session,
                 incoming.abortSignal?.aborted === true,
                 settled.error,
+                parsed,
               );
               if (submittedError) throw submittedError;
               throw settled.error;
@@ -646,7 +647,7 @@ export function createChatGptWebAdapter(
                     if (outcome.type === "tools") session.runtime.externalProgress!.assertToolBatchActive(revision);
                     return outcome;
                   }), incoming.abortSignal).catch(error => {
-                    throw submittedBrowserFailure(session, incoming.abortSignal?.aborted === true, error) ?? error;
+                    throw submittedBrowserFailure(session, incoming.abortSignal?.aborted === true, error, parsed) ?? error;
                   });
                 }
               }
@@ -662,7 +663,7 @@ export function createChatGptWebAdapter(
                     durableRecoveryCheckpoint(),
                   );
                   if (recoveryPlan !== undefined) return;
-                  const submittedError = submittedBrowserFailure(session, incoming.abortSignal?.aborted === true, next.outcome.error);
+                  const submittedError = submittedBrowserFailure(session, incoming.abortSignal?.aborted === true, next.outcome.error, parsed);
                   if (submittedError) throw submittedError;
                   throw next.outcome.error;
                 }
@@ -731,7 +732,7 @@ export function createChatGptWebAdapter(
         if (observerAbort.signal.aborted && !session.runtime.manualControl) throw observerAbort.signal.reason;
         const failure = awaitingRuntime ? session.settledOutcome() : undefined;
         if (failure?.type === "error") error = failure.error;
-        error = submittedStallFailure(session, incoming.abortSignal?.aborted === true, error) ?? error;
+        error = submittedStallFailure(session, incoming.abortSignal?.aborted === true, error, parsed) ?? error;
         if (parsed._compactionRequest && !incoming.abortSignal?.aborted) {
           error = new ChatGptWebAdapterError(error instanceof Error ? error.message : String(error), {
             status: error instanceof ChatGptWebAdapterError ? error.status : 409,

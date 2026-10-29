@@ -13,7 +13,7 @@ test("UI diagnostic boundary accepts only known numeric counts and rejects unrel
       { attached: 0, rendered: 1 }, { attached: -1, rendered: 0 },
       { attached: 1.5, rendered: 0 }, { attached: 1, rendered: -1 },
       { attached: 1, rendered: NaN }, { attached: 1, rendered: 0, text: "private" },
-    ].map(counts => ({ ...valid, "composer.lexical": counts })),
+    ].flatMap(counts => ["composer.lexical", "modelControl.inlineReasoning"].map(name => ({ ...valid, [name]: counts }))),
   ]) {
     expect(() => validateChatGptUiVariantCounts(invalid)).toThrow("ChatGPT UI variant observation");
   }
