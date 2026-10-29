@@ -10,7 +10,7 @@ test("turn interaction shielding stays outside the ChatGPT DOM", () => {
   assert.doesNotMatch(source, /codex-web-gpt-interaction-shield/);
   assert.match(source, /TURN_INTERACTION_SHIELD_URL/);
   assert.match(source, /interactionShield/);
-  assert.ok(source.indexOf("addChildView(view)") < source.indexOf("addChildView(interactionShield)"));
+  assert.match(source, /addChildView\(view,\s*0\)[\s\S]*addChildView\(interactionShield,\s*1\)/);
 });
 
 test("turn visibility keeps the native shield above its ChatGPT view", () => {

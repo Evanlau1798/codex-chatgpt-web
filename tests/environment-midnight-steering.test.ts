@@ -508,6 +508,11 @@ for (const mode of ["workspace-write", "read-only"] as const) test(`${mode} uses
     expect(resolved).toThrow("Steering environment conflicts");
     environment.content[1]!.text = unstated;
     expect(resolved().sandboxPolicy).toMatchObject({ networkAccess: false });
+    environment.content[1]!.text = unstated.replace(
+      "</workspace_roots>", `<root>${join(codexHome, "unproven-output")}</root></workspace_roots>`,
+    );
+    expect(resolved).toThrow("environment conflicts");
+    environment.content[1]!.text = unstated;
     // Unstated permissions require current evidence, even when a cache already exists.
     rmSync(rolloutPath);
     expect(() => store.resolve(beforeSteering)).toThrow("no canonical rollout");

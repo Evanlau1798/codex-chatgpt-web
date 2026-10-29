@@ -19,11 +19,11 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **Version: `6.1.16-Enhanced.1`.** Download buttons always open the latest published Enhanced release.
+> **Version: `6.1.17-Enhanced.1`.** Download buttons always open the latest published Enhanced release.
 
 - **Optional next-message suggestions (off by default)** live in Enhanced settings. With automatic Native output, suggestions are generated in the same final transaction and reused from a local 5-minute TTL cache. Cache misses return no suggestion, with no additional Web requests or pages.
 
-Integrates upstream v6.1.16 while preserving Enhanced sessions, Native2 tools, and Fast startup.
+Integrates upstream v6.1.17 while preserving Enhanced sessions, Native2 tools, and Fast startup.
 
 Temporary Chat remains the default, including retained sessions and compact replacements. Existing Saved Chats preferences are preserved. Native connectors are tried before any bounded, in-memory compatibility recovery on program-owned Temporary pages. ChatGPT account or service restrictions can still prevent connector access or final delivery; compatibility recovery is not a guarantee.
 

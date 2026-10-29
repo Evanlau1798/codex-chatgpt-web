@@ -216,7 +216,7 @@ test("v6.1.3 evidence is content-addressed, references v6.1.2, and reconstructs 
   }
 }, 30_000);
 
-test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8", "v6.1.10", "v6.1.11", "v6.1.12", "v6.1.13", "v6.1.15", "v6.1.16"])("continuing %s evidence closes source anchors and reconstructs the original merge from retained prerequisites", release => {
+test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8", "v6.1.10", "v6.1.11", "v6.1.12", "v6.1.13", "v6.1.15", "v6.1.16", "v6.1.17"])("continuing %s evidence closes source anchors and reconstructs the original merge from retained prerequisites", release => {
   const next = JSON.parse(readFileSync(resolve(root, `.github/upstream-audit/${release}.json`), "utf8"));
   if (release === "v6.1.5") {
     expect(next.coverage).toEqual({paths: 54, hunks: 202, testPaths: 21, testCaseDeltas: 61, pending: 0, missing: 0});
@@ -255,8 +255,15 @@ test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8", "v6.1.10", "v6.1.11", "v6.1.1
     expect(next.upstream).toBe("b6182818bb14d108a63cfa548b9c6684d82cfacc");
     expect(next.tag).toEqual({ type: "annotated", refTarget: "2610a0e44ec4a81392dc2da7d8d5d82ed868c074", object: "2610a0e44ec4a81392dc2da7d8d5d82ed868c074", commit: next.upstream, signed: false });
   }
+  if (release === "v6.1.17") {
+    expect(next.baseline).toBe("d8139b65c10bd9a7bc12e6cec16162926b6a4c0c");
+    expect(next.semanticBaseline).toBe("6f43747eb5585ca623c0617e729826dfd680c5b7");
+    expect(next.upstream).toBe("860fa576eb47d9e20d7d8289235bfea94392d2fd");
+    expect(next.tag).toEqual({ type: "annotated", refTarget: "b543a9cca1de563d97a4090122ce8695ba145437", object: "b543a9cca1de563d97a4090122ce8695ba145437", commit: next.upstream, signed: false });
+    expect(next.coverage).toEqual({ paths: 118, hunks: 555, testPaths: 50, testCaseDeltas: 226, pending: 0, missing: 0 });
+  }
   const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
-  const publishedObjects = release === "v6.1.7" || release === "v6.1.8" || release === "v6.1.10" || release === "v6.1.11" || release === "v6.1.12" || release === "v6.1.13" || release === "v6.1.15" || release === "v6.1.16"
+  const publishedObjects = release === "v6.1.7" || release === "v6.1.8" || release === "v6.1.10" || release === "v6.1.11" || release === "v6.1.12" || release === "v6.1.13" || release === "v6.1.15" || release === "v6.1.16" || release === "v6.1.17"
     ? new Set(git(["rev-list", "--objects", "HEAD"]).split(/\r?\n/).map(line => line.split(" ")[0])) : undefined;
   const retainedTargets = new Map<string, Buffer>();
   if (next.evidence.targetBlobs) {
@@ -286,7 +293,7 @@ test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8", "v6.1.10", "v6.1.11", "v6.1.1
   const textDigest = (text: string) => digest(Buffer.from(text.replaceAll("\r\n", "\n")));
   expect(next.tag.signed).toBeFalse();
   expect(git(["merge-base", next.semanticBaseline, next.upstream])).toBe(next.semanticBaseline);
-  expect(git(["rev-list", "--count", `${next.semanticBaseline}..${next.upstream}`])).toBe(release === "v6.1.16" ? "48" : release === "v6.1.15" ? "42" : release === "v6.1.10" ? "14" : release === "v6.1.7" ? "4" : release === "v6.1.8" || release === "v6.1.13" ? "3" : "1");
+  expect(git(["rev-list", "--count", `${next.semanticBaseline}..${next.upstream}`])).toBe(release === "v6.1.17" ? "50" : release === "v6.1.16" ? "48" : release === "v6.1.15" ? "42" : release === "v6.1.10" ? "14" : release === "v6.1.7" ? "4" : release === "v6.1.8" || release === "v6.1.13" ? "3" : "1");
   const expectedPaths = git(["diff", "--name-only", next.semanticBaseline, next.upstream]).split(/\r?\n/).sort();
   expect(next.paths.map((item: any) => item.path).sort()).toEqual(expectedPaths);
   expect(new Set(next.paths.map((item: any) => item.path)).size).toBe(expectedPaths.length);

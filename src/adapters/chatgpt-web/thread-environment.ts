@@ -520,21 +520,22 @@ export class ChatGptThreadEnvironmentStore {
           throw new Error("Compaction continuation repeats a current native environment claim");
         }
         const workspaceClaim = initialClaim ?? currentClaims.at(-1);
-        // A full-access rollout without workspace_roots has no native restriction
-        // on roots. The current same-cwd request may supply workspace context,
-        // but the exact native owner and permission profile remain authoritative.
+        // Full Access roots are context, but every declared native project and
+        // the exact current owner, cwd and permission profile remain authoritative.
         if ((currentCompaction || postCompactionContext || (initialClaim && initialClaim.environment.cwd === undefined))
-          && !rollout.workspaceRootsDeclared
           && rolloutEnvironment.sandboxPolicy.type === "dangerFullAccess"
           && workspaceClaim?.environment.sandboxPolicy.type === "dangerFullAccess"
           && (workspaceClaim.environment.cwd === undefined
             || environmentPathIdentity(workspaceClaim.environment.cwd) === environmentPathIdentity(rolloutEnvironment.cwd))
           && workspaceClaim.environment.roots.some(root => contains(root, rolloutEnvironment.cwd))) {
-          rolloutEnvironment = {
-            ...rolloutEnvironment,
-            roots: [...workspaceClaim.environment.roots],
-            writableRoots: [...workspaceClaim.environment.roots],
-          };
+          const nativeRoots = new Set(rolloutEnvironment.roots.map(environmentPathIdentity));
+          const claimedRoots = new Set(workspaceClaim.environment.roots.map(environmentPathIdentity));
+          if (!rollout.workspaceRootsDeclared || [...nativeRoots].every(root => claimedRoots.has(root))) {
+            const roots = rollout.workspaceRootsDeclared
+              ? [...rolloutEnvironment.roots, ...workspaceClaim.environment.roots.filter(root => !nativeRoots.has(environmentPathIdentity(root)))]
+              : [...workspaceClaim.environment.roots];
+            rolloutEnvironment = { ...rolloutEnvironment, roots, writableRoots: [...roots] };
+          }
         }
         const visualizationOwner = { thread_id: rolloutIdentity.threadId,
           ...("parentThreadId" in rolloutIdentity ? { parent_thread_id: rolloutIdentity.parentThreadId } : {}),

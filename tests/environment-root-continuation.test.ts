@@ -589,8 +589,8 @@ test.each(["v1", "v2"])("%s recovered delegation still requires current rollout 
       expect(resolveCurrent).toThrow("environment conflicts");
     }
     environmentPart.text = currentEnvironment;
-    // An explicitly declared root set must still match, even with full access.
-    payload.workspace_roots = [root];
+    // The current envelope cannot omit any explicitly declared native project.
+    payload.workspace_roots = [root, auxiliary, join(codexHome, "missing-project")];
     writeContext();
     expect(resolveCurrent).toThrow("environment conflicts");
     payload.workspace_roots = null;
@@ -601,6 +601,84 @@ test.each(["v1", "v2"])("%s recovered delegation still requires current rollout 
     writeContext();
     expect(resolveCurrent).toThrow("current turn");
   });
+
+  for (const shared of [false, true]) for (const format of ["v1", "v2"])
+  for (const outputFolder of ["visualizations", "ordinary-results"])
+  for (const rootSource of ["session", "turn"]) test(`${format} full-access compaction keeps declared ${rootSource} projects when Codex adds an output root (#933, shared=${shared}, output=${outputFolder})`, () => {
+    const { codexHome, request, rolloutPath } = resumedRootFixture();
+    const bridgeHome = shared ? mkdtempSync(join(tmpdir(), "codex-shared-added-root-")) : codexHome;
+    if (shared) temporaryRoots.push(bridgeHome);
+    const body = request._rawBody as { input: Array<Record<string, unknown>>; client_metadata: Record<string, string> };
+    const oldTurnId = "01a06c66-0000-75c6-a0df-318f890ef6de";
+    body.input[0]!.internal_chat_message_metadata_passthrough = { turn_id: oldTurnId };
+    const summary = `Added workspace checkpoint ${format} ${rootSource} shared=${shared}`;
+    rememberCompactionContinuation({ ...request, _compactionRequest: true }, extractChatGptTurnIdentity(request), [
+      { turnId: oldTurnId, content: body.input[0]!.content },
+    ], summary);
+    const auxiliary = join(codexHome, "second-project");
+    const output = join(codexHome, outputFolder, "2026", "10", "22", rolloutThreadId);
+    const roots = [root, auxiliary];
+    const currentEnvironment = (claimedRoots: string[]) => environmentXml.replace(
+      /<workspace_roots>[\s\S]*?<\/workspace_roots>/,
+      `<workspace_roots>${claimedRoots.map(path => `<root>${path}</root>`).join("")}</workspace_roots>`,
+    );
+    // The native project order remains stable even when the current envelope adds
+    // a visualization directory first. No directory name grants special access.
+    const environmentPart = { type: "input_text", text: currentEnvironment([output, auxiliary, root]) };
+    body.input.unshift({
+      type: "message", role: "user", id: "msg_current_environment", content: [environmentPart],
+      internal_chat_message_metadata_passthrough: { turn_id: rolloutTurnId },
+    });
+    body.input.push(format === "v2"
+      ? { type: "compaction", encrypted_content: encodeCompactionSummary(summary) }
+      : { type: "message", role: "user", content: [{ type: "input_text", text: `${SUMMARY_PREFIX}\n${summary}` }] });
+    const metadata = JSON.parse(body.client_metadata["x-codex-turn-metadata"]!);
+    metadata.workspaces = Object.fromEntries(roots.map(path => [path, {}]));
+    body.client_metadata["x-codex-turn-metadata"] = JSON.stringify(metadata);
+    const session = { type: "session_meta", payload: {
+      id: rolloutThreadId, source: "vscode", ...(rootSource === "session" ? { runtime_workspace_roots: roots } : {}),
+    } };
+    const native = childTurnContext(rolloutTurnId, {
+      workspace_roots: rootSource === "turn" ? roots : undefined,
+    });
+    const payload = native.payload as Record<string, unknown>;
+    const writeContext = () => writeFileSync(rolloutPath,
+      [session, native].map(value => JSON.stringify(value)).join("\n") + "\n");
+    const state = join(bridgeHome, "thread-environments.json");
+    const resolveCurrent = () => new ChatGptThreadEnvironmentStore(
+      state, Date.now, bridgeHome, undefined, shared ? [codexHome] : [],
+    ).resolve(request);
+    writeContext();
+    const expected = {
+      cwd: root, roots: [...roots, output], writableRoots: [...roots, output],
+      sandboxPolicy: { type: "dangerFullAccess" as const }, tools: request.context.tools ?? [],
+    };
+    expect(resolveCurrent()).toEqual(expected);
+    expect(resolveCurrent()).toEqual(expected);
+
+    for (const claimed of [[root, output], [root, join(codexHome, "replacement-project"), output]]) {
+      environmentPart.text = currentEnvironment(claimed);
+      expect(resolveCurrent).toThrow("environment conflicts");
+    }
+    environmentPart.text = currentEnvironment([output, auxiliary, root]).replace(
+      `<cwd>${root}</cwd>`, `<cwd>${auxiliary}</cwd>`,
+    );
+    expect(resolveCurrent).toThrow("environment conflicts");
+    environmentPart.text = currentEnvironment([output, auxiliary, root]).replace(
+      dangerFullAccessProfileXml, readOnlyProfileXml,
+    );
+    expect(resolveCurrent).toThrow("environment conflicts");
+    environmentPart.text = currentEnvironment([output, auxiliary, root]);
+    payload.turn_id = oldTurnId;
+    writeContext();
+    expect(resolveCurrent).toThrow("current turn");
+    payload.turn_id = rolloutTurnId;
+    writeContext();
+    expect(resolveCurrent()).toEqual(expected);
+    rmSync(rolloutPath);
+    expect(resolveCurrent).toThrow();
+  });
+
 
 test("compaction keeps current native output-directory grants omitted from workspace roots", () => {
     const { codexHome, request, rolloutPath } = resumedRootFixture();
@@ -643,6 +721,7 @@ test("compaction keeps current native output-directory grants omitted from works
     const original = environmentPart.text;
     for (const conflicting of [
       original.replaceAll(root, join(codexHome, "unproven-project")),
+      original.replace("</workspace_roots>", `<root>${join(codexHome, "unproven-output")}</root></workspace_roots>`),
       original.replace("<filesystem>", "<network_access>restricted</network_access><filesystem>"),
       filesystemEnvironmentXml(readOnlyProfileXml),
     ]) {
