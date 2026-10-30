@@ -1,4 +1,8 @@
 export const ko = {
+  newChat: "새 채팅",
+  doctorCatalogPending: "현재 런타임에서 완료된 Codex 모델 목록 요청이 아직 확인되지 않았습니다",
+  doctorCatalogReady: "Codex의 최근 모델 목록 요청이 성공했습니다",
+  doctorCatalogFailed: "Codex의 최근 모델 목록 요청이 실패했습니다. 로컬 런타임에는 연결할 수 있습니다",
   composerPredictions: "다음 메시지 제안",
   composerPredictionsBody: "기본적으로 꺼져 있습니다. Enhanced 자동 모드와 Native 출력 사용 시 최종 답변과 함께 선택적 제안을 생성하고 로컬 5분 TTL 캐시를 재사용합니다. 캐시가 없으면 제안을 반환하지 않으며 추가 Web 요청이나 페이지를 만들지 않습니다.",
   pluginName: "플러그인 이름",

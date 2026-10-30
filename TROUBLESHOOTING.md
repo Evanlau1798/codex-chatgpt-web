@@ -415,16 +415,15 @@ being inserted as an extra reviewer after the Web tool call already completed.
 ## Long-running commands and MCP deadlines
 
 Each MCP invocation has a 90-second deadline. Command polling through `codex_write_stdin`,
-`codex_tool_call`, or the native `exec` gateway accepts `yield_time_ms` up to 60,000 ms.
-Longer waits are rejected before dispatch without retiring the task. Return after each poll;
+`codex_tool_call`, or the native `exec` gateway accepts `yield_time_ms` up to 300,000 ms.
+The bridge bounds each native poll to 30,000 ms; prefer requests of at most 60,000 ms.
+Return after each poll;
 if the result still has a `session_id`, use a separate call to collect more output.
 The command continues running between polls. Changing `stallTimeoutSec` does not change the
 MCP invocation deadline.
 
-After updating, if ChatGPT still advertises a five-minute maximum for `codex_write_stdin`,
-recreate the current mode's connector with the same Tunnel and permissions to load its updated
-tool schema. Existing connectors receive an explicit validation error for an excessive wait;
-the bridge does not silently shorten the requested duration.
+The public tool schema retains its five-minute input maximum. No connector recreation is needed:
+bounded polling keeps each invocation within the MCP deadline while the command runs between polls.
 
 ## `Reconnecting`, `stream disconnected`, or `ChatGPT failed`
 

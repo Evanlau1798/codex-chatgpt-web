@@ -1,4 +1,8 @@
 export const zhTW = {
+  newChat: "新對話",
+  doctorCatalogPending: "目前執行階段尚未收到已完成的 Codex 模型清單請求",
+  doctorCatalogReady: "Codex 最近一次模型清單請求成功",
+  doctorCatalogFailed: "Codex 最近一次模型清單請求失敗；本機執行階段仍可連線",
   composerPredictions: "下一則訊息建議",
   composerPredictionsBody: "預設關閉。啟用 Enhanced 自動模式與 Native 輸出後，在同一最終答覆中產生可選建議，並重用本機 5 分鐘 TTL 快取。未命中快取就不提供建議，不新增 Web 請求或頁面。",
   pluginName: "外掛程式名稱",

@@ -38,7 +38,8 @@ capture cookies, tunnel IDs, API keys, bearer tokens, or prompt contents.
 Run this list on a maintained Windows 11 x64 machine with a real ChatGPT account:
 
 1. Install the packaged launcher on a clean profile and prove that the embedded Bun runtime starts.
-2. Sign in inside the embedded browser and prove that a new ordinary chat reaches a usable composer.
+2. Sign in inside the embedded browser and prove that a new Temporary Chat reaches a usable composer.
+   Saved Chats remains an explicit opt-in preference, with offline compatibility coverage.
 3. Install the Codex model route, restart Codex, and prove that every account-available ChatGPT Web
    effort appears exactly once without removing native models.
 4. Complete one Browser-only turn and verify streamed commentary plus the final answer.

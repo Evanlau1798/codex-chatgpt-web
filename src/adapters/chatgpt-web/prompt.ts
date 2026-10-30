@@ -13,10 +13,10 @@ import {
   supportsChatGptWebBiggerContext,
 } from "../../chatgpt-web-models";
 import { restoreCompactionTaskMessages } from "./compaction-continuation";
-import { chatGptTurnUserRevisionHistory, extractChatGptTurnIdentity } from "./environment";
-import { estimateTokens } from "../../lib/token-estimate";
+import { chatGptTurnUserRevisionHistory, findChatGptCompactionSourceRevision, extractChatGptTurnIdentity } from "./environment";
 import { contextTokenBreakdown } from "./prompt-token-diagnostics";
-import { estimateCompiledChatGptWebInputTokens } from "./input-tokens";
+import { estimateChatGptWebTextTokens, estimateCompiledChatGptWebInputTokens, TOKEN_ESTIMATE_TRANSACTION } from "./input-tokens";
+import { prepareChatGptWebMultipartTransport } from "./multipart-browser-transport";
 import { selectedSkillFile, skillFileTokens, type ChatGptSkillFile } from "./skill-attachments";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import { isReadableCompactionSummaryText } from "../../responses/compaction";
@@ -496,7 +496,7 @@ export function compileChatGptWebPrompt(
         ].join("\n"),
       };
       const imageTokens = images.reduce((sum, image) => sum + chatGptWebImageTokenReserve(image.detail), 0);
-      const transactionId = `ctx_${"0".repeat(32)}`;
+      const transactionId = TOKEN_ESTIMATE_TRANSACTION;
       // First try Instant-sized stages and give the final selected mode its own larger share.
       // Equal parts near Instant's maximum can be accepted once and rejected on the next Send.
       // If complete records cannot fit that allocation, plan with the wider available stage mode
@@ -517,7 +517,7 @@ export function compileChatGptWebPrompt(
           const fixedMessage = final
             ? formatChatGptWebMultipartCommit(multipart, transactionId)
             : formatChatGptWebMultipartStage(payload, transactionId, index + 1, multipartParts!).text;
-          const tokens = tokenLimit - estimateTokens(fixedMessage);
+          const tokens = tokenLimit - estimateChatGptWebTextTokens(fixedMessage, parsed.modelId, [transactionId]);
           const chars = (limits.browserComposerCharLimit ?? Infinity) - fixedMessage.length;
           if (tokens <= 0 || chars <= 0) {
             throw new ChatGptWebAdapterError(
@@ -532,7 +532,7 @@ export function compileChatGptWebPrompt(
           const final = index === multipart.parts.length - 1;
           const text = final ? formatChatGptWebMultipartCommit(multipart, transactionId)
             : formatChatGptWebMultipartStage(payload, transactionId, index + 1, multipartParts!).text;
-          return estimateTokens(text) > budgets[index]!.tokenLimit || text.length > budgets[index]!.charLimit;
+          return estimateChatGptWebTextTokens(text, parsed.modelId, [transactionId]) > budgets[index]!.tokenLimit || text.length > budgets[index]!.charLimit;
         })) continue;
         return { text: multipart.commit, images, ...attachments, multipart,
           ...(turnToken ? { turnToken } : {}), ...(bootstrapLimits ? { bootstrapLimits } : {}) };
@@ -567,32 +567,19 @@ export function compileChatGptWebPrompt(
       ...(turnToken ? { turnToken } : {}), ...(bootstrapLimits ? { bootstrapLimits } : {}) };
   };
 
-  let sourceMessages = withoutSupersededModelSwitchContracts(restoreCompactionTaskMessages(
-    parsed, extractChatGptTurnIdentity(parsed), chatGptTurnUserRevisionHistory(parsed),
-  ));
+  const requiredTasks = new Set<CodexMessage>();
+  const identity = extractChatGptTurnIdentity(parsed);
+  const restoredMessages = restoreCompactionTaskMessages(
+    parsed, identity, chatGptTurnUserRevisionHistory(parsed),
+    parsed._compactionRequest ? requiredTasks : undefined,
+    parsed._compactionRequest && parsed._rawBody && identity.turnId ? findChatGptCompactionSourceRevision(parsed) : undefined,
+  );
+  const sourceMessages = withoutSupersededModelSwitchContracts(restoredMessages);
   const initialMessageCount = sourceMessages.length;
-  let compiled = build(sourceMessages);
-  if (!parsed._compactionRequest) return compiled;
-
-  const multipartTokenCeiling = compiled.multipart ? resolveChatGptWebMultipartContextWindow(
-    backendModel, mode.effort, capabilities, compiled.multipart.parts.length, parsed._chatgptModelFamily,
+  if (!parsed._compactionRequest) return build(sourceMessages);
+  const multipartTokenCeiling = multipartEnabled ? resolveChatGptWebMultipartContextWindow(
+    backendModel, mode.effort, capabilities, multipartParts!, parsed._chatgptModelFamily,
   ) : undefined;
-  const multipartInputTokens = (): number => {
-    const transactionId = `ctx_${"0".repeat(32)}`;
-    // Bound the fixed-width ASCII handle in real messages and ACKs instead of a percentage margin.
-    const acknowledgementOverhead = compiled.multipart!.parts.slice(0, -1).reduce((total, payload, index) => {
-      const { acknowledgement } = formatChatGptWebMultipartStage(
-        payload, transactionId, index + 1, compiled.multipart!.parts.length,
-      );
-      return total + Buffer.byteLength(transactionId)
-        + acknowledgement.split(transactionId).reduce((sum, text) => sum + estimateTokens(text, parsed.modelId), 0)
-        - estimateTokens(acknowledgement, parsed.modelId);
-    }, 0);
-    return estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId, [transactionId]) + acknowledgementOverhead;
-  };
-  const exceedsCompactionBudget = (): boolean => compiled.multipart
-    ? multipartInputTokens() >= multipartTokenCeiling!
-    : chatGptPromptJsonBytes(compiled.text) > CHATGPT_COMPACTION_PROMPT_JSON_BYTE_BUDGET;
 
   // Preserve the newest cumulative checkpoint in either supported text representation.
   let checkpointIndex = sourceMessages.findLastIndex(message => (
@@ -601,27 +588,45 @@ export function compileChatGptWebPrompt(
       : message.content.every(part => part.type === "text")
         ? message.content.map(part => part.type === "text" ? part.text : "").join("\n") : undefined)
   ));
-  while (exceedsCompactionBudget() && sourceMessages.length > 1) {
-    const discardIndex = checkpointIndex === 0 ? 1 : 0;
-    if (discardIndex === sourceMessages.length - 1) break;
-    sourceMessages.splice(discardIndex, 1);
-    if (checkpointIndex > discardIndex) checkpointIndex -= 1;
-    // Rebuild image references, skill attachments and the omission notice inside the budget.
-    compiled = build(sourceMessages, initialMessageCount - sourceMessages.length);
-  }
-  if (exceedsCompactionBudget()) {
-    if (compiled.multipart) {
+  for (;;) {
+    let failure: ChatGptWebAdapterError;
+    let compiled: CompiledChatGptWebPrompt | undefined;
+    try {
+      // Rebuild attachment references and the omission notice after each whole-record removal.
+      compiled = build(sourceMessages, initialMessageCount - sourceMessages.length);
+      if (compiled.multipart) {
+        // Reuse the physical send boundary, with a deterministic, conservatively costed handle.
+        prepareChatGptWebMultipartTransport(compiled, parsed.modelId, capabilities, mode.effort,
+          parsed._chatgptModelFamily, false, TOKEN_ESTIMATE_TRANSACTION);
+      } else if (chatGptPromptJsonBytes(compiled.text) > CHATGPT_COMPACTION_PROMPT_JSON_BYTE_BUDGET) {
+        throw new ChatGptWebAdapterError("The browser compaction JSON byte budget was exceeded", {
+          status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false,
+        });
+      }
+      const trimmedCompactionMessages = initialMessageCount - sourceMessages.length;
+      return trimmedCompactionMessages > 0 ? { ...compiled, trimmedCompactionMessages } : compiled;
+    } catch (error) {
+      if (!(error instanceof ChatGptWebAdapterError) || error.code !== "context_length_exceeded") throw error;
+      failure = error;
+    }
+    const discardIndex = sourceMessages.findIndex((message, index) => index !== checkpointIndex
+      && index < sourceMessages.length - 1 && !requiredTasks.has(message));
+    if (discardIndex >= 0) {
+      sourceMessages.splice(discardIndex, 1);
+      if (checkpointIndex > discardIndex) checkpointIndex -= 1;
+      continue;
+    }
+    if (multipartEnabled) {
+      const cost = compiled ? `${estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId, [TOKEN_ESTIMATE_TRANSACTION]).toLocaleString("en-US")} input tokens` : "inputs exceeding a physical message budget";
       throw new ChatGptWebAdapterError(
-        `ChatGPT Web compaction still requires ${multipartInputTokens().toLocaleString("en-US")} input tokens after other history was trimmed; the required system context, ${checkpointIndex >= 0 ? "cumulative checkpoint and " : ""}final compaction instruction cannot fit below the ${multipartTokenCeiling!.toLocaleString("en-US")}-token ${compiled.multipart.parts.length === 2 ? "two-part" : "six-part"} ceiling. Reduce the required context before retrying.`,
+        `ChatGPT Web compaction still requires ${cost} after other history was trimmed; the required system context, ${requiredTasks.size ? "authenticated task, " : ""}${checkpointIndex >= 0 ? "cumulative checkpoint and " : ""}final compaction instruction cannot fit the physical message budgets and the ${multipartTokenCeiling!.toLocaleString("en-US")}-token ${multipartParts === 2 ? "two-part" : "six-part"} ceiling. Reduce the required context before retrying.`,
         { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
       );
     }
-    const required = `${chatGptPromptJsonBytes(compiled.text).toLocaleString("en-US")} JSON bytes`;
+    const required = compiled ? `${chatGptPromptJsonBytes(compiled.text).toLocaleString("en-US")} JSON bytes` : failure.message;
     throw new ChatGptWebAdapterError(
-      `ChatGPT Web compaction prompt still requires ${required} after other history was trimmed; ${checkpointIndex >= 0 ? "the cumulative checkpoint and final compaction instruction exceed" : "the final compaction instruction alone exceeds"} the browser compaction budget`,
+      `ChatGPT Web compaction prompt still requires ${required} after other history was trimmed; ${requiredTasks.size ? "the authenticated task and remaining required context exceed" : checkpointIndex >= 0 ? "the cumulative checkpoint and final compaction instruction exceed" : "the final compaction instruction alone exceeds"} the browser compaction budget`,
       { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
     );
   }
-  const trimmedCompactionMessages = initialMessageCount - sourceMessages.length;
-  return trimmedCompactionMessages > 0 ? { ...compiled, trimmedCompactionMessages } : compiled;
 }

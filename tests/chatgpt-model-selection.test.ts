@@ -210,9 +210,18 @@ test("explicit Astra Max verifies the requested Pro route without accepting Ultr
   }
 });
 
-test("Simplified Chinese effort announcements preserve exact model and effort verification (#911)", () => {
-  for (const [label, effort] of [["即时", "low"], ["中", "medium"], ["高", "high"]] as const) {
-    expect(chatGptModelFamilyMatches([`GPT-6 Sol ${label}，第 3 项，共 3 项`, `6 ${label}`], "6", effort)).toBeTrue();
+test("Simplified Chinese effort announcements preserve exact model and effort verification (#911)", async () => {
+  const choices = [["即时", "low"], ["中", "medium"], ["高", "high"]] as const;
+  for (const [index, [label, effort]] of choices.entries()) {
+    const announcement = `GPT-6 Sol ${label}，第 ${index + 1} 项，共 3 项`;
+    expect(chatGptModelFamilyMatches([announcement, `6 ${label}`], "6", effort)).toBeTrue();
+    await assertChatGptModelFamily(confirmationFixture("GPT-6", [announcement], String(index)), "6", effort, index);
+    for (const position of [1, 2, 3].filter(value => value !== index + 1)) {
+      const contradictory = `GPT-6 Sol ${label}，第 ${position} 项，共 3 项`;
+      expect(chatGptModelFamilyMatches([contradictory, `6 ${label}`], "6", effort)).toBeFalse();
+      await expect(assertChatGptModelFamily(confirmationFixture("GPT-6", [contradictory], String(index)), "6", effort, index))
+        .rejects.toThrow("could not be selected and verified");
+    }
     expect(chatGptModelFamilyMatches([`5.6 ${label}`], "6", effort)).toBeFalse();
     expect(chatGptModelFamilyMatches([`6 Astra ${label}`], "6", effort)).toBeFalse();
     expect(chatGptModelFamilyMatches([`6 ${label}`, "6 Pro"], "6", effort)).toBeFalse();

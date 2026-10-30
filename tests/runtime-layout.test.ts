@@ -416,16 +416,33 @@ test("Temporary Chat defaults on and preserves the legacy saved-chat preference 
   delete original.useSavedChats;
   writeFileSync(path, JSON.stringify(original));
   expect(loadConfig().useSavedChats).toBe(false);
-  for (const useSavedChats of [true, false]) {
-    writeFileSync(path, JSON.stringify({ ...original, useSavedChats }));
+  for (const useTemporaryChats of [true, false]) {
+    writeFileSync(path, JSON.stringify({ ...original, useTemporaryChats, unrelatedPreference: "preserve" }));
+    for (const loaded of [loadConfig(), loadConfigForSetup()]) {
+      expect(loaded.useSavedChats).toBe(false);
+      expect(loaded).not.toHaveProperty("useTemporaryChats");
+      saveConfig(loaded);
+      expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ useSavedChats: false, unrelatedPreference: "preserve" });
+      expect(JSON.parse(readFileSync(path, "utf8"))).not.toHaveProperty("useTemporaryChats");
+    }
+  }
+  for (const useSavedChats of [true, false]) for (const useTemporaryChats of [true, false]) {
+    writeFileSync(path, JSON.stringify({ ...original, useSavedChats, useTemporaryChats,
+      unrelatedPreference: "preserve" }));
     for (const loaded of [loadConfig(), loadConfigForSetup()]) {
       expect(loaded.useSavedChats).toBe(useSavedChats);
+      expect(loaded).not.toHaveProperty("useTemporaryChats");
+      expect(loaded).toHaveProperty("unrelatedPreference", "preserve");
       for (const browserInteractionMode of ["automatic", "manual"] as const) {
         expect(providerConfig({ ...loaded, browserInteractionMode }).chatgptWeb!.useSavedChats).toBe(useSavedChats);
       }
       saveConfig(loaded);
       expect(loadConfig().useSavedChats).toBe(useSavedChats);
-      expect(JSON.parse(readFileSync(path, "utf8"))).toHaveProperty("useSavedChats", useSavedChats);
+      expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ useSavedChats, unrelatedPreference: "preserve" });
+      expect(JSON.parse(readFileSync(path, "utf8"))).not.toHaveProperty("useTemporaryChats");
+      saveConfig({ ...loaded, useTemporaryChats: !useSavedChats } as typeof loaded);
+      expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ useSavedChats, unrelatedPreference: "preserve" });
+      expect(JSON.parse(readFileSync(path, "utf8"))).not.toHaveProperty("useTemporaryChats");
     }
   }
   writeFileSync(path, JSON.stringify({ ...original, useSavedChats: "true" }));

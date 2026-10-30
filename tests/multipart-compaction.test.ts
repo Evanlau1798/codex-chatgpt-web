@@ -96,6 +96,14 @@ test.each(["string", "text parts"] as const)("#930: GPT-6 Pro compaction recover
   expect(compiled.multipart!.commit).toContain("the supplied history is incomplete");
   expect(compiled.multipart!.commit).toContain("Preserve still-relevant progress, constraints and pending work");
   expect(compiled.multipart!.commit).not.toContain("The task context is complete.");
+  // Independently put back the nearest omitted record: a non-minimal trim would still fit.
+  const witness = compileChatGptWebPrompt({ ...parsed, _compactionRequest: false,
+    context: { ...parsed.context, messages: [parsed.context.messages[1]!, ...parsed.context.messages.slice(trimmed)] } },
+    capabilities, turnToken, { experimentalMultipartParts: 6 });
+  witness.multipart!.commit = compiled.multipart!.commit;
+  let witnessFailure: unknown;
+  try { assertMultipartFits(witness, parsed); } catch (error) { witnessFailure = error; }
+  expect(witnessFailure).toMatchObject({ code: "context_length_exceeded", retryable: false });
   expect(parsed).toEqual(before);
 }, 30_000);
 
@@ -264,19 +272,65 @@ test.each(([2, 6] as const).flatMap(parts =>
   }, 30_000,
 );
 
-test("multipart compaction keeps atomic records below the total ceiling and still rejects oversized stages", () => {
+test("multipart compaction drops a discardable oversized atomic record without splitting it", () => {
   const parsed = request();
   parsed.context.messages = [
     { role: "user", content: "word ".repeat(110_000), timestamp: 1 },
     { role: "user", content: "checkpoint now", timestamp: 2 },
   ];
+  const before = structuredClone(parsed);
+  const normal = compileChatGptWebPrompt({ ...parsed, _compactionRequest: false }, capabilities, turnToken,
+    { experimentalMultipartParts: 6 });
+  expect(normal.trimmedCompactionMessages).toBeUndefined();
+  expect(() => assertMultipartFits(normal, parsed)).toThrow("No ChatGPT effort available");
   const compiled = compileChatGptWebPrompt(parsed, capabilities, turnToken, { experimentalMultipartParts: 6 });
   expect(estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId)).toBeLessThan(ceiling(parsed));
-  expect(compiled.trimmedCompactionMessages).toBeUndefined();
+  expect(compiled.trimmedCompactionMessages).toBe(1);
   expect(compiled.multipart!.parts.flatMap(part => JSON.parse(part).records)
     .filter(record => record.kind === "message").map(record => record.message.content))
-    .toEqual(parsed.context.messages.map(message => message.content));
-  expect(() => assertMultipartFits(compiled, parsed)).toThrow("No ChatGPT effort available");
+    .toEqual(["checkpoint now"]);
+  expect(() => assertMultipartFits(compiled, parsed)).not.toThrow();
+  expect(parsed).toEqual(before);
+});
+
+test.each(["checkpoint", "final instruction", "system"] as const)(
+  "multipart compaction rejects an irreducible physical message (%s)", required => {
+    const parsed = request();
+    const oversized = "word ".repeat(110_000);
+    parsed.context.messages = [{ role: "user", content: "discardable history", timestamp: 1 },
+      { role: "user", content: "checkpoint now", timestamp: 3 }];
+    if (required === "checkpoint") parsed.context.messages.splice(1, 0,
+      { role: "user", content: `${SUMMARY_PREFIX}\n${oversized}`, timestamp: 2 });
+    else if (required === "system") parsed.context.systemPrompt = [oversized];
+    else parsed.context.messages.at(-1)!.content = oversized;
+    const before = structuredClone(parsed);
+    let error: unknown;
+    try { compileChatGptWebPrompt(parsed, capabilities, turnToken, { experimentalMultipartParts: 6 }); }
+    catch (caught) { error = caught; }
+    expect(error).toMatchObject({ code: "context_length_exceeded", retryable: false, status: 400 });
+    expect((error as Error).message).toContain("after other history was trimmed");
+    expect((error as Error).message).not.toContain("Run /compact");
+    expect(parsed).toEqual(before);
+  },
+);
+
+test("multipart compaction recovers when an old skill exhausts the final attachment budget", () => {
+  const parsed = request();
+  parsed.context.messages = [
+    { role: "user", origin: "codex_skill", content: `<skill><name>old</name>${"word ".repeat(110_000)}</skill>`, timestamp: 1 },
+    { role: "user", content: "checkpoint now", timestamp: 2 },
+  ];
+  const before = structuredClone(parsed);
+  let failure: unknown;
+  let compiled: CompiledChatGptWebPrompt | undefined;
+  try { compiled = compileChatGptWebPrompt(parsed, capabilities, turnToken,
+    { experimentalMultipartParts: 6, experimentalSkillAttachments: true }); }
+  catch (error) { failure = error; }
+  expect(failure).toBeUndefined();
+  expect(compiled!.trimmedCompactionMessages).toBe(1);
+  expect(compiled!.skillFiles ?? []).toHaveLength(0);
+  expect(() => assertMultipartFits(compiled!, parsed)).not.toThrow();
+  expect(parsed).toEqual(before);
 });
 
 test("multipart compaction counts and rebuilds image and skill attachments after trimming", () => {

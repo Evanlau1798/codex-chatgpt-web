@@ -3349,7 +3349,7 @@ describe("ChatGPT outer-native harness v4", () => {
             ? { session_id: 42, chars: "", yield_time_ms, max_output_tokens: 900 }
             : { wire_name: "write_stdin", arguments: { session_id: 42, chars: "", yield_time_ms, max_output_tokens: 900 } }) },
         });
-        const rejected = call(180_000);
+        const rejected = call(300_001).catch(() => ({ isError: true }));
         // A wrong implementation queues a doomed native call. Complete it to
         // fail promptly, without waiting for the production 90-second deadline.
         const probe = AbortSignal.timeout(150);
@@ -3364,8 +3364,19 @@ describe("ChatGPT outer-native harness v4", () => {
         expect((await rejected).isError).toBe(true);
         expect(await queued).toHaveLength(0);
 
-        const valid = call(60_000);
-        const [request] = await broker.nextToolBatch(token);
+        const valid = call(300_000);
+        const readySignal = AbortSignal.timeout(5_000);
+        const nextBatch = broker.nextToolBatch(token, readySignal).catch(error => {
+          if (readySignal.aborted) return [];
+          throw error;
+        });
+        const dispatched = await Promise.race([valid.then(result => ({ result })), nextBatch.then(batch => ({ batch }))]);
+        if ("result" in dispatched) {
+          expect(dispatched.result.isError).not.toBe(true);
+          throw new Error("A command poll completed without dispatching its native request");
+        }
+        expect(dispatched.batch).toHaveLength(1);
+        const [request] = dispatched.batch;
         if (direct) expect(request!.arguments).toEqual({ session_id: 42, chars: "", yield_time_ms: 30_000, max_output_tokens: 900 });
         else {
           const calls: GatewayProgramCall[] = [];
@@ -3399,13 +3410,8 @@ describe("ChatGPT outer-native harness v4", () => {
         const [request] = await broker.nextToolBatch(token);
         const calls: GatewayProgramCall[] = [];
         const run = executeGatewayProgram(request!.input!, ["write_stdin"], calls, true);
-        if (yieldMs > 60_000) {
-          await expect(run).rejects.toThrow("yield_time_ms");
-          expect(calls).toHaveLength(0);
-        } else {
-          await run;
-          expect(calls).toEqual([{ name: "write_stdin", input: { session_id: 42, chars: "", yield_time_ms: 30_000 } }]);
-        }
+        await run;
+        expect(calls).toEqual([{ name: "write_stdin", input: { session_id: 42, chars: "", yield_time_ms: 30_000 } }]);
         broker.completeTool(token, request!.callId, toolResult({ session_id: 42 }));
         await raw;
       }

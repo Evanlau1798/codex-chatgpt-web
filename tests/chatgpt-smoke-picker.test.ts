@@ -4,11 +4,16 @@ import { chromium } from 'playwright-core';
 import { ChatGptBrowserWorker } from '../src/adapters/chatgpt-web/browser-worker';
 import { CHATGPT_COMPOSER_SELECTOR } from '../src/chatgpt-session';
 // Sliderless-picker reproduction and initial regression cases contributed in #876.
-for (const scenario of ["immediate", "delayed", "missing-family", "cancelled-slider"])
+for (const scenario of ["immediate", "saved-immediate", "delayed", "missing-family", "cancelled-slider"])
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`smoke handles a sliderless default picker (${scenario})`, async () => {
   const browser = await launchDomBrowser();
   try {
     const page = await browser.newPage();
+    let navigations = 0;
+    if (scenario === "saved-immediate") {
+      await page.route("https://chatgpt.com/**", route => { navigations += 1; return route.fulfill({ body: "<html></html>" }); });
+      await page.goto("https://chatgpt.com/");
+    }
     const abort = new AbortController();
     await page.exposeFunction("cancelSmoke", () => abort.abort());
     await page.setContent(`<form data-chatgpt-composer>
@@ -41,9 +46,9 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`smoke handles a sliderless d
       </script>`);
     expect(await page.locator('[role=slider]').count()).toBe(0);
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
-    worker.config = { useSavedChats: false };
+    worker.config = { useSavedChats: scenario === "saved-immediate" };
     worker.ensurePage = async () => page;
-    worker.prepareChatSurface = async () => {};
+    if (scenario !== "saved-immediate") worker.prepareChatSurface = async () => {};
     worker.activeComposer = async () => page.locator(CHATGPT_COMPOSER_SELECTOR).filter({ visible: true });
     let turns = 0;
     worker.runBrowserTurn = async (options: any) => {
@@ -55,6 +60,11 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`smoke handles a sliderless d
       });
       expect(await page.locator('[role=menuitemradio][aria-checked=true]').textContent()).toBe("GPT-5.6 Sol");
       expect(await page.locator('#picker').isVisible()).toBe(false);
+      if (scenario === "saved-immediate") {
+        expect(navigations).toBe(1);
+        expect(page.url()).toBe("https://chatgpt.com/");
+        expect(await page.getByRole('textbox').innerText()).toBe('Draft');
+      }
       return "CODEX WEB GPT READY";
     };
     if (scenario === "missing-family" || scenario === "cancelled-slider") {

@@ -12,7 +12,7 @@ test("observed six-position picker is accepted without admitting an invalid rang
   expect(parseChatGptEffortSliderState("1", "6", "7")).toBeUndefined();
 });
 
-test.each([250, 30_000, 60_000])("transport-safe command poll %s remains valid", value => {
+test.each([250, 30_000, 60_000, 60_001, 180_000, 300_000])("transport-safe command poll %s remains valid", value => {
   expect(() => assertCommandPollArguments({ yield_time_ms: value })).not.toThrow();
 });
 
@@ -27,18 +27,18 @@ test("internal command inventory advertises the poll ceiling without mutating na
   expect(browserToolDescription(tool)).toContain("60000");
 });
 
-test.each([60_001, 300_000, 1.5, "30000", -1])("oversized or malformed command poll %s fails before execution", value => {
+test.each([300_001, 1.5, "30000", -1])("oversized or malformed command poll %s fails before execution", value => {
   const tool = { name: "write_stdin", description: "Poll", parameters: {} };
-  expect(() => assertBrowserToolArguments(tool, { yield_time_ms: value })).toThrow("60000");
-  expect(() => assertGatewayToolArguments("write_stdin", { yield_time_ms: value })).toThrow("60000");
+  expect(() => assertBrowserToolArguments(tool, { yield_time_ms: value })).toThrow("300000");
+  expect(() => assertGatewayToolArguments("write_stdin", { yield_time_ms: value })).toThrow("300000");
 });
 
 test("raw hosted programs reject oversized command polls without calling the native tool", async () => {
   let calls = 0;
   const execute = new Function("tools", "ALL_TOOLS", `return (async () => {${transportBoundRawExecProgram(
-    "await tools.write_stdin({session_id: 1, yield_time_ms: 60001});", "exec", true,
+    "await tools.write_stdin({session_id: 1, yield_time_ms: 300001});", "exec", true,
   )}})();`);
-  await expect(execute({ write_stdin: async () => { calls++; } }, [{ name: "write_stdin" }])).rejects.toThrow("60000");
+  await expect(execute({ write_stdin: async () => { calls++; } }, [{ name: "write_stdin" }])).rejects.toThrow("300000");
   expect(calls).toBe(0);
 });
 

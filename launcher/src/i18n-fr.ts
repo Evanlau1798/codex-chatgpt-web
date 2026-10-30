@@ -1,4 +1,8 @@
 export const fr = {
+  newChat: "Nouvelle discussion",
+  doctorCatalogPending: "Ce runtime n’a pas encore observé de requête terminée pour la liste des modèles Codex",
+  doctorCatalogReady: "La dernière requête Codex pour la liste des modèles a réussi",
+  doctorCatalogFailed: "La dernière requête Codex pour la liste des modèles a échoué ; le runtime local reste accessible",
   composerPredictions: "Suggestions de messages",
   composerPredictionsBody: "Désactivé par défaut. En mode Enhanced automatique avec sortie Native, une suggestion facultative accompagne la réponse finale et reste en cache local pendant 5 minutes (TTL). Sans cache valide, aucune suggestion ; aucune requête Web ni page supplémentaire.",
   pluginName: "Nom du plugin",

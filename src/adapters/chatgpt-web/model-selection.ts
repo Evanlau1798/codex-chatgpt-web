@@ -22,7 +22,7 @@ const effortLabels: Record<ChatGptWebAdapterEffort, RegExp> = {
 
 function effortPosition(text: string): RegExpExecArray | null {
   return /\p{P}\s*(\d+)\s+(?:of|sur)\s+(\d+)\p{P}*$/iu.exec(text.trim())
-    ?? /\p{P}\s*第\s*(\d+)\s*項\p{P}\s*共\s*(\d+)\s*項\p{P}*$/iu.exec(text.trim());
+    ?? /\p{P}\s*第\s*(\d+)\s*[項项]\p{P}\s*共\s*(\d+)\s*[項项]\p{P}*$/iu.exec(text.trim());
 }
 
 function matchesEffortPosition(position: RegExpExecArray, effort: ChatGptWebAdapterEffort): boolean {

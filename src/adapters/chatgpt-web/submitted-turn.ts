@@ -46,19 +46,13 @@ function submittedFailure(
       session.setTerminalError(pending);
       return pending;
     }
-    const canonicalResults = parsed?.context.messages.filter((message): message is CodexToolResultMessage =>
-      message.role === "toolResult") ?? [];
-    const canonicalIds = new Set(canonicalResults.map(result => result.toolCallId));
-    const canonicalCallsComplete = canonicalResults.length > 0 && canonicalResults.length === canonicalIds.size
-      && !parsed?.context.messages.some(message => message.role === "assistant"
-        && message.content.some(part => part.type === "toolCall" && !canonicalIds.has(part.id)));
     // Canonical results prove completion without sending anything to the retired binding.
     // Every other accepted or ambiguous failure keeps its existing terminal receipt.
     if (phase === "accepted" && error.retryable && !aborted && parsed?._canonicalContextComplete === true
       && session.canonicalCallDiagnostics().complete && session.unresolvedSupersededResultIds().length === 0
       && (results.length > 0 || session.completedToolResultCount() > 0)
-      && canonicalCallsComplete
-      && !session.runtime.manualControl && !session.runtime.compactionRequested && !parsed._compactionRequest
+      && session.hasCanonicalToolResultEvidence(parsed)
+      && !session.runtime.manualControl && !session.runtime.compactionRequested && !parsed._compactionRequest && !parsed._localCompactionRequest
       && session.runtime.text.value().length === 0) return error;
   }
   if (!phase || phase === "prepared") return undefined;

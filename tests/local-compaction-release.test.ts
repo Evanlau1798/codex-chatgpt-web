@@ -6,7 +6,11 @@ import {
   ChatGptTextFeed,
   ChatGptTraceFeed,
   ChatGptTurnSessions,
+  chatGptConversationKey, chatGptTurnExecutionKey, chatGptTurnRoundKey, chatGptTurnTraceId,
+  chatGptCompactionSourceExecutionKey,
 } from "../src/adapters/chatgpt-web/turn-execution";
+import { chatGptTurnRetryKey, chatGptModelFailureKey } from "../src/adapters/chatgpt-web/turn-retry-identity";
+import { sessionForChatGptRequest } from "../src/adapters/chatgpt-web/steering";
 import { parseRequest } from "../src/responses/parser";
 import type { AdapterEvent, CodexProviderConfig } from "../src/types";
 
@@ -51,6 +55,82 @@ function runtime(conversationKey: string, release: () => Promise<void>, cancel: 
     release,
   };
 }
+
+function sameTurnCompactions() {
+  const base = localCompactBody("turn");
+  const input = [{ ...base.input[0], id: "current-user" },
+    { type: "function_call", call_id: "read-current", name: "read", arguments: '{"path":"notes"}' },
+    { type: "function_call_output", call_id: "read-current", output: "read exactly once" }];
+  const body = { ...base, input, tools: [{ type: "function", name: "read", parameters: { type: "object", properties: {} } }] };
+  const metadata = JSON.parse(base.client_metadata["x-codex-turn-metadata"]);
+  const ordinary = parseRequest(body);
+  const local = parseRequest({ ...body, client_metadata: {
+    "x-codex-turn-metadata": JSON.stringify({ ...metadata, request_kind: "compaction" }),
+  } });
+  const remote = parseRequest({ ...body, input: [...input, { type: "compaction_trigger" }] });
+  ordinary._canonicalContextComplete = local._canonicalContextComplete = true;
+  return { ordinary, local, remote };
+}
+
+test("same-turn ordinary, legacy-local and native compaction have isolated identities", () => {
+  const { ordinary, local, remote } = sameTurnCompactions();
+  expect(local._localCompactionRequest).toBeTrue();
+  expect(local._compactionRequest).toBeUndefined();
+  expect(remote._compactionRequest).toBeTrue();
+  expect(chatGptCompactionSourceExecutionKey(local)).toBe(chatGptTurnExecutionKey(ordinary));
+  for (const key of [chatGptTurnExecutionKey, chatGptTurnRoundKey, chatGptTurnRetryKey, chatGptModelFailureKey])
+    expect(new Set([ordinary, local, remote].map(parsed => key(parsed))).size).toBe(3);
+  expect(new Set([ordinary, local, remote].map(parsed => chatGptTurnTraceId(parsed, "local-isolation"))).size).toBe(3);
+});
+
+test("legacy local model rejection survives harness refresh but distinguishes changed native work", () => {
+  const { local } = sameTurnCompactions();
+  const body = local._rawBody as { input: unknown[]; [key: string]: unknown };
+  const refreshed = parseRequest({ ...body, input: [{ type: "message", role: "developer", content: "Refreshed harness" }, ...body.input] });
+  expect(chatGptTurnExecutionKey(refreshed)).not.toBe(chatGptTurnExecutionKey(local));
+  expect(chatGptModelFailureKey(refreshed)).toBe(chatGptModelFailureKey(local));
+  const changed = parseRequest({ ...body, input: [...body.input, { type: "message", role: "user", id: "new-request",
+    content: "New authorized work", internal_chat_message_metadata_passthrough: { turn_id: "turn-local-compact" } }] });
+  expect(chatGptModelFailureKey(changed)).not.toBe(chatGptModelFailureKey(local));
+});
+
+test("mid-turn legacy compaction retires the active tool owner before starting an isolated read-only runtime", async () => {
+  const { ordinary, local } = sameTurnCompactions();
+  const sessions = new ChatGptTurnSessions();
+  const namespace = "local-isolation";
+  const conversation = chatGptConversationKey(ordinary, namespace)!;
+  const key = (parsed: typeof ordinary) => `${namespace}:${chatGptTurnExecutionKey(parsed)}`;
+  let finish!: (text: string) => void;
+  let cancelled = 0, released = 0, compactStarts = 0;
+  const browser = new Promise<string>(resolve => { finish = resolve; });
+  try {
+    const source = await sessionForChatGptRequest(sessions, key(ordinary), ordinary, () => ({
+      mode: "tools", token: Promise.resolve("turn_local_compaction_source"), browser,
+      conversationKey: conversation, trace: new ChatGptTraceFeed(), text: new ChatGptTextFeed(),
+      submission: { phase: "accepted" },
+      cancel() { cancelled++; finish("source stopped"); }, release: async () => { released++; },
+    }), namespace);
+    source.setOutstanding([{ callId: "read-current", wireName: "read", arguments: { path: "notes" }, freeform: false }]);
+    source.observeCanonicalRequest(ordinary);
+    const result = ordinary.context.messages.find(message => message.role === "toolResult")!;
+    source.markResultDelivered("read-current", result);
+    expect(source.isActive()).toBeTrue();
+    expect(source.hasCanonicalToolResultEvidence(local)).toBeTrue();
+    sessions.getOrCreate("unrelated", () => runtime("other-conversation", async () => {}, () => {}));
+    const compact = await sessionForChatGptRequest(sessions, key(local), local, () => {
+      compactStarts++;
+      return runtime(conversation, async () => {}, () => {});
+    }, namespace);
+    expect(compactStarts).toBe(1);
+    expect(compact).not.toBe(source);
+    expect(compact.runtime.mode).toBe("read-only");
+    expect(compact.runtime).not.toHaveProperty("token");
+    expect(cancelled).toBe(1);
+    expect(released).toBe(1);
+    expect(sessions.find(key(ordinary))).toBeUndefined();
+    expect(sessions.find("unrelated")).toBeDefined();
+  } finally { finish?.("test cleanup"); sessions.clear(); }
+});
 
 describe("Codex local compaction lifecycle", () => {
   test("classifies local compaction from Codex turn metadata rather than prompt text", () => {

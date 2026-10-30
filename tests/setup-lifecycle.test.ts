@@ -135,8 +135,8 @@ for (const development of [false, true]) {
   });
 }
 
-for (const development of [false, true]) for (const interaction of ["manual", "automatic"] as const) {
-  test(`${development ? "DEV" : "production"} ${interaction} setup commits the tunnel inputs before its supervisor starts the runtime`, async () => {
+for (const development of [false, true]) for (const interaction of ["manual", "automatic"] as const) for (const useSavedChats of [false, true]) {
+  test(`${development ? "DEV" : "production"} ${interaction} saved=${useSavedChats} setup commits the tunnel inputs before its supervisor starts the runtime`, async () => {
     const root = mkdtempSync(join(tmpdir(), "codex-web-setup-owner-"));
     const key = join(root, "runtime.key");
     writeFileSync(key, "fixture-runtime-key");
@@ -165,6 +165,7 @@ for (const development of [false, true]) for (const interaction of ["manual", "a
         browserHostDescriptorPath: join(root, "launcher-browser.json"),
         tunnelId: `tunnel_${"a".repeat(32)}`,
         acknowledgedUnofficial: true,
+        useSavedChats,
       };
       const listener = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() });
       const port = listener.port!;
@@ -178,17 +179,19 @@ for (const development of [false, true]) for (const interaction of ["manual", "a
       expect(result.tunnelReady).not.toBe(true);
       expect(result.connectorSetupRequired).toBe(true);
       expect(saved?.experimentalFreshConversationPerTurn).toBe(interaction === "automatic");
-      expect(saved?.useSavedChats).toBe(false);
+      expect(saved?.useSavedChats).toBe(useSavedChats);
       expect(saved).not.toHaveProperty("useTemporaryChats");
       expect(saved?.appName).toBe("Codex Work");
       expect(interaction === "manual" ? saved?.automaticAppName : saved?.manualAppName)
         .toBe(interaction === "automatic" ? "Codex Zero Risk" : development ? "Codex Native2 DEV" : "Codex Native2");
       // Unrelated setup and mode changes retain the suffix; clearing it is explicit.
       const initial = structuredClone(saved!);
+      const { useSavedChats: _explicitPreference, ...remainingOptions } = options;
       mocks.push(spyOn(configModule, "loadConfigForSetup").mockImplementation(() => structuredClone(initial)));
       writeFileSync(join(root, "config.json"), JSON.stringify(initial));
-      await (development ? setupDevProfile : setup)({ ...options, port });
+      await (development ? setupDevProfile : setup)({ ...remainingOptions, port });
       expect(saved?.appName).toBe(initial.appName);
+      expect(saved?.useSavedChats).toBe(useSavedChats);
       await (development ? setupDevProfile : setup)({ ...options, port, connectorNameSuffix: interaction === "manual" ? "Zero Risk" : development ? "Native2 DEV" : "Native2" });
       expect(saved?.appName).toBe(interaction === "manual" ? "Codex Zero Risk"
         : development ? "Codex Native2 DEV" : "Codex Native2");

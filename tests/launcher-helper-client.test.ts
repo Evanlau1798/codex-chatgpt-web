@@ -54,6 +54,8 @@ test("Bun daemon prepares only the resume prompt selected by the persistent Node
         selected = undefined;
         send({ type: "event", id: message.id, event: "send_activated" });
         send({ type: "event", id: message.id, event: "submitted" });
+        send({ type: "event", id: message.id, event: "heartbeat" });
+        send({ type: "event", id: message.id, event: "generation_progress" });
         send({ type: "event", id: message.id, event: "reasoning", text: " files", continuation: true });
         send({ type: "event", id: message.id, event: "text", text: "done" });
         if (message.turn.captureLunaCheckpoint) send({
@@ -154,6 +156,8 @@ test("Bun daemon prepares only the resume prompt selected by the persistent Node
       onReasoningSummary: (text, continuation) => reasoning.push({ text, continuation: continuation === true }),
       onSendActivated: () => { sendActivated = true; },
       onSubmitted: () => { submitted = true; },
+      onHeartbeat: () => { heartbeats += 1; },
+      onGenerationProgress: () => { generationProgress += 1; },
       onTextDelta: text => deltas.push(text),
       captureLunaCheckpoint: true,
       onLunaCheckpoint: checkpoint => checkpoints.push(checkpoint),
@@ -168,6 +172,8 @@ test("Bun daemon prepares only the resume prompt selected by the persistent Node
     expect(deltas).toEqual(["done"]);
     expect(sendActivated).toBe(true);
     expect(submitted).toBe(true);
+    expect(heartbeats).toBe(1);
+    expect(generationProgress).toBe(1);
     expect(checkpoints).toEqual([{
       answerHash: "a".repeat(64),
       checkpoint: {
@@ -437,6 +443,7 @@ test("launcher helper protocol preserves multipart context, broker identity and 
       multipart: { parts: Array.from({ length: 6 }, (_, index) => JSON.stringify({ part: index + 1 })), commit: "commit" },
       trimmedCompactionMessages: 4,
       turnToken: "turn_0123456789abcdef0123456789abcdef",
+      contextTokenBreakdown: { developer: { records: 1, chars: 400, tokens: 100 } },
     },
   });
 });

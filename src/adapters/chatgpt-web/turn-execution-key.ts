@@ -27,6 +27,10 @@ function compactionInputRevision(parsed: CodexParsedRequest): unknown[] {
   return input;
 }
 
+export function chatGptTurnPurpose(parsed: CodexParsedRequest): "compaction" | "local_compaction" | "response" {
+  return parsed._compactionRequest ? "compaction" : parsed._localCompactionRequest ? "local_compaction" : "response";
+}
+
 export function chatGptTurnExecutionKey(parsed: CodexParsedRequest): string {
   const identity = extractChatGptTurnIdentity(parsed);
   if (!identity.turnId) throw new Error("ChatGPT web requires native Codex turn_id metadata for browser-session replay");
@@ -34,8 +38,8 @@ export function chatGptTurnExecutionKey(parsed: CodexParsedRequest): string {
   return executionKey(parsed, {
     threadId: identity.threadId,
     turnId: identity.turnId,
-    purpose: parsed._compactionRequest ? "compaction" : "response",
-    ...(parsed._compactionRequest ? { revision: compactionInputRevision(parsed) } : {}),
+    purpose: chatGptTurnPurpose(parsed),
+    ...(parsed._compactionRequest || parsed._localCompactionRequest ? { revision: compactionInputRevision(parsed) } : {}),
   });
 }
 
@@ -66,7 +70,7 @@ export function chatGptTurnRoundKey(parsed: CodexParsedRequest): string {
   return executionKey(parsed, {
     threadId: identity.threadId,
     turnId: identity.turnId,
-    purpose: parsed._compactionRequest ? "compaction" : "response",
+    purpose: chatGptTurnPurpose(parsed),
     input: (body as { input: unknown[] }).input,
   });
 }

@@ -22,9 +22,7 @@ export function getConfigDir(): string {
   const configured = process.env.CODEX_CHATGPT_WEB_HOME?.trim();
   return resolve(expandUserPath(configured || join(homedir(), ".codex-chatgpt-web")));
 }
-export function getConfigPath(): string {
-  return join(getConfigDir(), "config.json");
-}
+export function getConfigPath(): string { return join(getConfigDir(), "config.json"); }
 export function isWindowsPipeEndpoint(value: string): boolean {
   return /^\\\\\.\\pipe\\[A-Za-z0-9._-]+$/.test(value);
 }
@@ -461,6 +459,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     throw new Error(`Invalid ChatGPT account capabilities in ${path}: Extra High and Pro require Sol`);
   }
   const { useNewCompactMode, ...canonical } = parsed;
+  delete (canonical as Record<string, unknown>).useTemporaryChats;
   return {
     ...canonical,
     useEnhancedWebSessionMode,
@@ -495,5 +494,6 @@ export function saveConfig(config: AppConfig): void {
     experimentalFreshConversationPerTurn: !config.useEnhancedWebSessionMode && config.browserInteractionMode !== "manual"
       && config.experimentalFreshConversationPerTurn === true,
   };
+  delete (canonical as Record<string, unknown>).useTemporaryChats;
   atomicWriteFile(path, preserveUtf8Bom(`${JSON.stringify(canonical, null, 2)}\n`, original));
 }

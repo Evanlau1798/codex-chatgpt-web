@@ -3,6 +3,7 @@ import { activeChatCompletionTurns } from "./chat-completions/runtime";
 import { NativeChatCompletionBridge } from "./chat-completions/native-bridge";
 import { ChatCompletionError } from "./chat-completions/contract";
 import { chatGptWebExecutionNamespace, chatGptWebTraceId, createChatGptWebAdapter } from "./adapters/chatgpt-web";
+import { ChatGptWebAdapterError } from "./adapters/chatgpt-web/adapter-error";
 import { DEFAULT_CHATGPT_AUTOMATIC_WEB_SESSION_LIMIT, chatGptAccountSafety } from "./adapters/chatgpt-web/account-safety";
 import { closeChatGptBrowserWorkers, discardChatGptStartupPages } from "./adapters/chatgpt-web/browser-worker";
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
@@ -286,7 +287,11 @@ export async function responseRequest(
         queue.push(event);
       });
     } catch (error) {
-      const event: AdapterEvent = { type: "error", message: error instanceof Error ? error.message : String(error) };
+      const event: AdapterEvent = { type: "error", message: error instanceof Error ? error.message : String(error),
+        ...(error instanceof ChatGptWebAdapterError ? {
+          status: error.status, errorType: error.errorType, code: error.code, retryable: error.retryable,
+        } : {}),
+      };
       options.onAdapterEvent?.(event);
       queue.push(event);
     } finally {

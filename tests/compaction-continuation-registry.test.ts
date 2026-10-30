@@ -104,6 +104,7 @@ test("an exact daemon checkpoint survives process restart without granting misma
     expect(await probe(false)).toBeFalse();
     expect(await probe(true)).toBeTrue();
     expect(await probe(false)).toBeTrue();
+    expect(await probe(false, f.parsed, f.identity, retained)).toBeTrue();
     const snapshot = readFileSync(path, "utf8");
     for (const secret of ["Checkpoint A", "Current task", f.identity.threadId, f.source.turnId, retained.content]) expect(snapshot).not.toContain(secret);
     const withAbort = (owner: string) => ({ ...f.parsed, _rawBody: { input: [...(f.parsed._rawBody as { input: unknown[] }).input, {
@@ -128,7 +129,9 @@ test("an exact daemon checkpoint survives process restart without granting misma
     expect(await probe(false, { ...f.parsed, _rawBody: { input: [f.item("Checkpoint B")] } })).toBeFalse();
     const invalidOwner = JSON.parse(snapshot);
     invalidOwner.checkpoints[0][1].sourceTurnHash = 42;
-    for (const invalid of ["{broken", '{"version":2,"checkpoints":[]}', snapshot.replace(/[a-f0-9]{64}/, "invalid"), JSON.stringify(invalidOwner)]) {
+    const invalidSourceKind = JSON.parse(snapshot);
+    invalidSourceKind.checkpoints[0][1].sourceWasSyntheticInstruction = "true";
+    for (const invalid of ["{broken", '{"version":2,"checkpoints":[]}', snapshot.replace(/[a-f0-9]{64}/, "invalid"), JSON.stringify(invalidOwner), JSON.stringify(invalidSourceKind)]) {
       writeFileSync(path, invalid);
       expect(await probe(false)).toBeFalse();
     }

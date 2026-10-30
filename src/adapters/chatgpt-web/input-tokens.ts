@@ -7,7 +7,19 @@ import {
 } from "./prompt-multipart";
 import type { CompiledChatGptWebPrompt } from "./prompt";
 
-const TOKEN_ESTIMATE_TRANSACTION = `ctx_${"0".repeat(32)}`;
+export const TOKEN_ESTIMATE_TRANSACTION = `ctx_${"0".repeat(32)}`;
+
+/** Opaque ASCII handles cannot earn the repeated-zero placeholder's token discount. */
+export function estimateChatGptWebTextTokens(text: string, modelId: string, variableTokens: readonly string[] = []): number {
+  const count = (value: string, index: number): number => {
+    const token = variableTokens[index];
+    if (token === undefined) return estimateTokens(value, modelId);
+    const parts = value.split(token);
+    return (parts.length - 1) * Buffer.byteLength(token)
+      + parts.reduce((total, part) => total + count(part, index + 1), 0);
+  };
+  return count(text, 0);
+}
 
 export function compiledChatGptWebMessages(compiled: CompiledChatGptWebPrompt): string[] {
   if (!compiled.multipart) return [compiled.text];
@@ -44,27 +56,17 @@ export function estimateCompiledChatGptWebInputTokens(
   variableTokens: readonly string[] = [],
 ): number {
   const imageTokens = estimateChatGptWebImageTokens(compiled);
-  const textTokens = (text: string, index = 0): number => {
-    const token = variableTokens[index];
-    if (token === undefined) return estimateTokens(text, modelId);
-    // Real opaque handles are ASCII. Count each variable byte separately and tokenize the
-    // surrounding fragments independently: neither repeated zeroes nor boundary merges earn
-    // a discount that a random broker handle might not receive.
-    const parts = text.split(token);
-    return (parts.length - 1) * Buffer.byteLength(token)
-      + parts.reduce((total, part) => total + textTokens(part, index + 1), 0);
-  };
+  const textTokens = (text: string) => estimateChatGptWebTextTokens(text, modelId, variableTokens);
   const messageTokens = compiledChatGptWebMessages(compiled)
     .reduce((total, message) => total + textTokens(message), 0);
   const acknowledgementTokens = compiled.multipart
-    ? compiled.multipart.parts.slice(0, -1).reduce((total, payload, index) => total + estimateTokens(
+    ? compiled.multipart.parts.slice(0, -1).reduce((total, payload, index) => total + textTokens(
       formatChatGptWebMultipartStage(
         payload,
         TOKEN_ESTIMATE_TRANSACTION,
         index + 1,
         compiled.multipart!.parts.length,
       ).acknowledgement,
-      modelId,
     ), 0)
     : 0;
   return CHATGPT_WEB_PLATFORM_RESERVE_TOKENS + messageTokens + acknowledgementTokens + imageTokens + skillFileTokens(compiled.skillFiles, modelId);

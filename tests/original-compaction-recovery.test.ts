@@ -87,7 +87,12 @@ test.each([false, true])("Original compact sends complete opaque context when it
   };
   const compact = request(true);
   const events: AdapterEvent[] = [];
-  if (experimentalBiggerContext) compact.context.messages.at(-1)!.content += "x".repeat(160_000);
+  if (experimentalBiggerContext) {
+    const padding = "x".repeat(160_000);
+    compact.context.messages.at(-1)!.content += padding;
+    const raw = compact._rawBody as { input: Array<{ content: Array<{ text: string }> }> };
+    raw.input[0]!.content[0]!.text += padding;
+  }
   try {
     await createChatGptWebAdapter(provider, { accountSafety: new ChatGptAccountSafety(join(root, "account-safety.json")) }).runTurn!(
       compact,

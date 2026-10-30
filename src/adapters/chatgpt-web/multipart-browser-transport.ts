@@ -8,7 +8,6 @@ import {
   resolveChatGptWebStagingTokenBudget,
   resolveChatGptWebTransportLimits,
 } from "../../chatgpt-web-models";
-import { estimateTokens } from "../../lib/token-estimate";
 import { skillFileTokens } from "./skill-attachments";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import {
@@ -16,6 +15,8 @@ import {
   estimateChatGptWebImageTokens,
   estimateCompiledChatGptWebInputTokens,
   estimateCompiledChatGptWebMessageTokens,
+  estimateChatGptWebTextTokens,
+  TOKEN_ESTIMATE_TRANSACTION,
 } from "./input-tokens";
 import {
   CHATGPT_WEB_LUNA_MODEL_ID,
@@ -29,8 +30,8 @@ import {
   isChatGptWebMultipartPartCount,
   formatChatGptWebMultipartStage,
   type ChatGptWebMultipartStage,
-  type CompiledChatGptWebPrompt,
-} from "./prompt";
+} from "./prompt-multipart";
+import type { CompiledChatGptWebPrompt } from "./prompt";
 
 interface MultipartBoundaryEvidence {
   stagingEffort: ChatGptWebModelMode["effort"];
@@ -173,9 +174,9 @@ export function prepareChatGptWebMultipartTransport(
   requestedEffort: ChatGptWebModelMode["effort"],
   modelFamily?: ChatGptWebModelFamily,
   useEnhancedWebSessionMode = false,
+  transactionId = `ctx_${randomUUID().replaceAll("-", "")}`,
 ): PreparedChatGptWebMultipartTransport | undefined {
   if (!prepared.multipart) return undefined;
-  const transactionId = `ctx_${randomUUID().replaceAll("-", "")}`;
   const stages = prepared.multipart.parts.slice(0, -1).map((payload, index) => (
     formatChatGptWebMultipartStage(
       payload,
@@ -185,7 +186,7 @@ export function prepareChatGptWebMultipartTransport(
     )
   ));
   const finalPrompt = formatChatGptWebMultipartCommit(prepared.multipart, transactionId);
-  const stageMessageTokens = stages.map(stage => estimateTokens(stage.text, modelId));
+  const stageMessageTokens = stages.map(stage => estimateChatGptWebTextTokens(stage.text, modelId, [transactionId]));
   const maxStageMessageTokens = Math.max(...stageMessageTokens);
   const maxStageChars = Math.max(...stages.map(stage => stage.text.length));
   const stagingMode = resolveChatGptWebMultipartStagingMode(
@@ -195,7 +196,7 @@ export function prepareChatGptWebMultipartTransport(
     maxStageChars,
   );
   assertChatGptWebMultipartInputWithinLimits(
-    estimateCompiledChatGptWebInputTokens(prepared, modelId),
+    estimateCompiledChatGptWebInputTokens(prepared, modelId, [TOKEN_ESTIMATE_TRANSACTION]),
     estimateCompiledChatGptWebMessageTokens(prepared, modelId),
     modelId,
     requestedEffort,
@@ -206,7 +207,7 @@ export function prepareChatGptWebMultipartTransport(
       stagingEffort: stagingMode.effort,
       maxStageMessageTokens,
       maxStageChars,
-      finalMessageTokens: estimateTokens(finalPrompt, modelId) + skillFileTokens(prepared.skillFiles, modelId),
+      finalMessageTokens: estimateChatGptWebTextTokens(finalPrompt, modelId, [transactionId]) + skillFileTokens(prepared.skillFiles, modelId),
       finalMessageChars: finalPrompt.length,
       finalImageTokens: estimateChatGptWebImageTokens(prepared),
     },

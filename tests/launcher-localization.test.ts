@@ -13,6 +13,8 @@ test("supported launcher locales return complete, nonempty dictionaries", () => 
     if (language !== "en") {
       expect(translated.installCodex).not.toBe(english.installCodex);
       expect(translated.done).not.toBe(english.done);
+      for (const key of ["newChat", "doctorCatalogPending", "doctorCatalogReady", "doctorCatalogFailed"] as const)
+        expect(translated[key]).not.toBe(english[key]);
     }
     for (const key of keys as Array<keyof typeof english>) {
       const placeholders = (value: string) => [...value.matchAll(/\{[a-zA-Z]+\}/g)].map(match => match[0]).sort();

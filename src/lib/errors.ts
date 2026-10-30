@@ -278,6 +278,7 @@ export function httpStatusFromTerminalError(error: {
   // before treating every invalid_request_error as HTTP 400.
   const message = error.message ?? "";
   if (message && isClientClosedMessage(message)) return 499;
+  if (error.code === "compaction_source_unavailable") return 409;
   if (error.type === "invalid_request_error") return 400;
   if (error.type === "proxy_error") return 500;
   if (message) return inferHttpStatusFromAdapterMessage(message);

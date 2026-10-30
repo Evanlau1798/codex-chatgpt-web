@@ -15,13 +15,14 @@ export const CHATGPT_WEB_AGENT_WAIT_MAX_MS = 3_600_000;
 export const CHATGPT_WEB_SYNC_WAIT_RULE = "Use timeout_ms=30000 for wait_agent. A timeout means pending; repeat the same target ids until a native terminal result is returned.";
 export const CHATGPT_WEB_AGENT_WAIT_RULE = "Native2 wait_agent accepts a logical timeout_ms from 30000 to 3600000 in 30000 ms steps. It returns an asynchronous wait_id, not an agent status. Retrieve that same operation with codex_tool_inventory query=next_query and the same turn_token until operation_status=ready; inspect result for the original native outcome. Enhanced keeps the MCP channel responsive by running 30000 ms native wait slices internally until the agent reaches a terminal state or the logical timeout expires. Do not start another wait while a receipt is pending, busy-poll, or embed wait_agent in raw exec.";
 export const CONNECTOR_LONG_POLL_SLICE_MS = 30_000;
+export const CHATGPT_WEB_COMMAND_POLL_INPUT_MAX_MS = 300_000;
 export const CHATGPT_WEB_COMMAND_POLL_MAX_MS = 60_000;
-export const COMMAND_POLL_TRANSPORT_RULE = "ChatGPT Web command polls require yield_time_ms at most 60000. Return after each poll and poll the same session again if it is still running; longer waits can exceed the MCP deadline.";
+export const COMMAND_POLL_TRANSPORT_RULE = "Native2 command polls accept integer yield_time_ms from 250 to 300000; the bridge slices native waits internally. Prefer polls at most 60000, return after each poll, and poll the same session again if it is still running.";
 
 export function assertCommandPollArguments(args: Record<string, unknown>): void {
   const value = args.yield_time_ms;
   if (value !== undefined && (typeof value !== "number" || !Number.isInteger(value)
-    || value < 250 || value > CHATGPT_WEB_COMMAND_POLL_MAX_MS)) throw new Error(COMMAND_POLL_TRANSPORT_RULE);
+    || value < 250 || value > CHATGPT_WEB_COMMAND_POLL_INPUT_MAX_MS)) throw new Error(COMMAND_POLL_TRANSPORT_RULE);
 }
 
 const wireName = (tool: CodexTool): string => namespacedToolName(tool.namespace, tool.name);

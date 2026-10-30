@@ -1,11 +1,13 @@
 import { expect, test } from "bun:test";
+import { isDeepStrictEqual } from "node:util";
 import { defaultConfig } from "../src/config";
 import { compactRequest, responseRequest } from "../src/server";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
 import { rememberCompactionContinuation, restoreCompactionTaskMessages } from "../src/adapters/chatgpt-web/compaction-continuation";
 import { chatGptTurnUserRevisionHistory, extractChatGptCompactionSourceRevision, extractChatGptTurnIdentity } from "../src/adapters/chatgpt-web/environment";
 import { parseRequest } from "../src/responses/parser";
-import { encodeCompactionSummary } from "../src/responses/compaction";
+import { encodeCompactionSummary, SUMMARY_PREFIX } from "../src/responses/compaction";
+import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 
 const model = "chatgpt-web/high";
 const capabilities = { localToolsEnabled: true, solAvailable: true, extraHighAvailable: true, proAvailable: true };
@@ -134,4 +136,159 @@ test("ordinary user text that resembles a native goal is not promoted to restore
   rememberCompactionContinuation(original, identity, [{ itemId: item.id, turnId: identity.turnId, content: item.content }], "Quoted summary");
   const replay = parseRequest({ ...body, input: [{ type: "compaction", encrypted_content: encodeCompactionSummary("Quoted summary") }] });
   expect(restoreCompactionTaskMessages(replay, identity, chatGptTurnUserRevisionHistory(replay))).toBe(replay.context.messages);
+});
+
+function oversizedRestoredTask(kind: "goal" | "delegation", suffix: string, taskDetail = "finish the current milestone") {
+  const identity = { threadId: `budget_${kind}_${suffix}`, turnId: "current_task" };
+  const human = { type: "message", role: "user", id: "human", content: "Earlier task",
+    internal_chat_message_metadata_passthrough: { turn_id: "old_turn" } };
+  const taskText = kind === "goal" ? `AUTHENTICATED_GOAL: ${taskDetail}`
+    : `<codex_delegation><source_thread_id>coordinator</source_thread_id><input>${taskDetail}</input></codex_delegation>`;
+  const task = kind === "goal"
+    ? { type: "message", role: "user", id: "task", content: taskText,
+        internal_chat_message_metadata_passthrough: { turn_id: identity.turnId, content_item_kinds: ["goal.internal_context"] } }
+    : { type: "function_call_output", id: "task", name: "send_message_to_thread", namespace: "codex_app", output: taskText,
+        internal_chat_message_metadata_passthrough: { turn_id: identity.turnId } };
+  const body = { model: CHATGPT_WEB_MODEL_ID, reasoning: { effort: "high" }, input: [human, task],
+    client_metadata: { "x-codex-turn-metadata": JSON.stringify({ thread_id: identity.threadId, turn_id: identity.turnId }) } };
+  const original = parseRequest(body);
+  original._compactionRequest = true;
+  original._chatgptModelFamily = "6";
+  rememberCompactionContinuation(original, identity, [
+    { itemId: task.id, turnId: identity.turnId, content: taskText },
+    { itemId: human.id, turnId: "old_turn", content: human.content },
+  ], "Exact cumulative summary");
+  const replay = parseRequest({ ...body, input: [human,
+    { type: "compaction", encrypted_content: encodeCompactionSummary("Exact cumulative summary") },
+    ...Array.from({ length: 8 }, (_, index) => ({ type: "message", role: "assistant",
+      content: [{ type: "output_text", text: `history-${index}:` + " observed detail".repeat(20_000) }] })),
+  ] });
+  replay._compactionRequest = true;
+  replay._chatgptModelFamily = "6";
+  // The real compact handler appends this instruction after authenticating the native history.
+  replay.context.messages.push({ role: "user", content: "FINAL_COMPACT_INSTRUCTION: summarize remaining work", timestamp: Date.now() });
+  return { replay, taskText, task };
+}
+
+for (const kind of ["goal", "delegation"] as const) for (const parts of [undefined, 6] as const) {
+  test(`over-budget ${parts ?? "inline"} compaction preserves the authenticated restored ${kind}`, () => {
+    const { replay, taskText } = oversizedRestoredTask(kind, String(parts));
+    const before = structuredClone(replay.context.messages);
+    expect(restoreCompactionTaskMessages(replay, extractChatGptTurnIdentity(replay), chatGptTurnUserRevisionHistory(replay))
+      .filter(message => message.content === taskText)).toHaveLength(1);
+    const compiled = compileChatGptWebPrompt(replay, { ...capabilities, localToolsEnabled: false }, undefined,
+      { experimentalMultipartParts: parts });
+    expect(compiled.trimmedCompactionMessages).toBeGreaterThan(0);
+    const messages = compiled.multipart ? compiled.multipart.parts.flatMap(part => JSON.parse(part).records)
+      .filter((record: any) => record.kind === "message").map((record: any) => record.message)
+      : JSON.parse(compiled.text.match(/<codex_context_json>\n([^\n]+)\n<\/codex_context_json>/)![1]!).messages;
+    const tasks = messages.filter((message: any) => message.content === taskText);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].role).toBe(kind === "goal" ? "user" : "agent_message");
+    expect(JSON.stringify(messages)).toContain("Exact cumulative summary");
+    expect(JSON.stringify(messages.at(-1))).toContain("FINAL_COMPACT_INSTRUCTION");
+    expect(isDeepStrictEqual(replay.context.messages, before)).toBeTrue();
+  }, 30_000);
+}
+
+test("an irreducible authenticated task fails rather than being removed from compaction", () => {
+  const { replay } = oversizedRestoredTask("goal", "irreducible", " mandatory current task".repeat(160_000));
+  const before = structuredClone(replay.context.messages);
+  let failure: unknown;
+  try {
+    compileChatGptWebPrompt(replay, { ...capabilities, localToolsEnabled: false }, undefined,
+      { experimentalMultipartParts: 6 });
+  } catch (error) { failure = error; }
+  expect(failure).toMatchObject({ code: "context_length_exceeded", retryable: false, status: 400 });
+  expect((failure as Error).message).toContain("after other history was trimmed");
+  expect(isDeepStrictEqual(replay.context.messages, before)).toBeTrue();
+}, 30_000);
+
+for (const steering of ["user", "parent"] as const) for (const parts of [undefined, 6] as const) {
+  test(`over-budget ${parts ?? "inline"} compaction keeps current ${steering} steering after a checkpoint`, () => {
+    const { replay, taskText } = oversizedRestoredTask("goal", `steering_${steering}_${parts}`);
+    const identity = extractChatGptTurnIdentity(replay);
+    const raw = replay._rawBody as { input: unknown[]; [key: string]: unknown };
+    const instruction = steering === "user" ? "NEW_STEERING: stop implementation and audit the current changes"
+      : '<codex_delegation><source_thread_id>coordinator</source_thread_id><input>NEW_PARENT_STEERING: review only, do not implement</input></codex_delegation>';
+    const item = steering === "user"
+      ? { type: "message", role: "user", id: "steering", content: instruction,
+          internal_chat_message_metadata_passthrough: { turn_id: identity.turnId, content_item_kinds: ["user.text"] } }
+      : { type: "function_call_output", id: "steering", name: "send_message_to_thread", namespace: "codex_app", output: instruction,
+          internal_chat_message_metadata_passthrough: { turn_id: identity.turnId } };
+    const parsed = parseRequest({ ...raw, input: [...raw.input.slice(0, 2), item, ...raw.input.slice(2)] });
+    parsed._compactionRequest = true; parsed._chatgptModelFamily = "6";
+    parsed.context.messages.push({ role: "user", content: "FINAL_COMPACT_INSTRUCTION", timestamp: Date.now() });
+    const before = structuredClone(parsed.context.messages);
+    const compiled = compileChatGptWebPrompt(parsed, { ...capabilities, localToolsEnabled: false }, undefined,
+      { experimentalMultipartParts: parts });
+    expect(compiled.trimmedCompactionMessages).toBeGreaterThan(1);
+    const messages = compiled.multipart ? compiled.multipart.parts.flatMap(part => JSON.parse(part).records)
+      .filter((record: any) => record.kind === "message").map((record: any) => record.message)
+      : JSON.parse(compiled.text.match(/<codex_context_json>\n([^\n]+)\n<\/codex_context_json>/)![1]!).messages;
+    expect(messages.filter((message: any) => message.content === instruction)).toHaveLength(1);
+    expect(messages.some((message: any) => message.content === taskText)).toBeFalse();
+    expect(JSON.stringify(messages)).toContain("Exact cumulative summary");
+    expect(messages.at(-1).content).toBe("FINAL_COMPACT_INSTRUCTION");
+    expect(isDeepStrictEqual(parsed.context.messages, before)).toBeTrue();
+  }, 30_000);
+}
+
+test.each([undefined, 6] as const)("over-budget compaction also pins an already-present native task (parts=%s)", parts => {
+  const { replay, taskText, task } = oversizedRestoredTask("goal", `present_${parts}`);
+  const raw = replay._rawBody as { input: unknown[]; [key: string]: unknown };
+  const parsed = parseRequest({ ...raw, input: [raw.input[0], task, ...raw.input.slice(1)] });
+  parsed._compactionRequest = true; parsed._chatgptModelFamily = "6";
+  parsed.context.messages.push({ role: "user", content: "FINAL_COMPACT_INSTRUCTION", timestamp: Date.now() });
+  const compiled = compileChatGptWebPrompt(parsed, { ...capabilities, localToolsEnabled: false }, undefined,
+    { experimentalMultipartParts: parts });
+  expect(compiled.trimmedCompactionMessages).toBeGreaterThan(1);
+  const messages = compiled.multipart ? compiled.multipart.parts.flatMap(part => JSON.parse(part).records)
+    .filter((record: any) => record.kind === "message").map((record: any) => record.message)
+    : JSON.parse(compiled.text.match(/<codex_context_json>\n([^\n]+)\n<\/codex_context_json>/)![1]!).messages;
+  expect(messages.filter((message: any) => message.content === taskText)).toHaveLength(1);
+}, 30_000);
+
+test("text-parts checkpoint keeps repeated steering in its new position, not the older matching user record", () => {
+  const { replay } = oversizedRestoredTask("goal", "repeated_parts_steering");
+  const raw = replay._rawBody as { input: Array<Record<string, unknown>>; [key: string]: unknown };
+  const instruction = raw.input[0]!.content;
+  const checkpoint = { type: "message", role: "user", content: [
+    { type: "input_text", text: SUMMARY_PREFIX }, { type: "input_text", text: "Exact cumulative summary" },
+  ] };
+  const steering = { type: "message", role: "user", id: "repeated-steering", content: instruction,
+    internal_chat_message_metadata_passthrough: { turn_id: extractChatGptTurnIdentity(replay).turnId } };
+  const parsed = parseRequest({ ...raw, input: [raw.input[0], checkpoint, steering, ...raw.input.slice(2)] });
+  parsed._compactionRequest = true; parsed._chatgptModelFamily = "6";
+  parsed.context.messages.push({ role: "user", content: "FINAL_COMPACT_INSTRUCTION", timestamp: 0 });
+  const compiled = compileChatGptWebPrompt(parsed, { ...capabilities, localToolsEnabled: false });
+  const messages = JSON.parse(compiled.text.match(/<codex_context_json>\n([^\n]+)\n<\/codex_context_json>/)![1]!).messages;
+  const checkpointIndex = messages.findIndex((message: any) => JSON.stringify(message.content).includes("Exact cumulative summary"));
+  expect(checkpointIndex).toBeGreaterThanOrEqual(0);
+  expect(messages.findIndex((message: any) => message.content === instruction)).toBeGreaterThan(checkpointIndex);
+  expect(messages.filter((message: any) => message.content === instruction)).toHaveLength(1);
+});
+
+test("first over-budget compaction pins its native task before any accepted checkpoint exists", () => {
+  const { replay, taskText, task } = oversizedRestoredTask("goal", "first_compact_task");
+  const raw = replay._rawBody as { input: unknown[]; [key: string]: unknown };
+  const parsed = parseRequest({ ...raw, input: [raw.input[0], task, ...raw.input.slice(2)] });
+  parsed._compactionRequest = true; parsed._chatgptModelFamily = "6";
+  parsed.context.messages.push({ role: "user", content: "FINAL_COMPACT_INSTRUCTION", timestamp: 0 });
+  const compiled = compileChatGptWebPrompt(parsed, { ...capabilities, localToolsEnabled: false });
+  expect(compiled.trimmedCompactionMessages).toBeGreaterThan(1);
+  const messages = JSON.parse(compiled.text.match(/<codex_context_json>\n([^\n]+)\n<\/codex_context_json>/)![1]!).messages;
+  expect(messages.filter((message: any) => message.content === taskText)).toHaveLength(1);
+});
+
+test("compaction rejects a model view that no longer contains the authenticated instruction", () => {
+  const { replay, task, taskText } = oversizedRestoredTask("goal", "mismatched_model_view");
+  const raw = replay._rawBody as { input: unknown[]; [key: string]: unknown };
+  const parsed = parseRequest({ ...raw, input: [raw.input[0], task, ...raw.input.slice(2)] });
+  parsed._compactionRequest = true; parsed._chatgptModelFamily = "6";
+  parsed.context.messages.find(message => message.content === taskText)!.content += " model-only modification";
+  let failure: unknown;
+  try { compileChatGptWebPrompt(parsed, { ...capabilities, localToolsEnabled: false }); }
+  catch (error) { failure = error; }
+  expect(failure).toMatchObject({ status: 409, code: "compaction_source_unavailable", retryable: false });
 });

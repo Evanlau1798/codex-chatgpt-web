@@ -95,11 +95,12 @@ export function chatGptConversationKey(parsed: CodexParsedRequest, namespace: st
 export function chatGptTurnTraceId(parsed: CodexParsedRequest, namespace: string): string {
   const identity = extractChatGptTurnIdentity(parsed);
   if (!identity.turnId) throw new Error("ChatGPT web requires native Codex turn_id metadata for browser-session replay");
+  const compaction = parsed._compactionRequest || parsed._localCompactionRequest;
   return createHash("sha256").update(JSON.stringify({
     namespace,
     threadId: identity.threadId,
     turnId: identity.turnId,
-    ...(parsed._compactionRequest ? { compactionExecutionKey: chatGptTurnExecutionKey(parsed) } : {}),
-    conversationKey: parsed._compactionRequest ? undefined : chatGptConversationKey(parsed, namespace),
+    ...(compaction ? { compactionExecutionKey: chatGptTurnExecutionKey(parsed) } : {}),
+    conversationKey: compaction ? undefined : chatGptConversationKey(parsed, namespace),
   })).digest("hex").slice(0, 12);
 }

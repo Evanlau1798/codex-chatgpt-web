@@ -106,6 +106,8 @@ test("the executable manifest owns every deterministic lifecycle test", () => {
   expect(codexLifecycleTests).toContain("tests/native-steering-boundary.test.ts");
   expect(codexLifecycleTests).toContain("tests/environment-rollout.test.ts");
   expect(codexLifecycleTests).toContain("tests/environment-post-compaction-steering.test.ts");
+  expect(codexLifecycleTests).toContain("tests/local-compaction-release.test.ts");
+  expect(codexLifecycleTests).toContain("tests/compaction-task-restart.test.ts");
   expect(claudeLifecycleTests).toContain("tests/claude-session-abort.test.ts");
   expect(sharedLifecycleTests).toContain("tests/lifecycle-race-ordering.test.ts");
   expect(sharedLifecycleTests).toContain("tests/broker-retirement-boundary.test.ts");

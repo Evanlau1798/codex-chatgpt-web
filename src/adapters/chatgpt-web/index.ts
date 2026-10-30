@@ -255,7 +255,8 @@ export function createChatGptWebAdapter(
           { status: 409, errorType: "invalid_request_error", code: "browser_interaction_mode_mismatch", retryable: false },
         );
       }
-      const compactionSourceExecutionKey = parsed._compactionRequest
+      const browserCompaction = parsed._compactionRequest === true || parsed._localCompactionRequest === true;
+      const compactionSourceExecutionKey = browserCompaction
         ? `${executionNamespace}:${chatGptCompactionSourceExecutionKey(parsed)}`
         : undefined;
       const admissionTraceId = !manualInteraction && compactionSourceExecutionKey
@@ -266,13 +267,12 @@ export function createChatGptWebAdapter(
         accountSafety.retainTrace(admissionTraceId);
         retainedSafetyTraceId = admissionTraceId;
       }
-      const startRuntimeForTurn = !manualInteraction && parsed._compactionRequest
+      const startRuntimeForTurn = !manualInteraction && browserCompaction
         ? (...args: Parameters<typeof automaticStartRuntime>) => {
             requireAutomaticAdmission(parsed, admissionTraceId);
             return automaticStartRuntime(...args);
           }
         : startRuntime;
-      const browserCompaction = parsed._compactionRequest === true || parsed._localCompactionRequest === true;
       const toolPolicy = effectiveChatGptToolPolicy(parsed); const turnCapabilities = manualRequest
         ? configuredCapabilities
         : browserCompaction

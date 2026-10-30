@@ -4,13 +4,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Browser } from "playwright-core";
 
+async function bounded<T>(operation: Promise<T>, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([operation, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Test-owned Chromium ${label} did not settle`)), 1_000);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
 /** Test-owned CDP matches the launcher without Bun's Windows Chromium stdio pipe. */
 export async function launchDomBrowser(executablePath = process.env.CHATGPT_DOM_TEST_BROWSER!): Promise<Browser> {
   const profile = mkdtempSync(join(tmpdir(), "codex-dom-browser-"));
   let child: Bun.Subprocess | undefined;
   const cleanup = async () => {
-    if (child?.exitCode === null) child.kill("SIGTERM");
-    await child?.exited;
+    if (child?.exitCode === null) {
+      child.kill("SIGTERM");
+      try { await bounded(child.exited, "termination"); }
+      catch { child.kill("SIGKILL"); await bounded(child.exited, "forced termination"); }
+    } else await child?.exited;
     for (let attempt = 0; ; attempt += 1) {
       try {
         await fs.rm(profile, { recursive: true, force: true });
@@ -38,9 +50,13 @@ export async function launchDomBrowser(executablePath = process.env.CHATGPT_DOM_
     let closing: Promise<void> | undefined;
     browser.close = () => closing ??= (async () => {
       try {
-        if (browser.isConnected()) await (await browser.newBrowserCDPSession()).send("Browser.close");
-        await disconnect();
-      } finally { await cleanup(); }
+        if (browser.isConnected()) await bounded((async () => {
+          await (await browser.newBrowserCDPSession()).send("Browser.close");
+        })(), "CDP close");
+      } finally {
+        try { await bounded(disconnect(), "disconnect"); }
+        finally { await cleanup(); }
+      }
     })();
     return browser;
   } catch (error) {

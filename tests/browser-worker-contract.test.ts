@@ -1557,28 +1557,34 @@ test("connector catalog refresh stays fail-closed for absent, legacy, and exact 
     }
   };
 
-  await expect(run([])).rejects.toThrow("menu absent");
+  const missing = await run([]).then(() => undefined, error => error);
+  expect(missing).toMatchObject({ status: 424, errorType: "connector_error", code: "connector_not_found", retryable: false });
+  expect(missing.message).toContain(`menu absent after ${MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS}`);
   await expect(run(["Codex Native"])).rejects.toThrow("Legacy ChatGPT connector");
   await expect(run([CHATGPT_CONNECTOR_NAME])).rejects.toThrow("exact row was not visible");
 });
 
 test("tool-capable prompts use the shared Playwright connector selection before inserting context", async () => {
   const calls: Array<[string, string?]> = [];
+  const controller = new AbortController();
+  const signal = controller.signal;
+  const checkSignal = (observed?: AbortSignal) => { expect(observed).toBe(signal); };
   let selected = false;
   const selectedConnector = {
-    waitFor: async () => {
+    waitFor: async (options: { signal?: AbortSignal }) => {
+      checkSignal(options.signal);
       expect(selected).toBeTrue();
       calls.push(["selectedConnector"]);
     },
     count: async () => 1,
   };
   const appResult = {
-    waitFor: async () => { calls.push(["connectorMenu"]); },
+    waitFor: async (options: { signal?: AbortSignal }) => { checkSignal(options.signal); calls.push(["connectorMenu"]); },
     count: async () => 1,
     getAttribute: async (name: string) => name === "data-highlighted" ? "" : null,
   };
   const selectedComposer = {
-    focus: async () => { calls.push(["selectedFocus"]); },
+    focus: async (options: { signal?: AbortSignal }) => { checkSignal(options.signal); calls.push(["selectedFocus"]); },
     locator: () => ({ filter: () => selectedConnector }),
     evaluate: async (_callback: unknown, value: string) => {
       calls.push(["insertText", value]);
@@ -1586,14 +1592,15 @@ test("tool-capable prompts use the shared Playwright connector selection before 
     },
   };
   const initialComposer = {
-    fill: async (value: string) => { calls.push(["fill", value]); },
-    focus: async () => { calls.push(["focus"]); },
-    press: async (value: string) => {
+    fill: async (value: string, options: { signal?: AbortSignal }) => { checkSignal(options.signal); calls.push(["fill", value]); },
+    focus: async (options: { signal?: AbortSignal }) => { checkSignal(options.signal); calls.push(["focus"]); },
+    press: async (value: string, options: { signal?: AbortSignal }) => {
+      checkSignal(options.signal);
       expect(value).toBe("Enter");
       selected = true;
       calls.push(["selectConnector"]);
     },
-    pressSequentially: async (value: string) => { calls.push(["type", value]); },
+    pressSequentially: async (value: string, options: { signal?: AbortSignal }) => { checkSignal(options.signal); calls.push(["type", value]); },
   };
   const page = {
     url: () => "https://chatgpt.com/",
@@ -1606,7 +1613,7 @@ test("tool-capable prompts use the shared Playwright connector selection before 
     },
   };
   const attachPrompt = (ChatGptBrowserWorker.prototype as unknown as {
-    attachPrompt(page: unknown, prompt: string, localTools: boolean): Promise<void>;
+    attachPrompt(page: unknown, prompt: string, localTools: boolean, capture?: unknown, signal?: AbortSignal): Promise<void>;
   }).attachPrompt;
   const selectConnector = (ChatGptBrowserWorker.prototype as unknown as {
     selectConnector(page: unknown): Promise<unknown>;
@@ -1614,18 +1621,19 @@ test("tool-capable prompts use the shared Playwright connector selection before 
   let activeComposerCalls = 0;
   await attachPrompt.call({
     config: { appName: "Codex Native2" },
-    ensureConnectorSurface: async () => {},
+    ensureConnectorSurface: async (_page: unknown, _capture: unknown, _proof: unknown, observed?: AbortSignal) => { checkSignal(observed); },
     selectConnector,
-    insertPromptText: async (_page: unknown, text: string) => { calls.push(["insertText", text]); },
-    connectorIsSelected: async () => selected,
+    insertPromptText: async (_page: unknown, text: string, observed?: AbortSignal) => { checkSignal(observed); calls.push(["insertText", text]); },
+    connectorIsSelected: async (_composer: unknown, observed?: AbortSignal) => { checkSignal(observed); return selected; },
     selectedConnectorControl: () => selectedConnector,
-    activeComposer: async () => {
+    activeComposer: async (_page: unknown, _timeout: unknown, observed?: AbortSignal) => {
+      checkSignal(observed);
       activeComposerCalls += 1;
       return selected ? selectedComposer : initialComposer;
     },
     reanchorPromptCaret: async () => { calls.push(["reanchor"]); },
-    assertPromptAttached: async () => { calls.push(["assertPrompt"]); },
-  }, page, "context", true);
+    assertPromptAttached: async (_page: unknown, _text: unknown, observed?: AbortSignal) => { checkSignal(observed); calls.push(["assertPrompt"]); },
+  }, page, "context", true, undefined, signal);
 
   expect(calls).toEqual([
     ["fill", ""],
@@ -3831,7 +3839,9 @@ test("two-part saved chats re-prove unchanged effort after the first message cre
   let sends = 0;
   const finished = new Error("final send reached with a current effort proof");
   Object.assign(worker, {
-    prepareChatSurface: async (_page: unknown, _capture: unknown, saved: boolean) => { expect(saved).toBeTrue(); },
+    prepareChatSurface: async (_page: unknown, _capture: unknown, saved: boolean, signal?: AbortSignal) => {
+      expect(saved).toBeTrue(); expect(signal).toBeInstanceOf(AbortSignal); expect(signal!.aborted).toBeFalse();
+    },
     activeComposer: async () => composer,
     selectModelAndEffort: async () => {
       selections.push(url);

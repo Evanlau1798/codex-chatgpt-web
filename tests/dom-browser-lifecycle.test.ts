@@ -1,10 +1,66 @@
 import { expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import { readdirSync } from "node:fs";
+import * as fsSync from "node:fs";
+import { chromium, type Browser } from "playwright-core";
 import { tmpdir } from "node:os";
+import { basename, dirname, resolve } from "node:path";
 import { launchDomBrowser } from "./support/dom-browser";
 
 const profiles = () => readdirSync(tmpdir()).filter(name => name.startsWith("codex-dom-browser-")).sort();
+
+test.each(["CDP close", "disconnect", "child exit"])("DOM cleanup bounds silent %s and escalates only its owned child", async phase => {
+  const before = profiles();
+  let finishCdp!: () => void;
+  let finishExit!: (code: number) => void;
+  const cdp = new Promise<void>(resolve => { finishCdp = resolve; });
+  const exited = new Promise<number>(resolve => { finishExit = resolve; });
+  const signals: string[] = [];
+  let disconnects = 0;
+  let ownedProfile: string | undefined;
+  const child = { exitCode: null as number | null, exited, kill(signal: string) {
+    signals.push(signal);
+    if (signal === "SIGKILL" && phase !== "child exit") { child.exitCode = 0; finishExit(0); }
+  } };
+  const fakeBrowser = { isConnected: () => true,
+    newBrowserCDPSession: async () => ({ send: () => phase === "CDP close" ? cdp : Promise.resolve() }),
+    close: async () => { disconnects += 1; if (phase === "disconnect") await cdp; },
+  } as unknown as Browser;
+  const read = fsSync.readFileSync;
+  const endpoint = spyOn(fsSync, "readFileSync").mockImplementation(((path: unknown, ...args: unknown[]) =>
+    String(path).endsWith("DevToolsActivePort") ? "1234\n" : (read as Function)(path, ...args)) as typeof read);
+  const spawn = spyOn(Bun, "spawn").mockImplementation(((command: string[]) => {
+    ownedProfile = command.find(arg => arg.startsWith("--user-data-dir="))!.slice("--user-data-dir=".length);
+    return child;
+  }) as typeof Bun.spawn);
+  const connect = spyOn(chromium, "connectOverCDP").mockResolvedValue(fakeBrowser);
+  let close: Promise<unknown> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const browser = await launchDomBrowser("test-owned-fake-browser");
+    close = browser.close().then(() => undefined, error => error);
+    const failure = await Promise.race([close, new Promise(resolve => {
+      timer = setTimeout(() => resolve("cleanup never settled"), 4_000);
+    })]);
+    expect(failure).toBeInstanceOf(Error);
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(disconnects).toBe(1);
+    if (phase === "child exit") {
+      expect((failure as Error).message).toContain("forced termination");
+      expect(profiles()).toContain(basename(ownedProfile!));
+    } else expect(profiles()).toEqual(before);
+  } finally {
+    clearTimeout(timer);
+    finishCdp(); child.exitCode = 0; finishExit(0);
+    await close;
+    endpoint.mockRestore(); spawn.mockRestore(); connect.mockRestore();
+    if (ownedProfile) {
+      expect(dirname(resolve(ownedProfile))).toBe(resolve(tmpdir()));
+      expect(basename(ownedProfile)).toStartWith("codex-dom-browser-");
+      await fs.rm(ownedProfile, { recursive: true, force: true });
+    }
+  }
+}, 8_000);
 
 test("DOM browser startup failure removes its test-owned profile", async () => {
   const before = profiles();
