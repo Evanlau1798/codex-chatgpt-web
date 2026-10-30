@@ -561,6 +561,18 @@ To remove the integration safely:
 Deleting the application before step 1 can leave Codex pointed at a local route that no longer
 exists.
 
+## GitHub Actions does not start on a fork
+
+Open the fork's **Actions** tab and check for a disabled-workflows notice, even if the repository
+permissions API reports Actions enabled and individual workflows appear active. GitHub may require
+a separate fork-level opt-in. Review the configured workflows and their triggers before using the
+page's native re-enable button. Existing pushes may have no run; confirm that a subsequent eligible
+event creates CI for the exact intended commit before treating the branch as verified.
+
+A storage-usage warning alone does not establish why workflows were disabled. Check the actual
+usage percentage and billing restrictions separately; rounded storage totals can look full before
+the allowance is exhausted. Increasing a paid budget is not required to use the fork opt-in.
+
 ## Open a useful bug report
 
 Use the repository's bug-report form and attach the privacy-safe export from **Activity → Export

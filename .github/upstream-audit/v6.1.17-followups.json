@@ -4,5 +4,11 @@
     "baselineSha256": "92b34578b77dd9085d28bb7eb55534766ce1e2fe7eb8bb4502193c7f3efef9c8",
     "currentSha256": "6f11db870719086313e7e280e13a6b0a31b9cfe1f4b51303d4daf70334280978",
     "reason": "CI run40977353602 rejected service config construction from bun -e on macOS/Linux. Execute each restart probe from an isolated project-local physical .ts entry, retaining separate processes and every provenance, privacy and HTTP assertion. No runtime or service-validation change."
+  },
+  {
+    "path": "TROUBLESHOOTING.md",
+    "baselineSha256": "2ab3011a8e7e7b541552f168e6c7cbab0c46de68a0433381858f1a581f462188",
+    "currentSha256": "979fd49a770384f87083464c08af0f63d02dd96a65a070a8ef9b498399581f9e",
+    "reason": "Document the verified native fork Actions opt-in after enabled API settings still rejected CI. Re-enabling cleared the disabled-workflows error with the US$0 budget unchanged. Distinguish rounded storage warnings from an established disable cause and require exact-commit CI evidence. No runtime, workflow or billing change."
   }
 ]
