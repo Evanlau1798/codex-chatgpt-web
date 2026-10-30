@@ -1,1 +1,8 @@
-[]
+[
+  {
+    "path": "tests/compaction-task-restart.test.ts",
+    "baselineSha256": "92b34578b77dd9085d28bb7eb55534766ce1e2fe7eb8bb4502193c7f3efef9c8",
+    "currentSha256": "6f11db870719086313e7e280e13a6b0a31b9cfe1f4b51303d4daf70334280978",
+    "reason": "CI run40977353602 rejected service config construction from bun -e on macOS/Linux. Execute each restart probe from an isolated project-local physical .ts entry, retaining separate processes and every provenance, privacy and HTTP assertion. No runtime or service-validation change."
+  }
+]

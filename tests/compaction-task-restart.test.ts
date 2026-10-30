@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import assert from "node:assert/strict";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
@@ -9,6 +9,7 @@ import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 for (const kind of ["goal", "delegation"] as const) {
   test(`restarted ${kind} provenance cannot promote an older retained human task`, () => {
     const project = resolve(import.meta.dir, "..");
+    mkdirSync(resolve(project, "tmp"), { recursive: true });
     const scratch = mkdtempSync(resolve(project, "tmp", "task-proof-restart-"));
     assert(scratch.startsWith(resolve(project, "tmp") + sep));
     const path = resolve(scratch, "proof.json");
@@ -41,7 +42,9 @@ for (const kind of ["goal", "delegation"] as const) {
       const summary = { type: "compaction", encrypted_content: encodeCompactionSummary("PRIVATE_SUMMARY: current implementation remains unfinished") };
     `;
     const probe = (code: string) => {
-      const result = spawnSync(process.execPath, ["-e", common + code], {
+      const entry = resolve(scratch, "probe.ts");
+      writeFileSync(entry, common + code);
+      const result = spawnSync(process.execPath, [entry], {
         cwd: project, encoding: "utf8", windowsHide: true, timeout: 10_000, killSignal: "SIGKILL", maxBuffer: 64 * 1024,
       });
       expect(result.error).toBeUndefined();
