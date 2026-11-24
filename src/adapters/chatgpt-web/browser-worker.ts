@@ -98,6 +98,7 @@ import {
   locateChatGptAssistantTurn,
   readChatGptAssistantTurnState,
   readChatGptTurnIdentities,
+  reconcileChatGptObservedTurnAlias,
   clearOwnedChatGptComposerControl,
   type ChatGptOwnedSendGuard,
   type ChatGptAssistantTurnBinding,
@@ -2712,9 +2713,15 @@ export class ChatGptBrowserWorker {
       return binding;
     }
 
+    const locator = page.locator(chatGptAssistantTurnSelector(identity));
+    if (!await withChatGptBrowserObservationTimeout(withBrowserTurnAbort(
+      reconcileChatGptObservedTurnAlias(locator, binding.identity, identity), signal,
+    ))) {
+      throw new ChatGptTurnIdentityAmbiguityError("conversation", "ChatGPT response changed while retiring its verified alias");
+    }
     return {
       identity,
-      locator: page.locator(chatGptAssistantTurnSelector(identity)),
+      locator,
       acceptedTurnIdentities: currentTurns,
     };
   }

@@ -321,6 +321,29 @@ export async function readChatGptTurnIdentities(
   return identities;
 }
 
+/** Retire an optimistic alias only after the caller proves the replacement owns this submission. */
+export async function reconcileChatGptObservedTurnAlias(
+  canonical: Pick<Locator, "evaluate">,
+  previous: string,
+  current: string,
+): Promise<boolean> {
+  const prefix = "group:assistant:";
+  if (!previous.startsWith(prefix) || !current.startsWith(prefix) || previous === current) return true;
+  return canonical.evaluate((element, input) => {
+    const doc = element.ownerDocument as Document & { __codexObservedTurnIdentities?: Set<string> };
+    const roots = doc.querySelectorAll(`[data-turn-key=${JSON.stringify(input.currentKey)}]`);
+    if (roots.length !== 1 || roots[0] !== element
+      || doc.querySelector(`[data-turn-key=${JSON.stringify(input.previousKey)}]`)) return false;
+    const history = doc.__codexObservedTurnIdentities;
+    if (!history) return true;
+    const normalized = new Set([...history].map(identity => identity === input.previous ? input.current
+      : identity === `group:user:${input.previousKey}` ? `group:user:${input.currentKey}` : identity));
+    history.clear();
+    for (const identity of normalized) history.add(identity);
+    return true;
+  }, { previous, current, previousKey: previous.slice(prefix.length), currentKey: current.slice(prefix.length) }, { timeout: 0 });
+}
+
 export async function countChatGptTurnRoots(turns: Pick<Locator, "evaluateAll">): Promise<number> {
   return await turns.evaluateAll(elements => elements.filter((element, index) =>
     !elements.some((candidate, candidateIndex) => candidateIndex !== index && candidate.contains(element))).length);

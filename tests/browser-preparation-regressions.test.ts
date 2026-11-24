@@ -6,7 +6,7 @@ import { readChatGptPromptText } from "../src/adapters/chatgpt-web/prompt-text";
 import { launchDomBrowser } from "./support/dom-browser";
 import { pasteChatGptComposerLiteralText } from "../src/adapters/chatgpt-web/composer-literal-paste";
 import { assertNewChatPage, CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR, CHATGPT_ASSISTANT_TURN_SELECTOR } from "../src/chatgpt-session";
-import { readChatGptTurnIdentities, readChatGptAssistantTurnState } from "../src/adapters/chatgpt-web/response-turn-boundary";
+import { readChatGptTurnIdentities, readChatGptAssistantTurnState, reconcileChatGptObservedTurnAlias } from "../src/adapters/chatgpt-web/response-turn-boundary";
 import { ensureChatGptPersonalizedConnectorAccess } from "../src/adapters/chatgpt-web/personalization";
 
 let browser: Browser;
@@ -108,6 +108,28 @@ domTest("provisional assistant roots do not poison retained pre-Send history aft
     await page.locator('[data-turn-key="foreign"]').evaluate(node => node.remove());
     await expect(replacement.captureSubmissionBaseline(page, "Next", refreshed))
       .rejects.toThrow("history changed before Send");
+  } finally { await page.close(); }
+});
+
+domTest("verified history alias cleanup rejects surviving or ambiguous roots without changing cache", async () => {
+  const page = await browser.newPage();
+  try {
+    await page.setContent('<main><div data-turn-key="old"><h4 data-conversation-role="assistant"></h4></div>'
+      + '<div data-turn-key="owned"><div data-user-message-bubble>Request</div><h4 data-conversation-role="assistant"></h4></div></main>');
+    const turns = page.locator("[data-turn-id-container], [data-turn-key]");
+    const read = () => readChatGptTurnIdentities(turns, "data-turn-id-container", true);
+    const before = await read();
+    const normalize = () => reconcileChatGptObservedTurnAlias(page.locator('[data-turn-key="owned"]').first(),
+      "group:assistant:old", "group:assistant:owned");
+    expect(await normalize()).toBe(false);
+    expect(await read()).toEqual(before);
+    await page.locator('[data-turn-key="old"]').evaluate(element => element.remove());
+    await page.locator("main").evaluate(element => element.insertAdjacentHTML("beforeend", '<div data-turn-key="owned"></div>'));
+    expect(await normalize()).toBe(false);
+    expect(await page.evaluate(() => [...(document as any).__codexObservedTurnIdentities])).toEqual(before);
+    await page.locator('[data-turn-key="owned"]').last().evaluate(element => element.remove());
+    expect(await normalize()).toBe(true);
+    expect(await read()).toEqual(["group:user:owned", "group:assistant:owned"]);
   } finally { await page.close(); }
 });
 
