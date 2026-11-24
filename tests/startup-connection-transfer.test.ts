@@ -1,6 +1,8 @@
 import { expect, spyOn, test } from "bun:test";
 import { chromium } from "playwright-core";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
+import { runInNewContext } from "node:vm";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import * as host from "../src/launcher-browser-host";
@@ -9,6 +11,15 @@ import { prepareChatGptStartupPage } from "../src/adapters/chatgpt-web/startup-p
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptStartupPagePool } from "../src/adapters/chatgpt-web/startup-page-pool";
 import * as stages from "../src/adapters/chatgpt-web/browser-stage-lifecycle";
+
+const hostSource = createRequire(import.meta.url).resolve("../launcher/electron/browser-host.cjs");
+const hostRequire = createRequire(hostSource);
+const hostModule = { exports: {} as any };
+runInNewContext(readFileSync(hostSource, "utf8"), {
+  require: (id: string) => id === "electron" ? {} : hostRequire(id),
+  module: hostModule, exports: hostModule.exports, Buffer, URL, process,
+});
+const { BrowserHost } = hostModule.exports;
 
 function fixture(onEnd?: (owner: { traceId: string; helperPid: number }) => Promise<void>) {
   const phases: string[] = [];
@@ -128,7 +139,6 @@ test("unclaimed prepared transport keeps the original release responsibility", a
 
 test.each(["live", "transferred"])("lost %s end acknowledgement is reconciled by the same owner without reopening or closing transport twice", async kind => {
   const owners: Array<{ traceId: string; helperPid: number }> = [];
-  const { BrowserHost } = require("../launcher/electron/browser-host.cjs");
   const lifecycle = Object.assign(Object.create(BrowserHost.prototype), {
     turnTabs: new Map(), closedTurnOwners: new Map(), userCancelledTurnOwners: new Map(),
     logger: { info() {}, warn() {} }, syncPowerSaveBlocker() {}, syncViewVisibility() {},
@@ -281,7 +291,6 @@ test.each(["viewport", "selection"])("transferred transport closes exactly once 
 });
 
 test.each(["aborted", "failed", "completed"])("user close retains one end retry when %s settlement beats cancellation acknowledgement", async status => {
-  const { BrowserHost } = require("../launcher/electron/browser-host.cjs");
   let acknowledge!: () => void, started!: () => void, closes = 0;
   const pending = new Promise<void>(resolve => { acknowledge = resolve; });
   const cancelling = new Promise<void>(resolve => { started = resolve; });

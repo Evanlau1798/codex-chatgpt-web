@@ -263,11 +263,13 @@ test("macOS quit request stops retrying once ownership of the process ends", asy
   const child = spawn("/bin/sleep", ["30"], { stdio: "ignore" });
   try {
     const ownership = new AbortController();
+    const reason = new Error("Chrome exited");
     const started = Date.now();
-    setTimeout(() => ownership.abort(new Error("Chrome exited")), 300);
+    setTimeout(() => ownership.abort(reason), 300);
     const error = await quitMacApplication(child.pid!, "/bin/sleep", ownership.signal, 10_000)
       .then(() => undefined, caught => caught as Error);
-    expect(error?.message).toBe("Chrome exited");
+    if (error?.name === "AbortError") expect(error.cause).toBe(reason);
+    else expect(error).toBe(reason);
     expect(Date.now() - started).toBeLessThan(3_000);
   } finally {
     child.kill("SIGKILL");
