@@ -1,7 +1,8 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
+import { runInNewContext } from "node:vm";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
@@ -16,6 +17,15 @@ import { LAUNCHER_BROWSER_HOST_KIND, LAUNCHER_BROWSER_IDLE_URL } from "../src/la
 import { CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL } from "../src/chatgpt-web-models";
 import { defaultBrokerEndpoint } from "../src/config";
 import type { AdapterEvent, CodexParsedRequest, CodexProviderConfig } from "../src/types";
+
+const hostSource = createRequire(import.meta.url).resolve("../launcher/electron/browser-host.cjs");
+const hostRequire = createRequire(hostSource);
+const hostModule = { exports: {} as any };
+runInNewContext(readFileSync(hostSource, "utf8"), {
+  require: (id: string) => id === "electron" ? {} : hostRequire(id),
+  module: hostModule, exports: hostModule.exports, Buffer, URL, process, setTimeout, clearTimeout,
+});
+const { BrowserHost } = hostModule.exports;
 
 const testTempRoot = process.platform === "win32" ? tmpdir() : "/tmp";
 const root = mkdtempSync(join(testTempRoot, "cgw-zero-risk-adapter-"));
@@ -101,7 +111,6 @@ for (const scenario of [
   // canonical tool results are never rewritten with handoff instructions. Real launcher
   // tombstones still prevent reuse, and an already completed source must replay its final.
   const require = createRequire(import.meta.url);
-  const { BrowserHost } = require("../launcher/electron/browser-host.cjs");
   const { BrowserControlServer } = require("../launcher/electron/control-server.cjs");
   const config = provider(`compaction-owner-${scenario.format}-${scenario.finalWins}`);
   const socket = config.chatgptWeb!.brokerSocketPath!;
