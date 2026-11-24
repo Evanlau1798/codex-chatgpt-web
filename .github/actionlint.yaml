@@ -3,9 +3,12 @@ paths:
     # GitHub added this standard public-repository Intel label after actionlint v1.7.7's label table.
     # https://docs.github.com/en/actions/reference/runners/github-hosted-runners
     ignore:
+      # Official ARM64 label added after actionlint v1.7.7's label table.
+      - 'label "macos-26" is unknown'
       - 'label "macos-15-intel" is unknown'
       # Native ARM64 runner used by the upstream 6.0 packaging matrix.
       - 'label "ubuntu-24.04-arm" is unknown'
   .github/workflows/ci.yml:
     ignore:
+      - 'label "macos-26" is unknown'
       - 'label "ubuntu-24.04-arm" is unknown'

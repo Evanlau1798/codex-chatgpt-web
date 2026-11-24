@@ -61,7 +61,7 @@ test("CI runs deterministic lifecycle simulation and never calls a live profile"
   expect(workflow).not.toContain("smoke:lifecycle:deep");
   expect(workflow).not.toContain("smoke:lifecycle:live");
   expect(workflow).toContain("lifecycle-client-probe:");
-  expect(workflow).toContain("os: [macos-15, windows-latest]");
+  expect(workflow).toContain("os: [macos-26, windows-latest]");
   expect(workflow).toContain("bun run scripts/smoke-codex-cancel.ts");
   expect(workflow).toContain("bun run scripts/smoke-codex-interrupt.ts");
   expect(workflow).toContain("@openai/codex@latest");
