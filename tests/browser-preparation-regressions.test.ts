@@ -5,7 +5,8 @@ import { insertChatGptPromptText } from "../src/adapters/chatgpt-web/prompt-inse
 import { readChatGptPromptText } from "../src/adapters/chatgpt-web/prompt-text";
 import { launchDomBrowser } from "./support/dom-browser";
 import { pasteChatGptComposerLiteralText } from "../src/adapters/chatgpt-web/composer-literal-paste";
-import { assertNewChatPage, CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR } from "../src/chatgpt-session";
+import { assertNewChatPage, CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR, CHATGPT_ASSISTANT_TURN_SELECTOR } from "../src/chatgpt-session";
+import { readChatGptTurnIdentities, readChatGptAssistantTurnState } from "../src/adapters/chatgpt-web/response-turn-boundary";
 import { ensureChatGptPersonalizedConnectorAccess } from "../src/adapters/chatgpt-web/personalization";
 
 let browser: Browser;
@@ -81,6 +82,32 @@ domTest("scrolling previously observed history cannot acknowledge Send after hel
     const fresh = await second.captureSubmissionBaseline(page, "Next");
     await page.locator("main").evaluate((node, html) => { node.innerHTML = html; }, old);
     await expect(second.currentSubmissionEvidence(page, fresh)).rejects.toThrow("3 new conversation turns");
+  } finally { await page.close(); }
+});
+
+domTest("provisional assistant roots do not poison retained pre-Send history after disappearing", async () => {
+  const page = await browser.newPage();
+  try {
+    await page.setContent('<main><div data-turn-key="owned"><div data-user-message-bubble>Request</div>'
+      + '<h4 data-conversation-role="assistant">Answer</h4></div></main>');
+    const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+    const baseline = await worker.captureSubmissionBaseline(page, "Next");
+    await page.locator("main").evaluate(node => node.insertAdjacentHTML("beforeend",
+      '<div data-turn-key="provisional"><span hidden data-chatgpt-agent-turn-start></span></div>'));
+    const pending = await readChatGptAssistantTurnState(page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR));
+    expect(pending.lastId).toBe("group:assistant:provisional");
+    expect(pending.knownTurnIdentities).toContain("group:assistant:provisional");
+    await page.locator('[data-turn-key="provisional"]').evaluate(node => node.remove());
+    const replacement = Object.create(ChatGptBrowserWorker.prototype) as any;
+    const refreshed = await replacement.captureSubmissionBaseline(page, "Next", baseline);
+    expect(refreshed.initialTurnIdentities).toEqual(["group:user:owned", "group:assistant:owned"]);
+
+    await page.locator("main").evaluate(node => node.insertAdjacentHTML("beforeend",
+      '<div data-turn-key="foreign"><div data-user-message-bubble>Another request</div></div>'));
+    await readChatGptTurnIdentities(page.locator("[data-turn-id-container], [data-turn-key]"), "data-turn-id-container");
+    await page.locator('[data-turn-key="foreign"]').evaluate(node => node.remove());
+    await expect(replacement.captureSubmissionBaseline(page, "Next", refreshed))
+      .rejects.toThrow("history changed before Send");
   } finally { await page.close(); }
 });
 

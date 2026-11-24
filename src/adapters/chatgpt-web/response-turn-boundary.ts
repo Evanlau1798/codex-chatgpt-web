@@ -302,7 +302,15 @@ export async function readChatGptTurnIdentities(
     if (name === "data-turn-id-container") {
       const doc = (candidates[0]?.ownerDocument ?? document) as Document & { __codexObservedTurnIdentities?: Set<string> };
       const history = doc.__codexObservedTurnIdentities ??= new Set<string>();
-      for (const identity of identities as string[]) history.add(identity);
+      // An agent-start marker reserves a response key without committing a historical turn.
+      const provisional = new Set(candidates.flatMap(element => {
+        const key = element.getAttribute("data-turn-key");
+        return key !== null && !element.querySelector('[data-user-message-bubble], [data-conversation-role="assistant"]')
+          ? [`group:user:${key}`, `group:assistant:${key}`] : [];
+      }));
+      for (const identity of identities as string[]) {
+        if (!provisional.has(identity)) history.add(identity);
+      }
       if (includeHistory) return [...history];
     }
     return identities as string[];
