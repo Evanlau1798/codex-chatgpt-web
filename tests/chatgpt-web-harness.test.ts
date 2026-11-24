@@ -3259,7 +3259,7 @@ describe("ChatGPT outer-native harness v4", () => {
     };
     const transport = new StdioClientTransport({
       command: process.execPath, args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
-      cwd: process.cwd(), stderr: "pipe",
+      cwd: resolve(import.meta.dir, ".."), stderr: "pipe",
     });
     const client = new Client({ name: "native-permissions-test", version: "1" });
     try {
@@ -3338,7 +3338,7 @@ describe("ChatGPT outer-native harness v4", () => {
     } });
     const token = await broker.register(environment, 300_000);
     const transport = new StdioClientTransport({ command: process.execPath,
-      args: ["src/cli.ts", "mcp", "--broker-socket", socketPath], cwd: process.cwd(), stderr: "pipe" });
+      args: ["src/cli.ts", "mcp", "--broker-socket", socketPath], cwd: resolve(import.meta.dir, ".."), stderr: "pipe" });
     const client = new Client({ name: "polling-regression", version: "1" });
     try {
       await client.connect(transport);
@@ -3727,7 +3727,7 @@ test("a native tool deadline returns an explicit MCP timeout instead of a transp
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
-      cwd: process.cwd(),
+      cwd: resolve(import.meta.dir, ".."),
       stderr: "pipe",
     });
     const client = new Client({ name: "codex-chatgpt-web-mcp-timeout-test", version: "1.0.0" });
@@ -3812,7 +3812,7 @@ test("an undelivered MCP call returns its queued state without exposing the comm
     environment.tools = [{ name: "exec_command", description: "Run command", parameters: { type: "object" } }];
     const transport = new StdioClientTransport({
       command: process.execPath, args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
-      cwd: process.cwd(), stderr: "pipe",
+      cwd: resolve(import.meta.dir, ".."), stderr: "pipe",
     });
     const client = new Client({ name: "codex-web-queued-timeout-test", version: "1.0.0" });
     let token: string | undefined;
