@@ -26,6 +26,7 @@ import { SettingsSurface } from "./settings-surface";
 import { TutorialVideo } from "./tutorial-video";
 import { ManualTurnGuide } from "./manual-turn-guide";
 import { LimitsSurface } from "./LimitsSurface";
+import { UpdateSettings } from "./UpdateSettings";
 import { limitsCopyFor } from "./limits-copy";
 import { useLimits } from "./useLimits";
 import { describeTurnActivity } from "./turn-activity";
@@ -604,6 +605,10 @@ function LauncherShell({
             </nav>
 
             <div className="sidebar-footer">
+              {snapshot.update.status === "error" ? (
+                <SidebarItem active={false} icon="update" label={copy.updateCheckFailed}
+                  onClick={() => navigateSurface("settings")} />
+              ) : null}
               {updateVisible ? (
                 <SidebarItem
                   active={false}

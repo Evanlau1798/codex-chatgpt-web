@@ -18,7 +18,16 @@ function historyPage(keys: string[]) {
     url: () => "https://chatgpt.com/c/owned-conversation",
     locator(selector: string) {
       if (![CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_USER_TURN_SELECTOR, "[data-turn-id-container], [data-turn-key]"].includes(selector)) throw new Error("Unexpected selector");
-      return { page: () => page, evaluateAll: async (callback: any, name?: string) => callback(groups, name) };
+      return { page: () => page, evaluateAll: async (callback: any, name?: string) => {
+        const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
+        try {
+          Object.defineProperty(globalThis, "document", { configurable: true, value: document });
+          return callback(groups, name);
+        } finally {
+          if (previous) Object.defineProperty(globalThis, "document", previous);
+          else Reflect.deleteProperty(globalThis, "document");
+        }
+      } };
     },
   };
   return page;

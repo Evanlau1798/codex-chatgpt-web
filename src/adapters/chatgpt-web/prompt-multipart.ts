@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { estimateTokens } from "../../lib/token-estimate";
 
 export const CHATGPT_BIGGER_CONTEXT_PARTS = 6 as const;
+export const CHATGPT_ESTIMATE_TRANSACTION_ID = `ctx_${"0".repeat(32)}`;
 export type ChatGptWebMultipartPartCount = 2 | typeof CHATGPT_BIGGER_CONTEXT_PARTS;
 export type ChatGptWebMultipartParts = readonly string[];
 
@@ -26,6 +27,11 @@ export type MultipartContextRecord =
   | { kind: "tool"; tool_index: number; wire_name: string };
 
 const MULTIPART_TRANSACTION_ID = /^ctx_[a-f0-9]{32}$/;
+export function assertMultipartTransactionId(value: unknown): asserts value is string {
+  if (typeof value !== "string" || !MULTIPART_TRANSACTION_ID.test(value)) {
+    throw new Error("ChatGPT multipart transaction identity is invalid");
+  }
+}
 const RETIRED_TURN_HANDLE = /(?<![A-Za-z0-9_-])(turn|request|binding)_[A-Za-z0-9_-]{32}(?![A-Za-z0-9_-])/g;
 
 export function withoutRetiredTurnHandles(contextJson: string): string {

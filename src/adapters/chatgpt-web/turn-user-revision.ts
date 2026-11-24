@@ -1,5 +1,5 @@
 import { isNativeOpenPageContext } from "../../responses/native-context";
-import { isNativeAgentsMdContext, readNativeThreadDelegation } from "../../responses/native-context";
+import { isNativeAgentsMdContext, isNativeUserGoalUpdate, readNativeThreadDelegation } from "../../responses/native-context";
 import { hasEnvironmentContextFragment, isContextualCodexUserMessage } from "./contextual-user-message";
 import { codexTurnMetadataFromBody } from "./environment-identity";
 
@@ -7,6 +7,7 @@ export interface CurrentTurnUserRevision {
   content: unknown;
   turnId?: string;
   itemId?: string;
+  nativeTurnId?: string;
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -26,6 +27,7 @@ export function isUserOrParentInstruction(
   metadata?: Record<string, unknown>,
 ): item is Record<string, unknown> {
   if (item?.type === "message" && item.role === "user") {
+    if (isNativeUserGoalUpdate(item)) return true;
     const provenance = record(item.internal_chat_message_metadata_passthrough);
     if (typeof item.id === "string" && item.id && typeof provenance?.turn_id === "string" && provenance.turn_id.trim()
       && Array.isArray(provenance.content_item_kinds) && provenance.content_item_kinds.length === 1
@@ -87,13 +89,8 @@ export function turnUserRevisionHistory(rawBody: unknown): CurrentTurnUserRevisi
   const body = record(rawBody);
   const metadata = codexTurnMetadataFromBody(rawBody);
   const input = Array.isArray(body?.input) ? body.input : [];
-  return input.flatMap(value => {
-    const item = record(value);
-    if (!isNativeInstruction(item, metadata)) return [];
-    const turnId = itemTurnId(item);
-    if (turnId === undefined && (typeof item.id !== "string" || !item.id)) return [];
-    return [revision(item)];
-  });
+  const turnId = typeof metadata?.turn_id === "string" ? metadata.turn_id : undefined;
+  return nativeUserRevisions(input, turnId, metadata).map(item => item.revision);
 }
 
 export function isTurnAbortedNotice(content: unknown): boolean {
@@ -135,23 +132,41 @@ export function currentTurnUserRevision(
     if (item && (isNativeAgentsMdContext(item) || isNativeOpenPageContext(item))) continue;
     const ordinaryUser = item?.type === "message" && item.role === "user";
     if (!ordinaryUser && !isNativeInstruction(item, metadata)) continue;
-    const messageTurnId = itemTurnId(item);
+    const candidate = isNativeUserGoalUpdate(item)
+      ? nativeUserRevisions(input, expectedTurnId, metadata).findLast(value => value.index === index)?.revision ?? revision(item)
+      : revision(item);
+    const messageTurnId = candidate.turnId;
     const serverOwnedId = typeof item.id === "string" && item.id.length > 0;
     if (messageTurnId === undefined && !serverOwnedId) continue;
-    const candidate = revision(item);
     const currentTurnAbortText = messageTurnId === expectedTurnId && isTurnAbortedNotice(item.content);
     if (isTurnAbortedNotice(item.content) && messageTurnId && messageTurnId !== expectedTurnId) continue;
-    if (!currentTurnAbortText && hasAgentMessage
+    if (!currentTurnAbortText && !isNativeUserGoalUpdate(item) && hasAgentMessage
       && ordinaryUser && isContextualCodexUserMessage(item.content)) continue;
     if (messageTurnId !== undefined && messageTurnId !== expectedTurnId) {
       return contextualFallback ?? candidate;
     }
     if (contextualFallback && messageTurnId === undefined) return contextualFallback;
-    if (!currentTurnAbortText && isContextualCodexUserMessage(item.content)) {
+    if (!currentTurnAbortText && !isNativeUserGoalUpdate(item) && isContextualCodexUserMessage(item.content)) {
       contextualFallback ??= candidate;
       continue;
     }
     return candidate;
   }
   return contextualFallback;
+}
+
+export function nativeUserRevisions(input: unknown[], turnId?: string, metadata?: Record<string, unknown>) {
+  let instructionTurnId: string | undefined;
+  return input.flatMap((value, index) => {
+    const item = record(value);
+    if (!isNativeInstruction(item, metadata)) return [];
+    const current = revision(item);
+    if (current.turnId === undefined && current.itemId === undefined) return [];
+    if (isNativeUserGoalUpdate(item)) {
+      if (turnId !== undefined && instructionTurnId === turnId) {
+        return [{ index, revision: { ...current, nativeTurnId: current.turnId, turnId } }];
+      }
+    } else { instructionTurnId = current.turnId; }
+    return [{ index, revision: current }];
+  });
 }

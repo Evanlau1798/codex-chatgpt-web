@@ -1,4 +1,6 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { browserProcessExited, removeTemporaryChromeTabSessions, waitForBrowserExit, stopOwnedLoginBrowser, quitMacApplication, SYSTEM_LOGIN_STOP_TIMEOUT_MS, SYSTEM_LOGIN_QUIT_TIMEOUT_MS } from "./browser-login-process";
+export { quitMacApplication } from "./browser-login-process";
+import { spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { chromium, type BrowserContext, type BrowserContextOptions, type Page } from "playwright-core";
@@ -41,6 +43,7 @@ interface SystemBrowserLoginOptions {
   continuation: Promise<void>;
   timeoutMs?: number;
   onBrowserReady?: () => void;
+  quitBrowser?: (pid: number, signal: AbortSignal) => Promise<void>;
 }
 
 interface LoginVerificationMarker {
@@ -54,53 +57,8 @@ interface LoginVerificationMarker {
 }
 
 const SYSTEM_LOGIN_TIMEOUT_MS = 10 * 60_000;
-const SYSTEM_LOGIN_STOP_TIMEOUT_MS = 5_000;
 const LOGIN_STORAGE_ROOT_DOMAINS = ["chatgpt.com", "openai.com"] as const;
 const CHATGPT_ORIGIN = new URL(CHATGPT_TEMPORARY_CHAT_URL).origin;
-
-function browserProcessExited(browser: ChildProcess): boolean {
-  return browser.exitCode !== null || browser.signalCode !== null;
-}
-
-function removeTemporaryChromeTabSessions(profileDir: string): void {
-  const defaultProfile = join(profileDir, "Default");
-  rmSync(join(defaultProfile, "Sessions"), { recursive: true, force: true });
-  for (const name of ["Current Session", "Current Tabs", "Last Session", "Last Tabs"]) {
-    rmSync(join(defaultProfile, name), { force: true });
-  }
-}
-
-async function waitForBrowserExit(browser: ChildProcess, timeoutMs: number): Promise<boolean> {
-  if (browserProcessExited(browser)) return true;
-  return await new Promise(resolve => {
-    let settled = false;
-    const finish = (exited: boolean) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      browser.off("exit", onExit);
-      resolve(exited);
-    };
-    const onExit = () => finish(true);
-    const timer = setTimeout(() => finish(false), timeoutMs);
-    browser.once("exit", onExit);
-    if (browserProcessExited(browser)) finish(true);
-  });
-}
-
-async function stopOwnedLoginBrowser(browser: ChildProcess): Promise<void> {
-  if (browserProcessExited(browser) || !Number.isInteger(browser.pid)) return;
-  const graceful = waitForBrowserExit(browser, SYSTEM_LOGIN_STOP_TIMEOUT_MS);
-  if (!browser.kill() && !browserProcessExited(browser)) {
-    throw new Error("The dedicated Chrome login process refused to close");
-  }
-  if (await graceful) return;
-  const forced = waitForBrowserExit(browser, SYSTEM_LOGIN_STOP_TIMEOUT_MS);
-  if (!browser.kill("SIGKILL") && !browserProcessExited(browser)) {
-    throw new Error("The dedicated Chrome login process refused forced termination");
-  }
-  if (!await forced) throw new Error("The dedicated Chrome login process did not exit");
-}
 
 export function loginVerificationMarkerPath(storageStatePath: string): string {
   return `${storageStatePath}.verified.json`;
@@ -279,27 +237,47 @@ export async function captureSystemBrowserLogin(
     ], { env: process.env, stdio: "ignore" });
     let continuationRequested = false;
     let timeout: ReturnType<typeof setTimeout> | undefined;
+    const quitOwnership = new AbortController();
+    loginBrowser.once("exit", () => quitOwnership.abort());
+    let quitRequest: Promise<void> | undefined;
     try {
-      await new Promise<void>((resolve, reject) => {
+      await new Promise<void>((resolveLogin, rejectLogin) => {
+        const resolve = () => { quitOwnership.abort(); resolveLogin(); };
+        const reject = (error: unknown) => { quitOwnership.abort(); rejectLogin(error); };
         timeout = setTimeout(() => reject(new Error("Timed out waiting for passkey sign-in")), remainingTime());
         loginBrowser.once("spawn", () => {
           try { options.onBrowserReady?.(); } catch (error) { reject(error); }
         });
-        void options.continuation.then(() => {
+        void options.continuation.then(async () => {
+          if (quitOwnership.signal.aborted) return;
           continuationRequested = true;
-          if (!loginBrowser.kill() && !browserProcessExited(loginBrowser)) {
-            reject(new Error("The dedicated Chrome login process refused the Continue request"));
+          if (browserProcessExited(loginBrowser)) return;
+          // A signal exit skips Chrome's shutdown flush, losing cookies it has not yet written to disk.
+          const quit = options.quitBrowser
+            ?? ((pid, signal) => quitMacApplication(pid, config.chromeExecutablePath, signal));
+          quitRequest = quit(loginBrowser.pid!, quitOwnership.signal);
+          try {
+            await quitRequest;
+          } catch (error) {
+            if (await waitForBrowserExit(loginBrowser, SYSTEM_LOGIN_STOP_TIMEOUT_MS)) return;
+            throw error;
           }
-        }, reject);
+          if (!await waitForBrowserExit(loginBrowser, SYSTEM_LOGIN_QUIT_TIMEOUT_MS)) {
+            reject(new Error("The dedicated Chrome login window did not quit after Continue"));
+          }
+        }).catch(reject);
         loginBrowser.once("error", reject);
         loginBrowser.once("exit", (code, signal) => {
-          if (continuationRequested) resolve();
-          else if (signal) reject(new Error(`Dedicated Chrome login exited from signal ${signal}`));
+          if (continuationRequested && code === 0) resolve();
+          else if (continuationRequested) {
+            reject(new Error(`Dedicated Chrome login did not quit cleanly (${signal ?? `status ${code}`}); its sign-in may not have been saved`));
+          } else if (signal) reject(new Error(`Dedicated Chrome login exited from signal ${signal}`));
           else if (code === 0) reject(new Error("Dedicated Chrome closed before Continue was selected"));
           else reject(new Error(`Dedicated Chrome login exited with status ${code ?? 1}`));
         });
       });
     } catch (error) {
+      await quitRequest?.catch(() => {});
       try {
         await stopOwnedLoginBrowser(loginBrowser);
       } catch (cleanupError) {
@@ -310,6 +288,8 @@ export async function captureSystemBrowserLogin(
       throw error;
     } finally {
       if (timeout) clearTimeout(timeout);
+      quitOwnership.abort();
+      await quitRequest?.catch(() => {});
     }
 
     // Authentication happens before Playwright ever owns this profile. Chrome does not load

@@ -27,7 +27,7 @@ import {
   chatGptTurnSessions,
   type ChatGptTurnRuntime,
 } from "./turn-execution";
-import { resolveBiggerContextMultipartParts, resolveEnhancedRecoveryMultipartParts } from "./usage";
+import { compileBiggerContextPrompt, resolveBiggerContextMultipartParts, resolveEnhancedRecoveryMultipartParts } from "./usage";
 import { withCompactionInactivity } from "./compaction-inactivity";
 import { MAX_COMPACTION_HANDOFF_TIMEOUT_MS } from "./compaction-handoff";
 
@@ -115,6 +115,13 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       ...(hooks.compactionControlInstruction ? { compactionControlInstruction: hooks.compactionControlInstruction } : {}),
       ...(tunneledOutput ? { useEnhancedOutputTunnel: true } : {}),
       ...(experimentalMultipartParts === undefined ? {} : { experimentalMultipartParts }),
+    };
+    const preparePrompt = (input: CodexParsedRequest, turnToken?: string, transactionId?: string) => {
+      const promptOptions = { ...compileOptions, multipartTransactionId: transactionId,
+        ...(turnToken ? { includeContextTokenBreakdown: true } : {}) };
+      return experimentalBiggerContext
+        ? compileBiggerContextPrompt(input, turnCapabilities, turnToken, promptOptions)
+        : compileChatGptWebPrompt(input, turnCapabilities, turnToken, promptOptions);
     };
     if (captureLunaCheckpoint) {
       console.info(
@@ -224,13 +231,13 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),
         reasoning: parsed.options.reasoning,
         capabilities: turnCapabilities,
-        prepare: async () => prepareChatGptWebContext(broker,
-          compileChatGptWebPrompt(checkpointInput.parsed, turnCapabilities, undefined, compileOptions),
+        prepare: async (transactionId?: string) => prepareChatGptWebContext(broker,
+          preparePrompt(checkpointInput.parsed, undefined, transactionId),
           useEnhancedWebSessionMode, contextTtlMs, traceId),
         ...(resumeInput ? {
-          prepareResume: async () => prepareChatGptWebContext(
+          prepareResume: async (transactionId?: string) => prepareChatGptWebContext(
             broker,
-            compileChatGptWebPrompt(resumeInput, turnCapabilities, undefined, compileOptions),
+            preparePrompt(resumeInput, undefined, transactionId),
             useEnhancedWebSessionMode,
             contextTtlMs,
             traceId,
@@ -295,7 +302,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     if (!environment) throw new Error("Tool-capable ChatGPT web mode requires a trusted Codex environment");
     const token = deferred<string>();
     let tokenSettled = false;
-    const prepareWith = async (input: CodexParsedRequest, source: "full" | "resume") => {
+    const prepareWith = async (input: CodexParsedRequest, source: "full" | "resume", transactionId?: string) => {
       const turnToken = activeToken ?? await brokerOwner.register(
         environment,
         timeoutMs === undefined ? undefined : timeoutMs + 60_000,
@@ -308,7 +315,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       );
       try {
         const prepared = await prepareChatGptWebContext(broker,
-          compileChatGptWebPrompt(input, turnCapabilities, turnToken, { ...compileOptions, includeContextTokenBreakdown: true }),
+          preparePrompt(input, turnToken, transactionId),
           useEnhancedWebSessionMode, contextTtlMs, traceId);
         if (activeToken !== turnToken) {
           activeToken = turnToken;
@@ -339,8 +346,8 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       capabilities: turnCapabilities,
       ...(browserCompaction ? { compaction: true } : {}),
       ...(options.allowStartupPreparation?.() && !browserCompaction ? { allowStartupPreparation: true } : {}),
-      prepare: () => prepareWith(checkpointInput.parsed, "full"),
-      ...(resumeInput ? { prepareResume: () => prepareWith(resumeInput, "resume") } : {}),
+      prepare: transactionId => prepareWith(checkpointInput.parsed, "full", transactionId),
+      ...(resumeInput ? { prepareResume: (transactionId?: string) => prepareWith(resumeInput, "resume", transactionId) } : {}),
       ...(retainConversation ? { retainConversation: true } : {}),
       ...(conversationKey ? { conversationKey } : {}),
       abortSignal: browserAbort.signal,

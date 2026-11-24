@@ -24,7 +24,7 @@ import {
   type ChatGptTurnEnvironment,
 } from "./environment";
 import { effectiveChatGptToolPolicy } from "./tool-policy";
-import { resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
+import { latestCodexRolloutFilesystem, resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
 import { unattributedChatGptEnvironmentMessages } from "./environment-history";
 import { isAcceptedCompactionContinuation } from "./compaction-continuation";
 import { hasEnvironmentContextFragment, isPureContextualCodexUserText } from "./contextual-user-message";
@@ -485,11 +485,14 @@ export class ChatGptThreadEnvironmentStore {
       && input.some(value => isCurrentTurnInstruction(record(value), metadata, identity.turnId!));
     const ordinaryContinuation = hasCurrentInstruction && !crossesForeignCompaction;
     const rootMetadata = extractChatGptRootThreadMetadata(parsed);
-    const currentTurnAnchor = crossesForeignCompaction && !!identity.turnId && !currentCompaction && !postCompactionContext && !nativeCompaction
+    let currentTurnAnchor = crossesForeignCompaction && !!identity.turnId && !currentCompaction && !postCompactionContext && !nativeCompaction
       ? currentTurnRolloutAnchor(input, checkpointIndex, metadata, identity.turnId, !lineage && !!rootMetadata)
       : undefined;
-    const historicalMessages = !hasCurrentContext && (lineage || rootMetadata)
+    const historicalMessages = !initialClaim && !currentCompaction && !postCompactionContext && (lineage || rootMetadata)
       ? unattributedChatGptEnvironmentMessages(parsed) : undefined;
+    if (!currentTurnAnchor && historicalMessages?.length && !hasCurrentInstruction && identity.turnId) {
+      currentTurnAnchor = currentTurnRolloutAnchor(input, checkpointIndex, metadata, identity.turnId, !lineage && !!rootMetadata);
+    }
     const rolloutIdentity = lineage ?? rootMetadata;
     // Automatic compaction has a current turn_context; standalone compaction has only its
     // source turn_context. Either must be the latest native record, never an arbitrary ancestor.
@@ -510,31 +513,42 @@ export class ChatGptThreadEnvironmentStore {
       });
       if (rollout) {
         let rolloutEnvironment = rollout.environment;
+        // These exact messages were authenticated above; exclude only them from current claims.
+        const claimsParsed = historicalMessages ? { ...parsed, _rawBody: { ...body,
+          input: input.filter(value => !historicalMessages.some(message => message.id === record(value)?.id)),
+        } } : parsed;
+        const hasCurrentClaims = hasCurrentChatGptEnvironmentContext(claimsParsed);
         const rebuiltEnvironmentIndex = currentCompaction && !hasCurrentInstruction
           ? input.findIndex(value => hasEnvironmentContextFragment(record(value)) && itemTurnId(value) === identity.turnId)
           : -1;
-        const calendarDelta = hasCurrentContext ? extractChatGptCalendarEnvironmentDelta(parsed,
+        const calendarDelta = hasCurrentClaims ? extractChatGptCalendarEnvironmentDelta(claimsParsed,
           rebuiltEnvironmentIndex >= 0 ? { afterEnvironmentIndex: rebuiltEnvironmentIndex } : undefined) : undefined;
-        const currentClaims = hasCurrentContext ? extractChatGptContinuationEnvironmentClaims(parsed, calendarDelta) : [];
+        let currentClaims = hasCurrentClaims ? extractChatGptContinuationEnvironmentClaims(claimsParsed, calendarDelta) : [];
         if (rebuiltEnvironmentIndex >= 0 && currentClaims.length > 1) {
           throw new Error("Compaction continuation repeats a current native environment claim");
         }
         const workspaceClaim = initialClaim ?? currentClaims.at(-1);
         // Full Access roots are context, but every declared native project and
         // the exact current owner, cwd and permission profile remain authoritative.
-        if ((currentCompaction || postCompactionContext || (initialClaim && initialClaim.environment.cwd === undefined))
-          && rolloutEnvironment.sandboxPolicy.type === "dangerFullAccess"
+        if (rolloutEnvironment.sandboxPolicy.type === "dangerFullAccess"
           && workspaceClaim?.environment.sandboxPolicy.type === "dangerFullAccess"
           && (workspaceClaim.environment.cwd === undefined
-            || environmentPathIdentity(workspaceClaim.environment.cwd) === environmentPathIdentity(rolloutEnvironment.cwd))
-          && workspaceClaim.environment.roots.some(root => contains(root, rolloutEnvironment.cwd))) {
+            || environmentPathIdentity(workspaceClaim.environment.cwd) === environmentPathIdentity(rolloutEnvironment.cwd))) {
           const nativeRoots = new Set(rolloutEnvironment.roots.map(environmentPathIdentity));
           const claimedRoots = new Set(workspaceClaim.environment.roots.map(environmentPathIdentity));
-          if (!rollout.workspaceRootsDeclared || [...nativeRoots].every(root => claimedRoots.has(root))) {
+          // Older explicit-cwd envelopes may carry auxiliary roots without declaring native projects.
+          const accepted = workspaceClaim.environment.roots.some(root => contains(root, rolloutEnvironment.cwd))
+            && (rollout.workspaceRootsDeclared ? [...nativeRoots].every(root => claimedRoots.has(root))
+              : currentCompaction || workspaceClaim.environment.cwd === undefined);
+          const recorded = !accepted && workspaceClaim.filesystemXml !== undefined
+            && workspaceClaim.filesystemXml === latestCodexRolloutFilesystem(rollout.rolloutPath);
+          if (accepted || recorded) {
             const roots = rollout.workspaceRootsDeclared
               ? [...rolloutEnvironment.roots, ...workspaceClaim.environment.roots.filter(root => !nativeRoots.has(environmentPathIdentity(root)))]
               : [...workspaceClaim.environment.roots];
             rolloutEnvironment = { ...rolloutEnvironment, roots, writableRoots: [...roots] };
+            if (recorded) currentClaims = currentClaims.map(claim => claim.filesystemXml === workspaceClaim.filesystemXml
+              ? { ...claim, environment: { ...claim.environment, roots, writableRoots: [...roots] } } : claim);
           }
         }
         const visualizationOwner = { thread_id: rolloutIdentity.threadId,
@@ -551,7 +565,7 @@ export class ChatGptThreadEnvironmentStore {
           }))) {
           throw new Error("Calendar environment delta conflicts with its current Codex rollout");
         }
-        if (hasCurrentContext && !directEnvironment && !initialClaim && !currentCompaction && !postCompactionContext
+        if (hasCurrentClaims && !directEnvironment && !initialClaim && !currentCompaction && !postCompactionContext
           && ordinaryContinuation && !calendarDelta) {
           const firstInstruction = input.findIndex(value => isCurrentTurnInstruction(record(value), metadata, identity.turnId!));
           const hasLaterRefresh = input.slice(firstInstruction + 1).some(value => hasEnvironmentContextFragment(record(value)));

@@ -50,7 +50,7 @@ export function prepareChatCompletion(input: ChatCompletionInput, config: AppCon
   const prompt = compileChatCompletion(input);
   const tokens = estimateTokens(prompt, route.backendModel);
   try { assertChatGptWebInputWithinLimits(tokens + CHATGPT_WEB_PLATFORM_RESERVE_TOKENS, tokens,
-    route.backendModel, route.adapterEffort, capabilities, prompt.length, false); }
+    route.backendModel, route.adapterEffort, capabilities, prompt.length, false, route.modelFamily); }
   catch { throw new ChatCompletionError("Conversation exceeds this Web model's supported input limit", 400, "context_length_exceeded", "messages"); }
   return { route, capabilities, prompt };
 }

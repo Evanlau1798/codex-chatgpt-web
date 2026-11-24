@@ -2,6 +2,18 @@ import type { Copy } from "./i18n";
 import { zeroRiskCopy } from "./zero-risk-copy";
 
 export const ja: Record<keyof Copy, string> = {
+  embeddedBrowserReset: "内蔵ブラウザーのデータをリセット",
+  embeddedBrowserResetBody: "Codex Web GPT の内蔵 ChatGPT ブラウザーに保存された Cookie、キャッシュ、サイトデータを消去します。再度サインインが必要です。通常のブラウザーやランチャー設定には影響しません。",
+  embeddedBrowserResetConfirm: "内蔵 ChatGPT ブラウザーのセッションを消去します。続行後は再度サインインが必要です。続行しますか？",
+  embeddedBrowserResetSuccess: "内蔵 ChatGPT ブラウザーのデータを消去しました。続けるには再度サインインしてください。",
+  embeddedBrowserLanguageHint: "再起動が必要です。言語を変更したら Codex Web GPT を完全に終了して再起動してください。内蔵ブラウザーの優先言語が更新されます。ChatGPT で保存済みの言語設定が優先される場合があります。",
+  updates: "アップデート",
+  checkUpdates: "更新を確認",
+  checkingUpdates: "確認中…",
+  updateCheckFailed: "更新の確認に失敗",
+  upToDate: "最新のバージョンです。",
+  updateRetryAfter: "{time} 以降に再確認できます。",
+  reset: "リセット",
   newChat: "新しいチャット",
   doctorCatalogPending: "このランタイムでは Codex のモデル一覧取得の完了をまだ確認していません",
   doctorCatalogReady: "Codex の最新のモデル一覧取得に成功しました",
@@ -46,7 +58,7 @@ export const ja: Record<keyof Copy, string> = {
   noAutoCompactBody: "Codex に公開する ChatGPT Web のコンテキストウィンドウと自動 compaction しきい値だけを取り除きます。Enhanced モードでは安全なツール結果の境界で非公開の復旧 checkpoint を作成します（Pro は約 100K Token ごと、Plus は新しいページの容量に合わせて早めに作成）。元のページは継続し、失効時だけ checkpoint とその後の履歴から再構築します。ChatGPT の上限は残り、大きすぎる prompt は安全に失敗します。変更後は Codex を再起動してください。初期設定では無効です。",
   tagline: "ネイティブ Codex ハーネス内で動作する ChatGPT Web",
   chooseLanguage: "言語を選択",
-  chooseLanguageHint: "後から設定で変更できます。",
+  chooseLanguageHint: "後から設定で変更できます。初回設定後、内蔵ブラウザーに言語を適用するには Codex Web GPT を完全に終了してから開き直してください。",
   english: "English",
   chinese: "简体中文",
   japanese: "日本語",

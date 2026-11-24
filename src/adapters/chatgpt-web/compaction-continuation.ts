@@ -5,12 +5,14 @@ import { atomicWriteFile } from "../../config";
 import { decodeCompactionSummary, isReadableCompactionSummaryText, SUMMARY_PREFIX } from "../../responses/compaction";
 import type { CodexMessage, CodexParsedRequest } from "../../types";
 import { parseRequest } from "../../responses/parser";
-import { readNativeThreadDelegation } from "../../responses/native-context";
+import { isNativeUserGoalUpdate, readNativeThreadDelegation } from "../../responses/native-context";
 import type { ChatGptTurnIdentity, ChatGptTurnUserRevision } from "./environment";
 import { priorAbortedTurnIds, turnUserRevisionHistory } from "./turn-user-revision";
 import { ChatGptWebAdapterError } from "./adapter-error";
 
 interface CompletedCheckpoint {
+  /** In-memory owner only; persisted proof retains hashes without raw identities. */
+  owner?: ChatGptTurnIdentity;
   summaryHash: string;
   sourceHashes: ReadonlySet<string>;
   sourceTurnHash?: string;
@@ -80,8 +82,9 @@ function sourceDigest(source: ChatGptTurnUserRevision): string {
 
 function matchesRevision(item: Record<string, unknown>, source: ChatGptTurnUserRevision): boolean {
   return item.id === source.itemId
+    && (source.nativeTurnId === undefined || isNativeUserGoalUpdate(item))
     && digest([(item.internal_chat_message_metadata_passthrough as { turn_id?: unknown } | undefined)?.turn_id,
-      item.type === "function_call_output" ? item.output : item.content]) === sourceDigest(source);
+      item.type === "function_call_output" ? item.output : item.content]) === digest([source.nativeTurnId ?? source.turnId, source.content]);
 }
 
 function isNativeGoalSource(item: Record<string, unknown> | undefined): boolean {
@@ -92,7 +95,7 @@ function isNativeGoalSource(item: Record<string, unknown> | undefined): boolean 
     && typeof item.id === "string" && !!item.id
     && typeof metadata?.turn_id === "string" && !!metadata.turn_id.trim()
     && Array.isArray(metadata.content_item_kinds) && metadata.content_item_kinds.length === 1
-    && metadata.content_item_kinds[0] === "goal.internal_context";
+    && (metadata.content_item_kinds[0] === "goal.internal_context" || isNativeUserGoalUpdate(item));
 }
 
 export function rememberCompactionContinuation(
@@ -131,6 +134,7 @@ export function rememberCompactionContinuation(
   const next = new Map(checkpoints);
   next.delete(key);
   next.set(key, {
+    owner: structuredClone(identity),
     summaryHash: digest(summary), sourceHashes: new Set(sources.map(sourceDigest)),
     sourceTurnHash: sources[0]!.turnId ? digest(sources[0]!.turnId) : undefined,
     source: structuredClone(sources[0]),
@@ -254,6 +258,28 @@ export function recoverCompactionInstruction(
     "ChatGPT cannot recover the current compacted task after restart. Supply the current native task context or a new instruction; the older retained message was not used as the task.",
     { status: 409, errorType: "invalid_request_error", code: "compaction_source_unavailable", retryable: false },
   );
+}
+
+/** #935: a new native step may compact before its instruction exists in history.
+ * This identifies historical compaction input only; ordinary replay keeps its turn scope. */
+export function previousCompletedCompactionSource(
+  parsed: CodexParsedRequest,
+  identity: ChatGptTurnIdentity,
+): ChatGptTurnUserRevision | undefined {
+  const current = scope(parsed, identity);
+  if (!parsed._compactionRequest || !current || checkpoints.has(current)) return undefined;
+  let source: ChatGptTurnUserRevision | undefined;
+  // acceptedCheckpoint touches LRU order, so iterate a snapshot of the keys.
+  for (const key of [...checkpoints.keys()]) {
+    const owner = checkpoints.get(key)?.owner;
+    if (!owner || owner.threadId !== identity.threadId || owner.turnId === identity.turnId
+      || key !== scope(parsed, owner)) continue;
+    const previous = acceptedCheckpoint(parsed, owner);
+    if (!previous) continue;
+    if (source) return undefined;
+    source = previous.checkpoint.source;
+  }
+  return source ? structuredClone(source) : undefined;
 }
 
 function acceptedCheckpoint(

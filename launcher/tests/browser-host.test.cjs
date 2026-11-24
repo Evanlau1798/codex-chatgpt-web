@@ -1112,9 +1112,11 @@ test("session verification distinguishes a missing login from network and invali
   const validSession = { user: { id: "fixture" }, expires: "2099-01-01T00:00:00Z" };
   const cases = [
     { name: "valid", fetch: async () => response(validSession), status: "ready", authenticated: true },
-    { name: "guest", fetch: async () => response({}), status: "signed-out" },
-    { name: "expired", fetch: async () => response({ ...validSession, expires: "2000-01-01T00:00:00Z" }), status: "signed-out" },
-    { name: "unauthorized", fetch: async () => response(null, { ok: false, status: 401 }), status: "signed-out" },
+    { name: "guest", fetch: async () => response({}), status: "signed-out", reason: "no-user" },
+    { name: "expired", fetch: async () => response({ ...validSession, expires: "2000-01-01T00:00:00Z" }), status: "signed-out", reason: "expired" },
+    { name: "unauthorized", fetch: async () => response(null, { ok: false, status: 401 }), status: "signed-out", reason: "http-401" },
+    { name: "session error", fetch: async () => response({ error: "private-detail" }), status: "signed-out", reason: "session-error" },
+    { name: "invalid expiry", fetch: async () => response({ ...validSession, expires: "private-invalid-date" }), status: "error" },
     { name: "network", fetch: async () => { throw new Error("private-proxy-secret"); }, status: "error", message: /connection|network/i },
     { name: "deadline", timeout: true, fetch: async (_url, { signal }) => {
       await new Promise(resolve => setImmediate(resolve));
@@ -1131,6 +1133,7 @@ test("session verification distinguishes a missing login from network and invali
     { name: "renderer", rendererError: true, status: "error", message: /browser/i },
   ];
   for (const item of cases) {
+    const log = [];
     const fixture = {
       state: { authenticated: true }, activeTraceId: null, manualOperation: null,
       view: { webContents: {
@@ -1149,13 +1152,15 @@ test("session verification distinguishes a missing login from network and invali
         },
       } },
       setState(patch) { this.state = { ...this.state, ...patch }; },
-      snapshot() { return { ...this.state }; }, logger: { info() {} },
+      snapshot() { return { ...this.state }; }, logger: { info: (...entry) => log.push(entry) },
     };
     const result = await BrowserHost.prototype.probeAuthentication.call(fixture);
     assert.equal(result.status, item.status, item.name);
     assert.equal(result.authenticated, item.authenticated === true, item.name);
     if (item.message) assert.match(result.message, item.message, item.name);
     assert.doesNotMatch(JSON.stringify(result), /private-/);
+    if (item.reason) await BrowserHost.prototype.probeAuthentication.call(fixture);
+    assert.deepEqual(log, item.reason ? [["browser.session_signed_out", { source: "page", reason: item.reason }]] : []);
   }
 });
 
@@ -1247,6 +1252,7 @@ test("shared session changes refresh hidden sign-in state without navigating any
   const requests = [];
   let payload = {};
   let mode = "automatic";
+  const sessionEvents = [];
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
     state: { authenticated: true, status: "ready" },
     turnTabs: new Map(),
@@ -1263,7 +1269,7 @@ test("shared session changes refresh hidden sign-in state without navigating any
       },
     } } },
     setState(patch) { this.state = { ...this.state, ...patch }; },
-    logger: { warn() { assert.fail("Session refresh failed"); } },
+    logger: { info: (...entry) => sessionEvents.push(entry), warn() { assert.fail("Session refresh failed"); } },
   });
   fixture.bindAuthenticationChanges();
   const notify = cookie => cookies.emit("changed", {}, cookie, "explicit", true);
@@ -1274,6 +1280,7 @@ test("shared session changes refresh hidden sign-in state without navigating any
   await fixture.authenticationRefresh;
   assert.equal(fixture.state.authenticated, false);
   assert.equal(fixture.state.status, "signed-out");
+  assert.deepEqual(sessionEvents, [["browser.session_signed_out", { source: "idle", reason: "no-user" }]]);
   payload = { user: { id: "test" }, expires: "2099-01-01T00:00:00Z" };
   notify({ httpOnly: true, domain: "chatgpt.com" });
   await fixture.authenticationRefresh;
@@ -1600,7 +1607,17 @@ test("passkey login imports only validated state and re-proves the Launcher sess
   assert.ok(calls.some(value => Array.isArray(value) && value[0] === "inspect" && value[1] === false));
 });
 
-test("invalid passkey transfer is removed without mutating the embedded session", async () => {
+for (const { domain, origins, error } of [
+  { domain: ".accounts.google.com", origins: [], error: /no ChatGPT\/OpenAI cookies/ },
+  {
+    domain: ".chatgpt.com",
+    origins: [{ origin: "https://chatgpt.com", localStorage: [
+      { name: "first", value: "x".repeat(3 * 1024 * 1024) },
+      { name: "second", value: "x".repeat(3 * 1024 * 1024) },
+    ] }],
+    error: /local-storage total is too large/,
+  },
+]) test(`invalid passkey transfer is removed without mutating the embedded session (${error.source})`, async () => {
   let cleared = false;
   let cleaned = false;
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
@@ -1616,18 +1633,18 @@ test("invalid passkey transfer is removed without mutating the embedded session"
         cookies: [{
           name: "identity-provider",
           value: "private",
-          domain: ".accounts.google.com",
+          domain,
           path: "/",
           expires: -1,
           httpOnly: true,
           secure: true,
           sameSite: "Lax",
         }],
-        origins: [],
+        origins,
       },
       cleanup: async () => { cleaned = true; },
     }),
-    /no ChatGPT\/OpenAI cookies/,
+    error,
   );
   assert.equal(cleared, false);
   assert.equal(cleaned, true);
@@ -1735,6 +1752,70 @@ test("logout clears only the owned ChatGPT session and returns to the sign-in su
   assert.deepEqual(calls[4], ["loadURL", "https://chatgpt.com/?temporary-chat=true"]);
   assert.ok(calls.some(([name]) => name === "activateHomeSurface"));
   assert.ok(calls.some(([name]) => name === "show"));
+});
+
+test("embedded browser reset discards only its session and closes its tabs", async () => {
+  const calls = [];
+  const tab = { id: "active-tab", view: { webContents: {
+    isDestroyed: () => false,
+    loadURL: async url => calls.push(["load-tab", url]),
+  } } };
+  const otherTab = { id: "other-tab", view: { webContents: {
+    isDestroyed: () => false,
+    loadURL: async url => calls.push(["load-other-tab", url]),
+  } } };
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    authView: { id: "auth-view" },
+    turnTabs: new Map([[tab.id, tab], [otherTab.id, otherTab]]),
+    view: { webContents: {
+      isDestroyed: () => false,
+      loadURL: async url => calls.push(["load", url]),
+      session: {
+        clearStorageData: async () => calls.push("clear-storage"),
+        clearCache: async () => calls.push("clear-cache"),
+        flushStorageData: () => calls.push("flush-storage"),
+        cookies: { flushStore: async () => calls.push("flush-cookies") },
+      },
+    } },
+    state: { authenticated: true, status: "ready" },
+    primaryNavigationError: new Error("previous navigation"),
+    authNavigationError: new Error("previous auth"),
+    reauthenticationRequired: true,
+    closeAuthView(_view, destroy, refresh) {
+      calls.push(["close-auth", destroy, refresh]);
+      this.authView = null;
+    },
+    removeTurnTab(item, force) {
+      calls.push(["close-tab", item.id, force]);
+      this.turnTabs.delete(item.id);
+    },
+    writeDescriptor() { calls.push("write-descriptor"); },
+    withManualOperation: async (_operation, run) => run(),
+    setState(patch) { Object.assign(this.state, patch); },
+    snapshot() { return { ...this.state }; },
+    logger: { info(event) { calls.push(["log", event]); } },
+  });
+
+  const result = await fixture.resetEmbeddedBrowserData();
+  assert.deepEqual(calls, [
+    ["close-auth", true, false],
+    ["load", IDLE_BROWSER_URL],
+    ["load-tab", IDLE_BROWSER_URL],
+    ["load-other-tab", IDLE_BROWSER_URL],
+    "clear-storage", "clear-cache", "flush-storage", "flush-cookies",
+    ["close-tab", tab.id, true],
+    ["close-tab", otherTab.id, true],
+    "write-descriptor",
+    ["log", "browser.session_reset"],
+  ]);
+  assert.equal(fixture.turnTabs.size, 0);
+  assert.equal(fixture.authView, null);
+  assert.equal(fixture.primaryNavigationError, null);
+  assert.equal(fixture.authNavigationError, null);
+  assert.equal(fixture.reauthenticationRequired, false);
+  assert.equal(result.authenticated, false);
+  assert.equal(result.status, "signed-out");
+  assert.equal(result.url, IDLE_BROWSER_URL);
 });
 
 test("launcher shutdown persists ChatGPT DOM storage and cookies before browser destruction", async () => {

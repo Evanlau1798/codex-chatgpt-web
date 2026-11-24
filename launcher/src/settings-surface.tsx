@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { biggerContextSwitchState } from "./context-mode";
 import { Icon } from "./icons";
 import { ApiAccessCard } from "./api-access-card";
+import { UpdateSettings } from "./UpdateSettings";
 import type { Copy } from "./i18n";
 import {
   BrandMark,
@@ -47,6 +48,18 @@ export function SettingsSurface({
   const [busy, setBusy] = useState(false);
   const [turnsCancelled, setTurnsCancelled] = useState(false);
   const [integrationRemoved, setIntegrationRemoved] = useState(false);
+  const [confirmBrowserReset, setConfirmBrowserReset] = useState(false);
+  const [browserDataReset, setBrowserDataReset] = useState(false);
+  const resetEmbeddedBrowserData = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api!.resetEmbeddedBrowserData();
+      setBrowserDataReset(true);
+      setConfirmBrowserReset(false);
+    } catch (cause) { setError(messageOf(cause)); }
+    finally { setBusy(false); }
+  };
   const currentPluginName = snapshot.connectorNames[snapshot.state.browserInteractionMode];
   const [nameSuffix, setNameSuffix] = useState(currentPluginName.slice(6));
   const [confirmNameChange, setConfirmNameChange] = useState(false);
@@ -744,7 +757,23 @@ export function SettingsSurface({
             onChange={(checked) => void setUseSavedChats(checked)}
           />
         </SettingRow>
-        <SettingRow body={copy.chooseLanguageHint} label={copy.language}>
+        <SettingRow
+          body={confirmBrowserReset ? copy.embeddedBrowserResetConfirm
+            : browserDataReset ? copy.embeddedBrowserResetSuccess : copy.embeddedBrowserResetBody}
+          label={copy.embeddedBrowserReset}
+        >
+          {confirmBrowserReset ? (
+            <div className="manual-turn-actions">
+              <SecondaryButton disabled={busy} onClick={() => setConfirmBrowserReset(false)}>{copy.close}</SecondaryButton>
+              <PrimaryButton disabled={busy} onClick={() => void resetEmbeddedBrowserData()}>{copy.reset}</PrimaryButton>
+            </div>
+          ) : <SecondaryButton disabled={busy} onClick={() => { setBrowserDataReset(false); setConfirmBrowserReset(true); }}>{copy.reset}</SecondaryButton>}
+        </SettingRow>
+        {snapshot.packaged && snapshot.update.status !== "disabled" ? (
+          <UpdateSettings copy={copy} language={language} update={snapshot.update}
+            version={snapshot.version} onCheck={() => api!.checkForUpdates()} setError={setError} />
+        ) : null}
+        <SettingRow body={copy.embeddedBrowserLanguageHint} label={copy.language}>
           <LanguageMenu copy={copy} language={language} onChange={(next) => void updateLanguage(next)} />
         </SettingRow>
       </div>

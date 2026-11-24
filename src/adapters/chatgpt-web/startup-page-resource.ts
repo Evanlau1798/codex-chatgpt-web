@@ -7,7 +7,7 @@ import type { StartupPageResource } from "./startup-page-pool";
 import { closeLauncherBrowserConnection } from "../../launcher-browser-connection";
 
 export type StartupPageSelection = ChatGptWebModelMode & {
-  modelFamily?: "5.6" | "6";
+  modelFamily?: "5.6" | "6" | "6.2";
   selection?: { url: string; label: string };
   usageModel?: ChatGptUsageModel;
 };

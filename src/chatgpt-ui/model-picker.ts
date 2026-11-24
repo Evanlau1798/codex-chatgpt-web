@@ -36,22 +36,42 @@ export const CHATGPT_EFFORT_SLIDER_SELECTOR = Object.values(CHATGPT_SLIDER_VARIA
 
 // 2026-10-28 (#921): separate named rows beside GPT-6.1 and Default.
 const NAMED_GPT6_ROWS = { sol: /^GPT[-\s]?6\s+Sol$/i, astra: /^GPT[-\s]?6\s+Astra$/i };
-// 2026-10-08 (388fca5), localized in 6.1.13: one row controls the whole family.
+// 2026-11-23: Chat tab exposes "Latest" (6.2 Sol + 6 Pro) alongside an explicit "6" row.
+// Prefer explicit version rows before falling back to Latest so Latest and 6 never collide.
+const EXPLICIT_GPT6_ROW = /^(?:GPT[-\s]?)?6(?:\s+Astra)?(?:\s+Pro)?$/i;
+const EXPLICIT_GPT62_ROW = /^(?:GPT[-\s]?)?6\.2(?:\s+Sol)?$/i;
+// 2026-10-08 (388fca5), localized in 6.1.13: one row controls the latest family.
 // A match here is only a UI target. The caller still verifies version/name/effort.
-const SHARED_GPT6_ROW = /^(?:Latest|Le plus récent|最新(?:模型)?|최신|(?:GPT[-\s]?)?6(?:\s+Astra)?(?:\s+Pro)?)$/i;
+const LATEST_ROW = /^(?:Latest|Le plus récent|最新(?:模型)?|최신)$/i;
 const GPT56_ROW = /^GPT[-\s]?5\.6\s+Sol(?:\s+Pro)?$/i;
 
 export async function chatGptModelOption(menu: Locator, requested: {
-  version: "5.6" | "6"; name: "sol" | "astra";
+  version: "5.6" | "6" | "6.2"; name: "sol" | "astra";
 }): Promise<Locator> {
+  if (requested.version === "6.2") {
+    const explicit = menu.getByRole("menuitemradio", {
+      name: EXPLICIT_GPT62_ROW, exact: true, includeHidden: true,
+    });
+    if (await explicit.count() > 0) return explicit;
+    return menu.getByRole("menuitemradio", {
+      name: LATEST_ROW, exact: true, includeHidden: true,
+    });
+  }
   if (requested.version === "6") {
     const named = menu.getByRole("menuitemradio", {
       name: NAMED_GPT6_ROWS[requested.name], exact: true, includeHidden: true,
     });
     if (await named.count() > 0) return named;
+    const explicit = menu.getByRole("menuitemradio", {
+      name: EXPLICIT_GPT6_ROW, exact: true, includeHidden: true,
+    });
+    if (await explicit.count() > 0) return explicit;
+    return menu.getByRole("menuitemradio", {
+      name: LATEST_ROW, exact: true, includeHidden: true,
+    });
   }
   return menu.getByRole("menuitemradio", {
-    name: requested.version === "5.6" ? GPT56_ROW : SHARED_GPT6_ROW,
+    name: GPT56_ROW,
     exact: true, includeHidden: true,
   });
 }
@@ -60,7 +80,7 @@ export async function chatGptModelOption(menu: Locator, requested: {
 export async function openChatGptModelRows(menu: Locator): Promise<void> {
   // Power view tracked since 2026-10-02 (b6ca2d3); the October explicit rows
   // still use it. Inactive radio rows stay attached but inert in the simple view.
-  const powerView = menu.locator('[data-model-picker-view]');
+  const powerView = menu.locator(':scope[data-model-picker-view], [data-model-picker-view]');
   if (await powerView.count() === 1) {
     const view = await powerView.getAttribute("data-model-picker-view");
     if (view === "simple") {
@@ -84,10 +104,10 @@ export async function openChatGptModelRows(menu: Locator): Promise<void> {
 export function parseChatGptModelAnnouncement(text: string): {
   version: string; name?: string; mode: string;
 } | undefined {
-  // #875, shipped 2026-10-21 (6f43747): the active header can concatenate labels:
-  // "5.6 Sol" + "5.6 Pro". Only collapse an identical repeated version.
+  // #875, shipped 2026-10-21 (6f43747); 2026-11-23 live capture ("6" + "6 Pro" / "6 High"):
+  // the active header can concatenate model and effort labels. Collapse only an identical repeated version.
   const normalized = text.normalize("NFKC").replace(/\p{Cf}/gu, "").replace(/\s+/g, " ").trim()
-    .replace(/^((?:GPT[-\s]?)?(\d+(?:\.\d+)?)\s+(?:Sol|Astra))\s+(?:GPT[-\s]?)?\2\s+/i, "$1 ");
+    .replace(/^((?:GPT[-\s]?)?(\d+(?:\.\d+)?)(?:\s+(?:Sol|Astra))?)\s+(?:GPT[-\s]?)?\2\s+/i, "$1 ");
   const match = /^(?:GPT[-\s]?)?(\d+(?:\.\d+)?)(?:\s+(Sol|Astra))?\s+([^\p{P}]+)(?:\p{P}|$)/iu.exec(normalized);
   if (!match) return undefined;
   const mode = match[3]!.trim();
@@ -147,8 +167,99 @@ export interface ChatGptEffortActivation {
   slider: Locator;
 }
 
+// #993, November 15; extended November 23 for the three-family picker (Latest, 6, GPT-5.6 Sol).
+// The active list contains the model families and exactly two disabled effort rows.
+// A locked upsell or an unmounted slider alone proves nothing.
+const radio = '[role="menuitemradio"]';
+const enabledFamily = radio + ':not([data-disabled]):not([aria-disabled="true"])';
+const disabledEffort = radio + '[aria-disabled="true"][data-disabled][aria-checked="false"][data-state]';
+const lockedPanel = '[data-active="true"][aria-hidden="false"]:not([inert]):not([inert] *)'
+  + `:has(> ${enabledFamily}[aria-checked="true"][data-model-selected])`
+  + `:has(> ${enabledFamily} [data-menu-row-content] > :text-is("6"))`
+  + `:has(> ${enabledFamily} [data-menu-row-content] > :text-is("GPT-5.6 Sol"))`
+  + `:has(> ${disabledEffort} ~ ${disabledEffort}):not(:has(> ${disabledEffort} ~ ${disabledEffort} ~ ${disabledEffort}))`
+  + `:not(:has(> :nth-child(6 of ${radio})))`
+  + ':not(:has([role="slider"]))';
+
+export function chatGptLockedEffortPanel(menu: Locator): Locator {
+  // The owned menu may itself be the advanced group. Check the panel's parent in either shape.
+  return menu.locator(lockedPanel + ' >> xpath=self::*[../@data-model-picker-view="advanced"]');
+}
+
+const CHATGPT_DISABLED_EFFORT_MESSAGE =
+  "ChatGPT has disabled reasoning options for the selected model. Open the model picker to see when they are available again.";
+
+export async function disabledRowTooltip(rows: Locator): Promise<string | undefined> {
+  try {
+    if (await rows.count() !== 1 || await rows.getAttribute("aria-disabled") !== "true") return undefined;
+    await rows.hover({ timeout: 1_500 });
+    return await rows.evaluate(async element => {
+      const deadline = Date.now() + 1_000;
+      do {
+        const ids = element.getAttribute("aria-describedby")?.trim().split(/\s+/).filter(Boolean) ?? [];
+        const tooltips = ids.map(id => document.getElementById(id))
+          .filter((node): node is HTMLElement => node instanceof HTMLElement && node.getAttribute("role") === "tooltip");
+        const visible = tooltips.filter(node => {
+          for (let current: HTMLElement | null = node; current; current = current.parentElement) {
+            const style = getComputedStyle(current);
+            if (!current.isConnected || current.hidden || current.getAttribute("aria-hidden") === "true"
+              || style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
+          }
+          return true;
+        });
+        if (visible.length === 1) {
+          const text = visible[0]!.textContent?.replace(/\s+/g, " ").trim();
+          if (text && text.length <= 512) return text;
+        }
+        await new Promise(resolve => setTimeout(resolve, 50));
+      } while (Date.now() < deadline);
+      return undefined;
+    }, undefined, { timeout: 1_500 });
+  } catch {
+    // Optional UI detail must not replace the existing model-unavailable error.
+    return undefined;
+  }
+}
+
+export async function chatGptLockedEffortMessage(panel: Locator, label?: string): Promise<string> {
+  let detail: string | undefined;
+  const named = label ? panel.getByRole("menuitemradio", { name: label, exact: true }) : undefined;
+  if (named && await named.count() === 1) {
+    detail = await disabledRowTooltip(named);
+  } else if (!label || label === "Medium" || label === "High") {
+    // Localized names may differ. Only report a shared notice if both disabled rows link to it.
+    const rows = panel.getByRole("menuitemradio", { disabled: true });
+    if (await rows.count() === 2) {
+      const first = await disabledRowTooltip(rows.nth(0));
+      if (first && await disabledRowTooltip(rows.nth(1)) === first) detail = first;
+    }
+  }
+  return detail ? `${CHATGPT_DISABLED_EFFORT_MESSAGE} ChatGPT: ${detail}` : CHATGPT_DISABLED_EFFORT_MESSAGE;
+}
+
+/** Wait for positive evidence of either picker layout, including delayed hydration. */
+export async function waitForChatGptEffortRange(
+  { menu, sliderContainer, slider }: ChatGptEffortActivation, timeout: number, signal?: AbortSignal,
+): Promise<"slider" | "locked"> {
+  const stop = new AbortController();
+  const waitSignal = signal ? AbortSignal.any([signal, stop.signal]) : stop.signal;
+  const options = { timeout, signal: waitSignal };
+  try {
+    return await Promise.race([
+      sliderContainer.waitFor({ state: "visible", ...options })
+        .then(() => slider.waitFor({ state: "attached", ...options })).then(() => "slider" as const),
+      chatGptLockedEffortPanel(menu).waitFor({ state: "visible", ...options }).then(() => "locked" as const),
+    ]);
+  } finally {
+    stop.abort();
+  }
+}
+
+export const CHATGPT_ACTIVE_EFFORT_SLIDER_SELECTOR =
+  `:is(${CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR}):not([inert] *, [aria-hidden="true"] *)`;
+
 export function chatGptEffortSlider(page: Page): { sliderContainer: Locator; slider: Locator } {
-  const sliderContainer = page.locator(CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR).filter({ visible: true });
+  const sliderContainer = page.locator(CHATGPT_ACTIVE_EFFORT_SLIDER_SELECTOR).filter({ visible: true });
   // The current picker keeps ARIA values on a zero-width, aria-hidden semantic input.
   // Its visible container proves the active surface; the input proves the effort range.
   return { sliderContainer, slider: sliderContainer.locator('[role="slider"]') };

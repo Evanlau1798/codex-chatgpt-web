@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { rememberCompactionContinuation, isAcceptedCompactionContinuation, recoverCompactionInstruction } from "../src/adapters/chatgpt-web/compaction-continuation";
+import { rememberCompactionContinuation, isAcceptedCompactionContinuation, recoverCompactionInstruction, previousCompletedCompactionSource } from "../src/adapters/chatgpt-web/compaction-continuation";
 import { encodeCompactionSummary } from "../src/responses/compaction";
 import type { CodexParsedRequest } from "../src/types";
 
@@ -18,6 +18,18 @@ function fixture() {
   const accepts = () => isAcceptedCompactionContinuation(parsed, identity, source);
   return { identity, source, parsed, item, remember, accepts };
 }
+
+test("pre-turn compact source lookup preserves hashed scope and exact thread/model/effort isolation", () => {
+  const f = fixture(); f.remember();
+  const next = { ...f.identity, turnId: "next" };
+  expect(previousCompletedCompactionSource(f.parsed, next)).toEqual(f.source);
+  expect(previousCompletedCompactionSource({ ...f.parsed, _compactionRequest: false }, next)).toBeUndefined();
+  expect(previousCompletedCompactionSource({ ...f.parsed, modelId: "other" }, next)).toBeUndefined();
+  expect(previousCompletedCompactionSource({ ...f.parsed, options: { reasoning: "high" } }, next)).toBeUndefined();
+  expect(previousCompletedCompactionSource(f.parsed, { ...next, threadId: "other" })).toBeUndefined();
+  rememberCompactionContinuation(f.parsed, { ...f.identity, turnId: "ambiguous" }, [f.source], "Checkpoint A");
+  expect(previousCompletedCompactionSource(f.parsed, next)).toBeUndefined();
+});
 
 test("new checkpoints replace old evidence and never fall back past a newer invalid checkpoint", () => {
   const f = fixture();

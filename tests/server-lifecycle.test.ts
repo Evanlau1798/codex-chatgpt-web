@@ -466,6 +466,8 @@ test("server routes Claude gateway discovery without touching the Codex catalog 
         { id: "claude-chatgpt-web-light", display_name: "ChatGPT Web — Instant" },
         { id: "claude-chatgpt-web-medium", display_name: "ChatGPT Web — Medium" },
         { id: "claude-chatgpt-web-high", display_name: "ChatGPT Web — High" },
+        { id: "claude-chatgpt-web-gpt-6.2-sol-instant", display_name: "GPT-6.2 Sol Instant (Web)" },
+        { id: "claude-chatgpt-web-gpt-6.2-sol", display_name: "GPT-6.2 Sol (Web)" },
         { id: "claude-chatgpt-web-gpt-6-sol-instant", display_name: "GPT-6 Sol Instant (Web)" },
         { id: "claude-chatgpt-web-gpt-6-sol", display_name: "GPT-6 Sol (Web)" },
         { id: "claude-chatgpt-web-gpt-5.6-sol-instant", display_name: "GPT-5.6 Sol Instant (Web)" },

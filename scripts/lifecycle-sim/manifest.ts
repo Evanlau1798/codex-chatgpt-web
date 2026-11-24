@@ -1,4 +1,9 @@
 export const codexLifecycleTests = [
+  "tests/browser-preparation-regressions.test.ts",
+  "tests/model-family-capability-persistence.test.ts",
+  "tests/chatgpt-web-harness.test.ts",
+  "tests/original-compaction-recovery.test.ts",
+  "tests/chatgpt-web-usage.test.ts",
   "tests/environment-midnight-steering.test.ts",
   "tests/native-interrupt-http.test.ts",
   "tests/native-interrupt-owner-fence.test.ts",

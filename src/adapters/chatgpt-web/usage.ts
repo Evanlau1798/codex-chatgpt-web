@@ -18,6 +18,7 @@ import {
   estimateChatGptWebImageTokens,
   estimateCompiledChatGptWebInputTokens,
 } from "./input-tokens";
+import { checkChatGptWebTransport } from "./transport-budget";
 import {
   CHATGPT_BIGGER_CONTEXT_PARTS,
   compileChatGptWebPrompt,
@@ -55,81 +56,58 @@ function conservativeTextTokens(text: string, modelId: string): number {
 export function estimateChatGptWebInputTokens(
   parsed: CodexParsedRequest,
   capabilities: ChatGptWebCapabilities,
-  options: Pick<CompileChatGptWebPromptOptions,
-    "nativeControlConnector" | "useEnhancedOutputTunnel" | "experimentalMultipartParts" | "experimentalSkillAttachments" | "captureLunaCheckpoint" | "appName"> = {},
+  options: CompileChatGptWebPromptOptions = {},
+  biggerContext = false,
 ): number {
   const manual = isChatGptWebZeroRiskBackendModel(parsed.modelId);
   const mode = manual
     ? { localTools: true }
     : resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, capabilities);
   const identity = extractChatGptTurnIdentity(parsed);
-  const token = manual ? ESTIMATE_REQUEST_ID
-    : mode.localTools && effectiveChatGptToolPolicy(parsed).tools.length > 0 ? ESTIMATE_TURN_TOKEN : undefined;
-  const compiled = compileChatGptWebPrompt(
-    parsed,
-    capabilities,
-    token,
-    {
-      ...options,
-      ...(manual ? { manualControl: true as const } : {}),
-      captureLunaCheckpoint: options.captureLunaCheckpoint ?? (parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID
-        && !parsed._compactionRequest
-        && Boolean(identity.threadId && identity.turnId)),
-    },
-  );
-  return estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId,
-    token ? [token, claudeSteeringMarker(token)] : []);
+  const turnToken = manual ? ESTIMATE_REQUEST_ID : mode.localTools && effectiveChatGptToolPolicy(parsed).tools.length > 0 ? ESTIMATE_TURN_TOKEN : undefined;
+  const compileOptions = {
+    ...options,
+    ...(manual ? { manualControl: true as const } : {}),
+    captureLunaCheckpoint: options.captureLunaCheckpoint ?? (parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID
+      && !biggerContext && !parsed._compactionRequest && Boolean(identity.threadId && identity.turnId)),
+  };
+  const compiled = biggerContext
+    ? compileBiggerContextPrompt(parsed, capabilities, turnToken, compileOptions, "usage")
+    : compileChatGptWebPrompt(parsed, capabilities, turnToken, compileOptions);
+  return estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId, options.multipartTransactionId ?? (turnToken ? [turnToken, claudeSteeringMarker(turnToken)] : []));
 }
 
-/**
- * The compaction threshold chooses the initial part count. Whole records and composer limits
- * can require more parts even when the total token estimate is small. Plan before submission;
- * compaction always receives all six parts without passing through the legacy inline budget.
- */
-export function resolveBiggerContextMultipartParts(
-  parsed: CodexParsedRequest,
-  capabilities: ChatGptWebCapabilities,
-  experimentalSkillAttachments = false,
-  appName?: string,
-): ChatGptWebMultipartPartCount | undefined {
+/** Prefer the smallest transport that carries the complete request through browser preflight. */
+export function compileBiggerContextPrompt(
+  parsed: CodexParsedRequest, capabilities: ChatGptWebCapabilities, turnToken?: string,
+  options: CompileChatGptWebPromptOptions = {}, purpose: "submit" | "usage" = "submit",
+): CompiledChatGptWebPrompt {
   if (isChatGptWebZeroRiskBackendModel(parsed.modelId)) {
     throw new Error("Bigger Context is unavailable for ChatGPT Zero Risk");
   }
   const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, capabilities);
-  if (!supportsChatGptWebBiggerContext(parsed.modelId, mode.effort, parsed._chatgptModelFamily)) return undefined;
-  if (parsed._compactionRequest) return CHATGPT_BIGGER_CONTEXT_PARTS;
-  const backendModel = parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID ? CHATGPT_WEB_LUNA_MODEL_ID : CHATGPT_WEB_BACKEND_MODEL;
-  const { autoCompactTokenLimit } = resolveChatGptWebContextLimits(
-    backendModel,
-    mode.effort,
-    { ...capabilities, experimentalBiggerContext: false },
-    false,
-    parsed._chatgptModelFamily,
-  );
-  const compile = (parts?: ChatGptWebMultipartPartCount): CompiledChatGptWebPrompt => compileChatGptWebPrompt(
-    parsed,
-    capabilities,
-    mode.localTools && effectiveChatGptToolPolicy(parsed).tools.length > 0 ? ESTIMATE_TURN_TOKEN : undefined,
-    { appName, experimentalMultipartParts: parts, experimentalSkillAttachments, captureLunaCheckpoint: false },
-  );
-  const inline = compile();
-  const inputTokens = estimateCompiledChatGptWebInputTokens(inline, parsed.modelId);
-  const initialParts = biggerContextPartCount(inputTokens, autoCompactTokenLimit, false);
-  const fits = (compiled: CompiledChatGptWebPrompt): boolean => multipartPromptFits(
-    compiled,
-    parsed,
-    capabilities,
-    mode.effort,
-    messages => resolveChatGptWebMultipartContextWindow(backendModel, mode.effort, capabilities,
-      Math.min(messages, CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER), parsed._chatgptModelFamily),
-  );
-  if (initialParts === undefined && fits(inline)) return undefined;
-  if (initialParts !== CHATGPT_BIGGER_CONTEXT_PARTS && fits(compile(2))) return 2;
-  if (fits(compile(CHATGPT_BIGGER_CONTEXT_PARTS))) return CHATGPT_BIGGER_CONTEXT_PARTS;
-  throw new ChatGptWebAdapterError(
-    "No Bigger Context partition can carry every whole record within the measured message limits. Compact the task before retrying.",
-    { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
-  );
+  if (!supportsChatGptWebBiggerContext(parsed.modelId, mode.effort, parsed._chatgptModelFamily)) {
+    return compileChatGptWebPrompt(parsed, capabilities, turnToken, options);
+  }
+  for (const parts of [undefined, 2, CHATGPT_BIGGER_CONTEXT_PARTS] as const) {
+    // Luna only supports a separate native compaction request over multipart transport.
+    if (!parts && parsed._compactionRequest && parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID) continue;
+    const largest = parts === CHATGPT_BIGGER_CONTEXT_PARTS;
+    try {
+      const compiled = compileChatGptWebPrompt(parsed, capabilities, turnToken, {
+        ...options, experimentalMultipartParts: parts, requireCompleteHistory: !largest,
+      });
+      // Usage describes canonical history even when the retained chat only sends its latest tool
+      // results. A submission must pass preflight for every size, including the largest.
+      if (!largest || purpose === "submit") {
+        checkChatGptWebTransport(compiled, parsed.modelId, mode, capabilities, parsed._chatgptModelFamily, options.multipartTransactionId);
+      }
+      return compiled;
+    } catch (error) {
+      if (largest || !(error instanceof ChatGptWebAdapterError && error.code === "context_length_exceeded")) throw error;
+    }
+  }
+  throw new Error("No Bigger Context transport was evaluated");
 }
 
 function multipartPromptFits(
@@ -146,7 +124,7 @@ function multipartPromptFits(
     const final = index === messages.length - 1;
     const messageEffort = final ? effort : stagingEffort;
     const { browserComposerCharLimit } = resolveChatGptWebTransportLimits(
-      backendModel, messageEffort, capabilities,
+      backendModel, messageEffort, capabilities, parsed._chatgptModelFamily,
     );
     if (browserComposerCharLimit !== undefined && text.length > browserComposerCharLimit) return false;
     const budget = resolveChatGptWebMessageTokenBudget(
@@ -238,10 +216,7 @@ export function estimateChatGptWebUsage(
   const inputTokens = estimateChatGptWebInputTokens(parsed, capabilities, {
     ...promptOptions,
     ...(experimentalBiggerContext ? { captureLunaCheckpoint: false } : {}),
-    experimentalMultipartParts: experimentalBiggerContext
-      ? resolveBiggerContextMultipartParts(parsed, capabilities, promptOptions.experimentalSkillAttachments, promptOptions.appName)
-      : undefined,
-  });
+  }, experimentalBiggerContext);
   const outputTokens = conservativeTextTokens(roundEvidenceText(evidence), parsed.modelId);
   return {
     inputTokens,
@@ -249,4 +224,11 @@ export function estimateChatGptWebUsage(
     totalTokens: inputTokens + outputTokens,
     estimated: true,
   };
+}
+
+/** Compatibility entrypoint: choose parts using the same preflight as submission. */
+export function resolveBiggerContextMultipartParts(parsed: CodexParsedRequest, capabilities: ChatGptWebCapabilities, experimentalSkillAttachments = false, appName?: string): ChatGptWebMultipartPartCount | undefined {
+  const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, capabilities);
+  const turnToken = mode.localTools && effectiveChatGptToolPolicy(parsed).tools.length > 0 ? ESTIMATE_TURN_TOKEN : undefined;
+  return compileBiggerContextPrompt(parsed, capabilities, turnToken, { experimentalSkillAttachments, appName }).multipart?.parts.length as ChatGptWebMultipartPartCount | undefined;
 }

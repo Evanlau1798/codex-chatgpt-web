@@ -1,11 +1,12 @@
 import { isAbsolute, resolve } from "node:path";
 import { isReadableCompactionSummaryText, OPAQUE_COMPACTION_NOTE } from "../../responses/compaction";
 import { isNativeOpenPageContext } from "../../responses/native-context";
-import { isNativeAgentsMdContext } from "../../responses/native-context";
+import { isNativeAgentsMdContext, isNativeUserGoalUpdate } from "../../responses/native-context";
 import type { CodexContentPart, CodexParsedRequest, CodexTool } from "../../types";
 import { effectiveChatGptToolPolicy } from "./tool-policy";
 import {
   currentTurnUserRevision,
+  nativeUserRevisions,
   isCurrentTurnInstruction,
   isNativeInstruction,
   isTurnAbortedNotice,
@@ -14,7 +15,7 @@ import {
   turnUserRevisionHistory,
 } from "./turn-user-revision";
 import { hasEnvironmentContextFragment, hasEnvironmentContextAttempt, isPureContextualCodexUserText } from "./contextual-user-message";
-import { isAcceptedCompactionContinuation, recoverCompactionInstruction } from "./compaction-continuation";
+import { isAcceptedCompactionContinuation, previousCompletedCompactionSource, recoverCompactionInstruction } from "./compaction-continuation";
 import {
   codexTurnMetadataFromBody,
   extractChatGptTurnIdentity,
@@ -56,6 +57,7 @@ export interface ChatGptEnvironmentClaim {
   environment: Omit<ChatGptTurnEnvironment, "cwd"> & { cwd?: string };
   /** Filesystem permission envelopes omit the native turn's network policy. */
   statesNetworkAccess: boolean;
+  filesystemXml?: string;
 }
 
 export interface ChatGptCalendarEnvironmentDelta {
@@ -65,15 +67,19 @@ export interface ChatGptCalendarEnvironmentDelta {
 }
 
 function environmentClaim(parsed: CodexParsedRequest, text: string): ChatGptEnvironmentClaim {
+  const filesystem = text.match(/<filesystem>[\s\S]*?<\/filesystem>/g);
   return {
     environment: parseChatGptEnvironmentText(parsed, text),
     statesNetworkAccess: /<network_access\b/i.test(text) || /network access is /i.test(text),
+    ...(filesystem?.length === 1 ? { filesystemXml: filesystem[0] } : {}),
   };
 }
 export interface ChatGptTurnUserRevision {
   content: unknown;
   turnId?: string;
   itemId?: string;
+  /** Producer history ID when a native goal edit is bound to its active task. */
+  nativeTurnId?: string;
 }
 
 export const CHATGPT_TURN_REVISION_CONFLICT_MESSAGE =
@@ -211,7 +217,8 @@ export function chatGptTurnUserRevisionHistory(parsed: CodexParsedRequest): Chat
   if (recovered?.sourceWasSyntheticInstruction) {
     const retained = turnUserRevisionHistory({ ...body, input: input.slice(0, recovered.summaryIndex) }).at(-1);
     if (!retained || isAcceptedCompactionContinuation(parsed, identity, retained)) {
-      return [recovered.source, ...turnUserRevisionHistory({ ...body, input: input.slice(recovered.summaryIndex + 1) })];
+      return [recovered.source, ...nativeUserRevisions(input, identity.turnId, clientTurnMetadata(parsed))
+        .filter(({ index }) => index > recovered.summaryIndex).map(({ revision }) => revision)];
     }
   }
   return revisions.length > 0 ? revisions : recovered ? [recovered.source] : [];
@@ -222,7 +229,9 @@ export function extractChatGptCompactionSourceRevision(parsed: CodexParsedReques
   if (!parsed._compactionRequest && !parsed._localCompactionRequest) {
     throw new Error("ChatGPT web compaction source requires a compaction request");
   }
-  const revision = latestChatGptTurnUserRevision(parsed, options.recoverCheckpoint !== false);
+  const revision = parsed._compactionRequest
+    ? findChatGptCompactionSourceRevision(parsed, options)
+    : latestChatGptTurnUserRevision(parsed, options.recoverCheckpoint !== false);
   if (!revision) throw new Error("ChatGPT web compaction requires a source user message");
   return revision;
 }
@@ -233,7 +242,11 @@ export function findChatGptCompactionSourceRevision(
   options: { recoverCheckpoint?: boolean } = {},
 ): ChatGptTurnUserRevision | undefined {
   if (!parsed._compactionRequest) throw new Error("ChatGPT web compaction source requires a compaction request");
-  return latestChatGptTurnUserRevision(parsed, options.recoverCheckpoint !== false);
+  const source = latestChatGptTurnUserRevision(parsed, options.recoverCheckpoint !== false);
+  if (source || options.recoverCheckpoint === false) return source;
+  const compaction = record(clientTurnMetadata(parsed)?.compaction);
+  return compaction?.trigger === "auto" && compaction.phase === "pre_turn"
+    ? previousCompletedCompactionSource(parsed, extractChatGptTurnIdentity(parsed)) : undefined;
 }
 
 /** A completed checkpoint identifies the current turn's rebuilt environment preamble. */
@@ -250,7 +263,10 @@ export function isChatGptCompactionContinuation(parsed: CodexParsedRequest): boo
       : isAcceptedCompactionContinuation(parsed, identity, revision));
 }
 
-const CALENDAR_ENVIRONMENT_DELTA = /^<environment_context>\s*<current_date>\d{4}-\d{2}-\d{2}<\/current_date>\s*(?:<timezone>[^<>]+<\/timezone>\s*)?<filesystem>\s*(?:<workspace_roots>((?:\s*<root>[^<>]+<\/root>\s*)+)<\/workspace_roots>\s*)?(<permission_profile type="(?:disabled|managed)">[\s\S]*?<\/permission_profile>)\s*<\/filesystem>\s*(?:<subagents>\s*(?:<agent name="[^<>"\r\n]+"\s*\/>\s*)*<\/subagents>\s*)?<\/environment_context>$/;
+const subagentUuidLine = String.raw`-[ \t]+[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}(?::[ \t]*[^<>\r\n]+)?`;
+const CALENDAR_ENVIRONMENT_DELTA = new RegExp(
+    String.raw`^<environment_context>\s*<current_date>\d{4}-\d{2}-\d{2}<\/current_date>\s*(?:<timezone>[^<>]+<\/timezone>\s*)?<filesystem>\s*(?:<workspace_roots>((?:\s*<root>[^<>]+<\/root>\s*)+)<\/workspace_roots>\s*)?(<permission_profile type="(?:disabled|managed)">[\s\S]*?<\/permission_profile>)\s*<\/filesystem>\s*(?:<subagents>\s*(?:(?:<agent name="[^<>"\r\n]+"\s*\/>\s*)*|${subagentUuidLine}(?:[ \t]*\r?\n[ \t]*${subagentUuidLine})*\s*)<\/subagents>\s*)?<\/environment_context>$`,
+  );
 
 /** Parse a claim only: the caller must compare it with this turn's native rollout authority. */
 export function extractChatGptContinuationEnvironmentClaims(
@@ -421,20 +437,30 @@ export function extractChatGptCalendarEnvironmentDelta(
       || !kinds.includes("environments.environment_context")) return undefined;
   }
 
-  let deltas = 0;
-  const workspaceRoots: string[][] = [];
-  const filesystemProfiles: string[] = [];
+  // Match the whole native fragment, not just the presence of a permission profile: another
+  // profile, a malformed cwd, or any additional permission declaration must fail closed.
+  // Native midnight updates can also repeat a worker inventory. Its exact name-only
+  // shape is contextual; it grants neither filesystem authority nor child ownership.
+  const calendarFragment = (text: string) => CALENDAR_ENVIRONMENT_DELTA.exec(text);
+  const fragments: string[] = [];
+  // Codex renders no workspace_roots for a turn that has none (#936). Such a fragment names
+  // no root and no cwd, so it can precede the instruction; with roots it is an ordinary claim.
+  const leading = options ? undefined : environmentBeforeUser(input, activeIndex, turnId, metadata);
+  const leadingMatch = leading ? calendarFragment(leading) : null;
+  if (leading && leadingMatch && leadingMatch[1] === undefined) fragments.push(leading);
   for (let index = activeIndex + 1; index < input.length; index += 1) {
     const item = record(input[index]);
     if (!hasEnvironmentContextFragment(item)) continue;
     if (itemTurnId(item) !== undefined && itemTurnId(item) !== turnId) continue;
     if (item.role !== "user" || itemTurnId(item) !== turnId || typeof item.id !== "string" || !item.id) return undefined;
-    const text = rawMessageText(item).trim();
-    // Match the whole native fragment, not just the presence of a permission profile: another
-    // profile, a malformed cwd, or any additional permission declaration must fail closed.
-    // Native midnight updates can also repeat a worker inventory. Its exact name-only
-    // shape is contextual; it grants neither filesystem authority nor child ownership.
-    const match = CALENDAR_ENVIRONMENT_DELTA.exec(text);
+    fragments.push(rawMessageText(item).trim());
+  }
+
+  let deltas = 0;
+  const workspaceRoots: string[][] = [];
+  const filesystemProfiles: string[] = [];
+  for (const text of fragments) {
+    const match = calendarFragment(text);
     if (!match
       || !sandboxMetadataMatchesEnvironment(canonicalSandboxMetadata(metadata), text)
       || [metadata.sandbox_mode, metadata.sandbox].some(value => (
@@ -645,6 +671,16 @@ function rawEnvironmentText(parsed: CodexParsedRequest): string | undefined {
       break;
     }
   }
+  // Goal edits are appended outside the model step and do not carry its environment.
+  // Use their proven current-turn instruction as the environment anchor only. The edit
+  // remains the task revision, and any later environment update still takes precedence.
+  if (activeUserIndex >= 0 && isNativeUserGoalUpdate(record(input[activeUserIndex])!)) {
+    const turnId = typeof metadata?.turn_id === "string" ? metadata.turn_id : undefined;
+    const revisions = nativeUserRevisions(input, turnId, metadata);
+    if (turnId !== undefined && revisions.at(-1)?.revision.turnId === turnId) {
+      activeUserIndex = revisions.findLast(({ index }) => !isNativeUserGoalUpdate(record(input[index])!))?.index ?? activeUserIndex;
+    }
+  }
   const checkpoint = activeUserIndex < 0 ? recoverCompactionInstruction(parsed, extractChatGptTurnIdentity(parsed)) : undefined;
   const anchorIndex = checkpoint?.summaryIndex ?? activeUserIndex;
   const turnId = metadata?.turn_id;
@@ -772,6 +808,8 @@ function environmentPaths(text: string, preferredRoots: string[]): { cwd?: strin
   const rootMatches = rootSections
     .flatMap(section => [...section[0].matchAll(/<root>([^<]+)<\/root>/g)].map(match => match[1] ?? ""));
   if (cwdMatches.length === 0) {
+    if (rootSections.length === 0 && !/<\/?workspace_roots\b/i.test(text)
+      && CALENDAR_ENVIRONMENT_DELTA.test(text.trim())) return { roots: [] };
     // Only a well-formed filesystem-only update may omit cwd. Malformed cwd,
     // ambiguous environments, and incomplete root lists remain invalid claims.
     if (/<\/?(?:cwd|environments)\b/i.test(text) || rootSections.length !== 1 || rootMatches.length === 0

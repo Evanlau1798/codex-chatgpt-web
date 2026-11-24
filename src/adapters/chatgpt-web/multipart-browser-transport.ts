@@ -89,6 +89,7 @@ export function assertChatGptWebMultipartInputWithinLimits(
       modelId,
       messageEffort,
       capabilities,
+      modelFamily,
     );
     if (browserComposerCharLimit !== undefined && messageChars > browserComposerCharLimit) {
       throw new ChatGptWebAdapterError(
@@ -145,6 +146,7 @@ export function resolveChatGptWebMultipartStagingMode(
   capabilities: ChatGptWebCapabilities,
   maxStageMessageTokens: number,
   maxStageChars: number,
+  modelFamily?: ChatGptWebModelFamily,
 ): ChatGptWebModelMode {
   if (modelId !== CHATGPT_WEB_MODEL_ID && modelId !== CHATGPT_WEB_LUNA_MODEL_ID) {
     throw new Error(`ChatGPT Bigger Context staging mode is not defined for model: ${modelId}`);
@@ -154,7 +156,7 @@ export function resolveChatGptWebMultipartStagingMode(
     : ["low", "medium"];
   for (const effort of efforts) {
     const mode = resolveChatGptWebModelMode(modelId, effort, capabilities);
-    const limits = resolveChatGptWebTransportLimits(modelId, effort, capabilities);
+    const limits = resolveChatGptWebTransportLimits(modelId, effort, capabilities, modelFamily);
     const messageTokenLimit = resolveChatGptWebStagingTokenBudget(modelId, effort, capabilities);
     const tokenFits = maxStageMessageTokens <= messageTokenLimit;
     const charsFit = limits.browserComposerCharLimit === undefined
@@ -194,6 +196,7 @@ export function prepareChatGptWebMultipartTransport(
     capabilities,
     maxStageMessageTokens,
     maxStageChars,
+    modelFamily,
   );
   assertChatGptWebMultipartInputWithinLimits(
     estimateCompiledChatGptWebInputTokens(prepared, modelId, [TOKEN_ESTIMATE_TRANSACTION]),

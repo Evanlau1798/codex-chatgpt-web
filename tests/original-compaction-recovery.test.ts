@@ -76,7 +76,8 @@ test.each([false, true])("Original compact sends complete opaque context when it
     expect(contextText).toContain("Original task");
     expect(contextText).toContain("Continue with the next step");
     if (experimentalBiggerContext) {
-      expect(prepared.multipart!.parts).toHaveLength(6);
+      // The opaque envelope crosses the inline byte limit but fits two messages.
+      expect(prepared.multipart!.parts).toHaveLength(2);
       expect(prepared.trimmedCompactionMessages).toBeUndefined();
       const lastRecord = prepared.multipart!.parts.flatMap(part => JSON.parse(part).records).at(-1);
       expect(lastRecord.message.content).toBe(compact.context.messages.at(-1)!.content);
@@ -100,6 +101,7 @@ test.each([false, true])("Original compact sends complete opaque context when it
       event => events.push(event),
     );
     expect(browserStarts).toBe(1);
+    expect(events.filter(event => event.type === "error")).toEqual([]);
     expect(events.some(event => event.type === "text_delta"
       && event.text.includes("Fallback checkpoint from canonical Codex context"))).toBeTrue();
     expect(events.some(event => event.type === "text_delta"

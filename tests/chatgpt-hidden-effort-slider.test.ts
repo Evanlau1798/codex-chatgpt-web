@@ -3,18 +3,21 @@ import {
   CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_MENU_SELECTOR,
   CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR, detectChatGptAccountCapabilities,
 } from "../src/chatgpt-session";
+import { CHATGPT_ACTIVE_EFFORT_SLIDER_SELECTOR } from "../src/chatgpt-ui/model-picker";
 
 function picker(options: { failFirst?: boolean; staleExpanded?: boolean; missing?: boolean } = {}) {
   let expanded = !options.failFirst;
+  let visible = !options.failFirst && !options.staleExpanded;
   let presses = 0;
   let escapes = 0;
   let attached = false;
-  let waits = 0;
+  const activate = async () => { presses++; expanded = visible = !options.failFirst || presses > 1; };
   const button = {
     filter() { return this; },
     last() { return this; }, isVisible: async () => true,
-    getAttribute: async () => String(options.staleExpanded || expanded),
-    press: async () => { presses++; expanded = true; },
+    getAttribute: async (name: string) => name === "aria-expanded" ? String(expanded) : null,
+    click: activate,
+    dispatchEvent: activate,
   };
   const composer = { filter() { return this; }, last() { return this; },
     locator: () => ({ locator: () => button }) };
@@ -35,11 +38,10 @@ function picker(options: { failFirst?: boolean; staleExpanded?: boolean; missing
       min: "0", max: "4", value: "3",
       locks: ["false", "false", "false", "false", "false"],
     }),
-    isVisible: async () => true,
+    isVisible: async () => visible,
     waitFor: async ({ state }: { state: string }) => {
       expect(state).toBe("visible");
-      waits++;
-      if (options.missing || (options.failFirst && waits === 1) || (options.staleExpanded && presses === 0)) {
+      if (options.missing || !visible) {
         throw new Error("picker remained closed");
       }
     },
@@ -53,16 +55,17 @@ function picker(options: { failFirst?: boolean; staleExpanded?: boolean; missing
       return container;
     },
   };
+  const absent = { count: async () => 0, waitFor: () => new Promise<void>(() => {}) };
   const menu = { filter() { return this; }, last() { return this; }, isVisible: async () => false,
-    getByRole: () => ({ count: async () => 0 }), locator: () => ({ count: async () => 0 }) };
+    getByRole: () => absent, locator: () => absent };
   const page = {
     locator: (selector: string) => {
       if (selector === CHATGPT_COMPOSER_SELECTOR) return composer;
       if (selector === CHATGPT_EFFORT_MENU_SELECTOR) return menu;
-      if (selector === CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR) return collection;
+      if (selector === CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR || selector === CHATGPT_ACTIVE_EFFORT_SLIDER_SELECTOR) return collection;
       throw new Error("Unexpected selector");
     },
-    keyboard: { press: async () => { escapes++; expanded = false; } },
+    keyboard: { press: async () => { escapes++; expanded = visible = false; } },
   };
   return { page, presses: () => presses, escapes: () => escapes };
 }

@@ -3,14 +3,20 @@ import {
   CHATGPT_EFFORT_CONTROL_SELECTOR,
   CHATGPT_EFFORT_MENU_SELECTOR,
   chatGptEffortSlider,
+  activateChatGptEffortMenu,
+  chatGptLockedEffortPanel,
+  chatGptLockedEffortMessage,
+  waitForChatGptEffortRange,
   readChatGptEffortSnapshot,
   openChatGptModelRows,
+  readChatGptModelAnnouncements,
+  parseChatGptModelAnnouncement,
   type ChatGptEffortActivation,
 } from "./chatgpt-ui/model-picker";
 export * from "./chatgpt-ui/composer";
 export * from "./chatgpt-ui/model-picker";
 export * from "./chatgpt-ui/turns";
-import { CHATGPT_EFFORT_SLIDER_MAX_OPTIONS, activateChatGptEffortMenu } from "./chatgpt-ui/model-picker";
+import { CHATGPT_EFFORT_SLIDER_MAX_OPTIONS } from "./chatgpt-ui/model-picker";
 import type { Locator, Page } from "playwright-core";
 import { familyOption, selectChatGptModelFamily } from "./adapters/chatgpt-web/model-selection";
 import type { ChatGptWebModelCapabilities, ChatGptWebAdapterEffort, ChatGptWebAccountCapabilities } from "./chatgpt-web-models";
@@ -26,11 +32,15 @@ export const CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR = [
   '[data-testid="thread-header-right-actions"] button[aria-haspopup="menu"]',
   '#conversation-header-actions button[aria-haspopup="menu"]',
   'div:has(> [data-testid="temporary-chat-label"]) + div button[aria-expanded]',
+  // 2026-11-24: the native menu is adjacent to the filled Temporary Chat toggle.
+  ...[16, 20].map(size => `header button[aria-haspopup="menu"]:has(+ button use[href$="#codex-icon-incognito-fill-light-${size}"])`),
 ].join(", ");
 export const CHATGPT_TEMPORARY_CHAT_ACTIVE_SELECTOR = [
   '[data-testid="temporary-chat-label"]',
   ...["header", "#conversation-header-actions", "[data-app-shell-header-obstacle]"].flatMap(scope =>
-    ["codex-icon-chat-bubble-checkmark-dashed-light-20", "chat-bubble-checkmark-dashed-light-20", "chat-temp-checked"]
+    // 2026-11-24 isolated launcher capture: filled incognito glyph replaces the checked chat bubble.
+    ["codex-icon-chat-bubble-checkmark-dashed-light-20", "chat-bubble-checkmark-dashed-light-20", "chat-temp-checked",
+      "codex-icon-incognito-fill-light-16", "codex-icon-incognito-fill-light-20"]
       .map(icon => `${scope} button:has(use[href$="#${icon}"])`)),
 ].join(", ");
 
@@ -178,7 +188,9 @@ export async function ensureChatGptTemporaryChatPersonalized(
 type ChatGptCapabilityProbeOptions = {
   selectorTimeoutMs?: number;
   stableAbsenceMs?: number;
+  settleMs?: number;
   signal?: AbortSignal;
+  onFailureBeforeCleanup?: (error: unknown) => Promise<void>;
 };
 
 /** Undefined means the known Luna/Think control was verified, not merely a missing picker. */
@@ -237,16 +249,17 @@ export async function waitForChatGptEffortControl(
 }
 
 export async function readChatGptEffortCapabilities(
-  { sliderContainer, slider }: Pick<ChatGptEffortActivation, "sliderContainer" | "slider">,
+  activation: ChatGptEffortActivation,
   options: Pick<ChatGptCapabilityProbeOptions, "selectorTimeoutMs" | "signal"> = {},
 ): Promise<ChatGptWebAccountCapabilities & { extraHighAvailable: boolean }> {
   options.signal?.throwIfAborted();
   const timeout = options.selectorTimeoutMs ?? 70_000;
   // Model radio rows can hydrate before the effort control. They carry no evidence
   // of the account's reasoning range, so an absent slider must fail, not cache false.
-  await sliderContainer.waitFor({ state: "visible", timeout, signal: options.signal });
-  await slider.waitFor({ state: "attached", timeout, signal: options.signal });
-  const { available } = await readChatGptEffortSnapshot(sliderContainer);
+  if (await waitForChatGptEffortRange(activation, timeout, options.signal) === "locked") {
+    throw new Error(await chatGptLockedEffortMessage(chatGptLockedEffortPanel(activation.menu)));
+  }
+  const { available } = await readChatGptEffortSnapshot(activation.sliderContainer);
   options.signal?.throwIfAborted();
   return { solAvailable: true, extraHighAvailable: available[3] === true, proAvailable: available[4] === true };
 }
@@ -255,31 +268,19 @@ export async function detectChatGptAccountCapabilities(
   page: Page,
   options: ChatGptCapabilityProbeOptions = {},
 ): Promise<ChatGptWebAccountCapabilities & { extraHighAvailable: boolean }> {
-  const effortButton = await waitForChatGptEffortControl(page, options);
+  let effortButton: Locator | undefined;
+  try { effortButton = await waitForChatGptEffortControl(page, options); }
+  catch (error) { await options.onFailureBeforeCleanup?.(error); throw error; }
   if (!effortButton) return { solAvailable: false, extraHighAvailable: false, proAvailable: false, modelCapabilities: { observedAt: Date.now(), families: {} } };
-  const menu = page.locator(CHATGPT_EFFORT_MENU_SELECTOR).filter({ visible: true }).last();
   try {
-    const { sliderContainer, slider } = chatGptEffortSlider(page);
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const menuVisible = await menu.isVisible().catch(() => false);
-      const menuExpanded = await effortButton.getAttribute("aria-expanded").catch(() => null);
-      if (!menuVisible) {
-        if (menuExpanded === "true") await page.keyboard.press("Escape").catch(() => {});
-        await effortButton.press("Enter");
-      }
-      try {
-        const timeout = options.selectorTimeoutMs ?? 70_000;
-        await sliderContainer.waitFor({ state: "visible", timeout, signal: options.signal });
-        await slider.waitFor({ state: "attached", timeout, signal: options.signal });
-        break;
-      } catch (error) {
-        if (attempt === 1) throw error;
-        await page.keyboard.press("Escape").catch(() => {});
-      }
+    let current = await activateChatGptEffortMenu(page, effortButton, { settleMs: options.settleMs });
+    if (await waitForChatGptEffortRange(current, options.selectorTimeoutMs ?? 70_000, options.signal) === "locked") {
+      throw new Error(await chatGptLockedEffortMessage(chatGptLockedEffortPanel(current.menu)));
     }
+    const { menu, sliderContainer } = current;
     const initial = await readChatGptEffortSnapshot(sliderContainer);
-    let current: ChatGptEffortActivation = { method: "already-open", menu, sliderContainer, slider };
-    const families = ["5.6", "6"] as const;
+    const families = ["5.6", "6", "6.2"] as const;
+    const labels = new Set<string>();
     const present: (typeof families[number])[] = [];
     let original: typeof families[number] | undefined;
     for (const family of families) {
@@ -287,6 +288,15 @@ export async function detectChatGptAccountCapabilities(
       const count = await option.count();
       if (count > 1) throw new Error("ChatGPT model capability probe found ambiguous family radios");
       if (count === 1) {
+        const label = await option.innerText();
+        if (labels.has(label)) {
+          const announced62 = family === "6.2" && (await readChatGptModelAnnouncements(current.slider))
+            .some(text => parseChatGptModelAnnouncement(text)?.version === "6.2");
+          if (family !== "6.2" || !announced62) continue;
+          present.splice(present.indexOf("6"), 1);
+          if (original === "6") original = undefined;
+        }
+        labels.add(label);
         present.push(family);
         if (await option.getAttribute("aria-checked") === "true") original = family;
       }
@@ -360,6 +370,9 @@ export async function detectChatGptAccountCapabilities(
     const observed = Object.values(modelCapabilities.families).flat();
     return { solAvailable: true, extraHighAvailable: observed.includes("xhigh"),
       proAvailable: observed.includes("max"), modelCapabilities };
+  } catch (error) {
+    await options.onFailureBeforeCleanup?.(error);
+    throw error;
   } finally {
     await page.keyboard.press("Escape").catch(() => {});
   }

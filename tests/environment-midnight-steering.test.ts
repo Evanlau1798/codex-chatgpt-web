@@ -2,7 +2,9 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { extractChatGptTurnEnvironment, extractChatGptTurnUserRevision } from "../src/adapters/chatgpt-web/environment";
+import { extractChatGptTurnEnvironment, extractChatGptTurnUserRevision, extractChatGptTurnIdentity, isChatGptCompactionContinuation } from "../src/adapters/chatgpt-web/environment";
+import { rememberCompactionContinuation } from "../src/adapters/chatgpt-web/compaction-continuation";
+import { encodeCompactionSummary, SUMMARY_PREFIX } from "../src/responses/compaction";
 import { ChatGptThreadEnvironmentStore } from "../src/adapters/chatgpt-web/thread-environment";
 import { parseRequest } from "../src/responses/parser";
 import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
@@ -681,4 +683,330 @@ for (const declaredRoots of [true, false]) test(`steering accepts native output 
     );
     expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request))
       .toThrow("Steering environment conflicts");
+  });
+
+function currentRootsFixture(sessionRoots: string[] = [root]) {
+    const fixture = resumedRootFixture();
+    const visualization = join(fixture.codexHome, "visualizations", "2026", "10", "29", rolloutThreadId);
+    const filesystem = (roots: string[], profile = dangerFullAccessProfileXml) => "<filesystem>"
+      + (roots.length > 0 ? `<workspace_roots>${roots.map(path => `<root>${path}</root>`).join("")}</workspace_roots>` : "")
+      + `${profile}</filesystem>`;
+    const envelope = (filesystemXml: string, cwd?: string) => `<environment_context>\n${
+      cwd ? `  <cwd>${cwd}</cwd>\n  <shell>zsh</shell>\n` : ""
+    }  <current_date>2026-10-29</current_date>\n  <timezone>Europe/Moscow</timezone>\n  ${filesystemXml}\n</environment_context>`;
+    const worldState = (full: boolean, filesystemXml: string | null) => ({
+      type: "world_state", payload: { full, state: { environments: { filesystem: filesystemXml } } },
+    });
+    const environment = {
+      type: "message", role: "user", id: "msg_current_environment",
+      internal_chat_message_metadata_passthrough: { turn_id: rolloutTurnId, content_item_kinds: ["environments.environment_context"] },
+      content: [{ type: "input_text", text: "" }],
+    };
+    const body = fixture.request._rawBody as { input: Array<Record<string, unknown>>; client_metadata: Record<string, string> };
+    body.input.unshift(environment);
+    const context = childTurnContext();
+    delete (context.payload as Record<string, unknown>).workspace_roots;
+    const writeRollout = (records: unknown[]) => writeFileSync(fixture.rolloutPath, [
+      { type: "session_meta", payload: { id: rolloutThreadId, source: "vscode", cwd: root, runtime_workspace_roots: sessionRoots } },
+      ...records, context,
+    ].map(value => JSON.stringify(value)).join("\n") + "\n");
+    return {
+      ...fixture, request: parseRequest({ ...body, model: "chatgpt-web/pro" }), body, visualization,
+      filesystem, envelope, worldState, environment, context, writeRollout,
+    };
+  }
+
+  test("a Full Access turn accepts the current roots Codex itself recorded instead of its start roots (#939)", () => {
+    const { codexHome, request, visualization, filesystem, envelope, worldState, environment, writeRollout } = currentRootsFixture();
+    environment.content[0]!.text = envelope(filesystem([visualization]));
+    writeRollout([worldState(true, filesystem([root, visualization])), worldState(false, filesystem([visualization]))]);
+    expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request)).toEqual({
+      cwd: root, roots: [root, visualization], writableRoots: [root, visualization],
+      sandboxPolicy: { type: "dangerFullAccess" }, tools: [],
+    });
+  });
+
+  test("Codex's current roots may keep the native cwd yet omit another start root", () => {
+    const auxiliary = resolve(root, "..", "second-project");
+    const { codexHome, request, visualization, filesystem, envelope, worldState, environment, writeRollout } = currentRootsFixture([root, auxiliary]);
+    environment.content[0]!.text = envelope(filesystem([visualization, root]));
+    writeRollout([worldState(false, filesystem([visualization, root]))]);
+    expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request)).toMatchObject({
+      cwd: root, roots: [root, auxiliary, visualization],
+    });
+  });
+
+  test("the latest current-roots record is found behind later calendar and tool updates", () => {
+    const { codexHome, request, visualization, filesystem, envelope, worldState, environment, writeRollout } = currentRootsFixture();
+    environment.content[0]!.text = envelope(filesystem([visualization]));
+    writeRollout([
+      worldState(false, filesystem([visualization])),
+      { type: "world_state", payload: { full: false, state: { environments: { current_date: "2026-10-30" } } } },
+      { type: "world_state", payload: { full: false, state: { tools: {} } } },
+    ]);
+    expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request).cwd).toBe(root);
+  });
+
+for (const format of ["v1", "v2"] as const) {
+  for (const format of ["v1", "v2"]) test(`${format} compaction continuation accepts the rebuilt roots Codex recorded (#939, #945)`, () => {
+    const { codexHome, request, body, visualization, filesystem, envelope, worldState, environment, writeRollout } = currentRootsFixture();
+    const oldTurnId = "01a06c66-0000-75c6-a0df-318f890ef6de";
+    const instruction = body.input[1]!;
+    instruction.internal_chat_message_metadata_passthrough = { turn_id: oldTurnId };
+    const summary = `Current roots checkpoint ${format}`;
+    rememberCompactionContinuation({ ...request, _compactionRequest: true }, extractChatGptTurnIdentity(request), [
+      { turnId: oldTurnId, content: instruction.content },
+    ], summary);
+    body.input.push(format === "v2"
+      ? { type: "compaction", encrypted_content: encodeCompactionSummary(summary) }
+      : { type: "message", role: "user", content: [{ type: "input_text", text: `${SUMMARY_PREFIX}\n${summary}` }] });
+    environment.content[0]!.text = envelope(filesystem([visualization]), root);
+    writeRollout([worldState(true, filesystem([visualization]))]);
+    expect(isChatGptCompactionContinuation(request)).toBe(true);
+    expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request)).toMatchObject({
+      cwd: root, roots: [root, visualization],
+    });
+    writeRollout([worldState(true, filesystem([root, visualization]))]);
+    expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request)).toThrow("Compaction continuation environment conflicts");
+  });
+}
+
+  test("current roots need Codex's exact current record and never change cwd, permissions or the turn", () => {
+    const { codexHome, request, visualization, filesystem, envelope, worldState, environment, context, writeRollout } = currentRootsFixture();
+    const resolveCurrent = () => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request);
+    const claimed = filesystem([visualization]);
+    const foreign = filesystem([join(codexHome, "visualizations", "2026", "10", "29", rolloutParentId)]);
+    environment.content[0]!.text = envelope(claimed);
+    for (const records of [
+      [],
+      [worldState(true, filesystem([root, visualization]))],
+      [worldState(false, foreign)],
+      [worldState(false, claimed), worldState(false, filesystem([root, visualization]))],
+      [worldState(false, claimed), worldState(false, null)],
+      [worldState(false, claimed), { type: "world_state", payload: { full: true, state: { tools: {} } } }],
+      [worldState(false, claimed), { type: "world_state", payload: { full: false, state: { environments: null } } }],
+    ]) {
+      writeRollout(records);
+      expect(resolveCurrent).toThrow("environment conflicts with its current Codex rollout");
+    }
+
+    writeRollout([worldState(false, claimed)]);
+    expect(resolveCurrent().cwd).toBe(root);
+    environment.content[0]!.text = envelope(claimed, dirname(root));
+    expect(resolveCurrent).toThrow("environment conflicts with its current Codex rollout");
+    environment.content[0]!.text = `${envelope(claimed)}\n${claimed}`;
+    expect(resolveCurrent).toThrow();
+    environment.content[0]!.text = envelope(filesystem([visualization], readOnlyProfileXml));
+    writeRollout([worldState(false, filesystem([visualization], readOnlyProfileXml))]);
+    expect(resolveCurrent).toThrow("environment conflicts with its current Codex rollout");
+
+    environment.content[0]!.text = envelope(claimed);
+    writeRollout([worldState(false, claimed)]);
+    const payload = context.payload as Record<string, unknown>;
+    payload.turn_id = "01a06c66-ffff-75c6-a0df-318f890ef6de";
+    writeRollout([worldState(false, claimed)]);
+    expect(resolveCurrent).toThrow("current turn");
+    payload.turn_id = rolloutTurnId;
+    payload.sandbox_policy = { type: "read-only", network_access: false };
+    payload.permission_profile = { type: "managed", file_system: { type: "restricted", entries: [
+      { path: { type: "special", value: { kind: "root" } }, access: "read" },
+    ] }, network: "restricted" };
+    writeRollout([worldState(false, claimed)]);
+    expect(resolveCurrent).toThrow();
+  });
+
+  test("a turn-start update without workspace roots uses the current native turn (#936)", () => {
+    const { codexHome, request, rolloutPath, filesystem, envelope, worldState, environment, writeRollout } = currentRootsFixture();
+    environment.content[0]!.text = envelope(filesystem([]));
+    writeRollout([worldState(false, filesystem([]))]);
+    const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome);
+    expect(store.resolve(request)).toMatchObject({ cwd: root, roots: [root], sandboxPolicy: { type: "dangerFullAccess" } });
+    environment.content[0]!.text = envelope(filesystem([], readOnlyProfileXml));
+    expect(() => store.resolve(request)).toThrow();
+    environment.content[0]!.text = envelope(filesystem([]));
+    rmSync(rolloutPath);
+    expect(() => store.resolve(request)).toThrow("canonical rollout");
+  });
+
+  test.each(["v1", "v2"].flatMap(format => [
+    { format, inventory: '<subagents><agent name="/root/reviewer" /></subagents>' },
+    { format, inventory: '<subagents>\n- 00000000-0000-0000-0000-000000000001\n- 00000000-0000-0000-0000-000000000002: Worker\n</subagents>' },
+  ]))("compaction continuation validates a later same-turn midnight delta: %j", ({ format, inventory }) => {
+    const { codexHome, request, rolloutPath } = resumedRootFixture();
+    const body = request._rawBody as { input: Array<Record<string, unknown>> };
+    const previous = body.input[0]!;
+    previous.internal_chat_message_metadata_passthrough = { turn_id: rolloutParentId };
+    const summary = `Midnight after completed compaction ${format}`;
+    rememberCompactionContinuation({ ...request, _compactionRequest: true }, extractChatGptTurnIdentity(request), [
+      { turnId: rolloutParentId, content: previous.content },
+    ], summary);
+    const current = {
+      type: "message", role: "user", id: "msg_compacted_environment",
+      internal_chat_message_metadata_passthrough: {
+        turn_id: rolloutTurnId, content_item_kinds: ["agents_md.instructions", "environments.environment_context"],
+      },
+      content: [{ type: "input_text", text: "# AGENTS.md instructions\n<INSTRUCTIONS>Preserve work.</INSTRUCTIONS>" },
+        { type: "input_text", text: environmentXml.replace("</environment_context>", `${inventory}</environment_context>`) }],
+    };
+    const delta = {
+      type: "message", role: "user", id: "msg_after_compaction_midnight",
+      internal_chat_message_metadata_passthrough: {
+        turn_id: rolloutTurnId, content_item_kinds: ["environments.environment_context"],
+      },
+      content: [{ type: "input_text", text: `<environment_context>
+<current_date>2026-10-21</current_date><timezone>America/New_York</timezone>
+<filesystem><workspace_roots><root>${root}</root></workspace_roots>${dangerFullAccessProfileXml}</filesystem>
+${inventory}</environment_context>` }],
+    };
+    body.input = [current, previous, format === "v1"
+      ? { type: "message", role: "user", content: [{ type: "input_text", text: `${SUMMARY_PREFIX}\n${summary}` }] }
+      : { type: "compaction", encrypted_content: encodeCompactionSummary(summary) }, delta];
+    const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome);
+    expect(store.resolve(request).cwd).toBe(root);
+    // A second claim in the rebuilt base message must not be skipped by the
+    // calendar scan, which starts after that entire message (#884 review).
+    for (const text of [environmentXml.replaceAll(root, resolve(root, "conflicting-cwd")), environmentXml]) {
+      current.content.push({ type: "input_text", text });
+      expect(() => store.resolve(request)).toThrow();
+      current.content.pop();
+    }
+    expect(store.resolve(request).cwd).toBe(root);
+    const valid = delta.content[0]!.text;
+    for (const subagents of [
+      "<subagents>\n    - 00000000-0000-0000-0000-000000000001\n    - 00000000-0000-0000-0000-000000000002: Worker\n  </subagents>",
+      "<subagents>- 00000000-0000-0000-0000-000000000001</subagents>",
+      "<subagents></subagents>",
+    ]) {
+      delta.content[0]!.text = valid.replace(/<subagents>[\s\S]*?<\/subagents>/, subagents);
+      expect(store.resolve(request).cwd).toBe(root);
+    }
+    for (const malformed of [
+      valid.replaceAll(root, resolve(root, "ungranted")),
+      valid.replace(dangerFullAccessProfileXml, readOnlyProfileXml),
+      valid.replace("</environment_context>", "<cwd>/unexpected</cwd></environment_context>"),
+      valid.replace("</subagents>", '<agent name="bad" cwd="/unexpected" /></subagents>'),
+      valid.replace(/<subagents>[\s\S]*?<\/subagents>/, "<subagents>\n    - not-a-uuid: Worker\n  </subagents>"),
+      valid.replace(/<subagents>[\s\S]*?<\/subagents>/, "<subagents>\n    - 00000000-0000-0000-0000-000000000001 <cwd>/unexpected</cwd>\n  </subagents>"),
+    ]) {
+      delta.content[0]!.text = malformed;
+      expect(() => store.resolve(request)).toThrow();
+    }
+    delta.content[0]!.text = valid;
+    body.input.push({ ...current, id: "msg_duplicate_full_environment" });
+    expect(() => store.resolve(request)).toThrow();
+    body.input.pop();
+    const native = readFileSync(rolloutPath, "utf8");
+    writeFileSync(rolloutPath, native.replaceAll(rolloutTurnId, rolloutParentId));
+    expect(() => store.resolve(request)).toThrow();
+    writeFileSync(rolloutPath, native);
+    expect(store.resolve(request).cwd).toBe(root);
+    rmSync(rolloutPath);
+    expect(() => store.resolve(request)).toThrow();
+  });
+
+  test("Codex 0.169 initial date/timezone-only preamble is authenticated against world_state and fails closed on tampering (#1004)", () => {
+    const codexHome = mkdtempSync(join(tmpdir(), "calendar-preamble-home-"));
+    temporaryRoots.push(codexHome);
+    const threadId = "11111111-1111-4111-8111-111111111111";
+    const turnId = "22222222-2222-4222-8222-222222222222";
+    const date = "2026-11-13";
+    const timezone = "UTC";
+    const msg = (role: string, id: string, ...texts: string[]) => ({
+      type: "message", role, id,
+      content: texts.map(text => ({ type: "input_text", text })),
+    });
+    const preamble = msg("user", "msg_context",
+      "<app-context>native app context</app-context>",
+      `<environment_context>\n  <current_date>${date}</current_date>\n  <timezone>${timezone}</timezone>\n</environment_context>`);
+    const instruction = msg("user", "msg_active", "Inspect the workspace");
+    const makeRequest = (input: unknown[]): CodexParsedRequest => ({
+      modelId: "gpt-5.6-sol", stream: true,
+      context: { messages: [{ role: "user", content: "Inspect the workspace", timestamp: 1 }] },
+      options: { reasoning: "high" },
+      _rawBody: {
+        client_metadata: {
+          "x-codex-turn-metadata": JSON.stringify({
+            request_kind: "turn", thread_id: threadId, turn_id: turnId,
+            sandbox_mode: "read-only", workspaces: {}, agent_name: "/root",
+          }),
+        },
+        input,
+      },
+    });
+    const row = (type: string, payload: object) => ({ type, payload });
+    const dir = join(codexHome, "sessions", "2026", "11", "13");
+    mkdirSync(dir, { recursive: true });
+    const rolloutPath = join(dir, `rollout-2026-11-13T12-00-00-${threadId}.jsonl`);
+    const turnContext = row("turn_context", {
+      turn_id: turnId, cwd: root, approval_policy: "never",
+      sandbox_policy: { type: "read-only" },
+      permission_profile: {
+        type: "managed",
+        file_system: { type: "restricted", entries: [{ path: { type: "special", value: { kind: "root" } }, access: "read" }] },
+        network: "restricted",
+      },
+    });
+    const writeRecords = (records: object[]) => writeFileSync(
+      rolloutPath, records.map(r => JSON.stringify(r)).join("\n") + "\n",
+    );
+
+    const validRecords = [
+      row("session_meta", { id: threadId, source: "vscode" }),
+      row("event_msg", { type: "task_started", turn_id: turnId }),
+      row("response_item", msg("developer", "msg_developer", "Synthetic instructions")),
+      row("response_item", preamble),
+      row("world_state", { full: true, state: { environments: { environments: {}, current_date: date, timezone } } }),
+      turnContext,
+      row("event_msg", { type: "thread_settings_applied" }),
+      row("response_item", instruction),
+    ];
+    writeRecords(validRecords);
+    const resolved = new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(makeRequest([preamble, instruction]));
+    expect(resolved.cwd).toBe(root);
+    expect(resolved.writableRoots).toEqual([]);
+    expect(resolved.sandboxPolicy.type).toBe("readOnly");
+
+    // Missing or mismatched world_state must fail closed.
+    writeRecords(validRecords.filter(r => (r as { type: string }).type !== "world_state"));
+    expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(makeRequest([preamble, instruction])))
+      .toThrow("Codex rollout does not authenticate the historical environment messages");
+
+    writeRecords(validRecords.map(r => (r as { type: string }).type === "world_state"
+      ? row("world_state", { full: true, state: { environments: { environments: {}, current_date: "2026-11-14", timezone } } })
+      : r));
+    expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(makeRequest([preamble, instruction])))
+      .toThrow("Codex rollout does not authenticate the historical environment messages");
+
+    // Preamble placed after turn_context must fail closed.
+    writeRecords([
+      row("session_meta", { id: threadId, source: "vscode" }),
+      row("event_msg", { type: "task_started", turn_id: turnId }),
+      row("world_state", { full: true, state: { environments: { environments: {}, current_date: date, timezone } } }),
+      turnContext,
+      row("response_item", preamble),
+      row("response_item", instruction),
+    ]);
+    expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(makeRequest([preamble, instruction])))
+      .toThrow("Codex rollout does not authenticate the historical environment messages");
+
+    // Tampered preamble content must fail closed.
+    writeRecords(validRecords);
+    const tampered = msg("user", "msg_context",
+      "<app-context>tampered</app-context>",
+      `<environment_context>\n  <current_date>${date}</current_date>\n  <timezone>${timezone}</timezone>\n</environment_context>`);
+    expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(makeRequest([tampered, instruction])))
+      .toThrow("Historical environment message differs from its native Codex record");
+
+    // Non-calendar environment tags placed after task_started must still fail closed.
+    const withCwd = msg("user", "msg_context",
+      `<environment_context>\n  <current_date>${date}</current_date>\n  <cwd>${root}</cwd>\n</environment_context>`);
+    writeRecords([
+      row("session_meta", { id: threadId, source: "vscode" }),
+      row("event_msg", { type: "task_started", turn_id: turnId }),
+      row("response_item", withCwd),
+      row("world_state", { full: true, state: { environments: { environments: {}, current_date: date, timezone } } }),
+      turnContext,
+    ]);
+    expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(makeRequest([withCwd, instruction])))
+      .toThrow("Codex rollout does not authenticate the historical environment messages");
   });

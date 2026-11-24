@@ -49,11 +49,11 @@ test("multipart selection accounts for whole-record and composer fit", () => {
   }
 }, 60_000);
 
-test("Bigger Context compaction selects six parts before the inline byte budget", () => {
+test("Bigger Context compaction selects two parts above the inline byte budget", () => {
   const parsed = request(["x".repeat(160_000)]);
   parsed._compactionRequest = true;
   const parts = resolveBiggerContextMultipartParts(parsed, capabilities);
-  expect(parts).toBe(6);
+  expect(parts).toBe(2);
   const compiled = compileChatGptWebPrompt(parsed, capabilities, undefined, { experimentalMultipartParts: parts });
   expect(compiled.trimmedCompactionMessages).toBeUndefined();
   expect(compiled.multipart!.parts.flatMap(part => JSON.parse(part).records)

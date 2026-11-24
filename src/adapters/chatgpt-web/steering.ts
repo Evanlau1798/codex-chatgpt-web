@@ -10,6 +10,7 @@ import { chatGptConversationKey, chatGptTurnSteeringId, type ChatGptSteeringFeed
 import type { CompletedClaudeSteering } from "./steering-feed";
 import { effectiveChatGptToolPolicy } from "./tool-policy";
 import { chatGptModelSwitchEpoch } from "./conversation-key";
+import { ChatGptWebAdapterError } from "./adapter-error";
 
 export interface ChatGptRetryPrompt {
   text: string;
@@ -135,6 +136,11 @@ export async function sessionForChatGptRequest(
     replaceNativeConversation,
   );
   const settled = session.settledOutcome();
+  if (session.isSupersededUserRevision(revision)) {
+    throw new ChatGptWebAdapterError("This native user revision was superseded by a newer instruction.", {
+      status: 499, errorType: "client_closed_request", code: "client_cancelled", retryable: false,
+    });
+  }
   const activeClaudeRoot = Boolean(claudeRootThreadId && !settled);
   const detachedRevision = session.observerHandoff.detachedRevision();
   const provenContinuation = detachedRevision === undefined || (parsed._canonicalContextComplete === true
@@ -142,23 +148,27 @@ export async function sessionForChatGptRequest(
       ...(item.itemId ? { itemId: item.itemId } : {}) }) === detachedRevision));
   if (!provenContinuation || !session.observerHandoff.canAttach(revision) || !session.canAcceptUserRevision(revision, text, !activeClaudeRoot)) {
     const completedClaudeSteering = session.completedClaudeSteering();
+    const previous = session;
     await sessions.retireAndWait(key, replacementConversationKey, signal);
     session = await sessions.getOrCreateAfterConversationRetirement(
       key, replacementConversationKey, start, group, steeringId, claudeRootThreadId, traceId, signal, manualOwner, nativeIdentity.threadId,
       replaceNativeConversation,
     );
     if (claudeRootThreadId) session.inheritCompletedClaudeSteering(completedClaudeSteering);
+    session.inheritUserRevisionHistory(previous);
     session.updateUserRevision(revision, text);
     return session;
   }
   const steering = session.updateUserRevision(revision, text, !activeClaudeRoot);
   if (manualOwner) return session;
   if (!allowSteering && steering) {
+    const previous = session;
     await sessions.retireAndWait(key, replacementConversationKey, signal);
     session = await sessions.getOrCreateAfterConversationRetirement(
       key, replacementConversationKey, start, group, steeringId, claudeRootThreadId, traceId, signal, manualOwner, nativeIdentity.threadId,
       replaceNativeConversation,
     );
+    session.inheritUserRevisionHistory(previous);
     session.updateUserRevision(revision, text);
     return session;
   }
@@ -166,6 +176,7 @@ export async function sessionForChatGptRequest(
   if (!steering || (!settled && (session.runtime.mode === "tools" || session.runtime.steering))) return session;
 
   const completedClaudeSteering = session.completedClaudeSteering();
+  const previous = session;
   if (claudeRootThreadId) preserveCompletedClaudeSteering(parsed, completedClaudeSteering);
   await sessions.retireAndWait(key, replacementConversationKey, signal);
   session = await sessions.getOrCreateAfterConversationRetirement(
@@ -173,6 +184,7 @@ export async function sessionForChatGptRequest(
     replaceNativeConversation,
   );
   if (claudeRootThreadId) session.inheritCompletedClaudeSteering(completedClaudeSteering);
+  session.inheritUserRevisionHistory(previous);
   session.updateUserRevision(revision, text);
   return session;
 }

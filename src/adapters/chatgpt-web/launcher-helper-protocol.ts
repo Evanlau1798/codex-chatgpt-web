@@ -1,3 +1,4 @@
+import { assertMultipartTransactionId } from "./prompt-multipart";
 import {
   parseChatGptLunaCheckpoint,
   type ChatGptLunaCheckpoint,
@@ -15,7 +16,7 @@ export type LauncherHelperMessage =
   | { type: "event"; id: string; event: "finalization_output_arm"; requestId: number; expectedRevision: number }
   | { type: "event"; id: string; event: "tunneled_output_reset"; requestId: number; finalSequence: number }
   | { type: "event"; id: string; event: "tunneled_output_seal"; requestId: number; afterSequence: number; expectedRevision: number }
-  | { type: "event"; id: string; event: "prepared_selected"; reused: boolean }
+  | { type: "event"; id: string; event: "prepared_selected"; reused: boolean; transactionId?: string }
   | { type: "event"; id: string; event: "compaction_boundary_retention_armed"; armed: boolean }
   | { type: "event"; id: string; event: "answer"; text: string; attempt: number }
   | {
@@ -177,7 +178,8 @@ function parseEvent(message: Record<string, unknown> & { id: string }): Launcher
     if (typeof message.reused !== "boolean") {
       throw new Error("Launcher browser helper prepared-selection event is invalid");
     }
-    return { type: "event", id: message.id, event, reused: message.reused };
+    if (message.transactionId !== undefined) assertMultipartTransactionId(message.transactionId);
+    return { type: "event", id: message.id, event, reused: message.reused, transactionId: message.transactionId };
   }
   if (event === "compaction_boundary_retention_armed") {
     if (typeof message.armed !== "boolean") {

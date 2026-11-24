@@ -182,8 +182,8 @@ async function run(message: RunMessage): Promise<void> {
         throw new Error("Browser helper could not publish submission receipt");
       }
     },
-    onPreparedSelected: reused => {
-      writeProtocol({ type: "event", id: message.id, event: "prepared_selected", reused });
+    onPreparedSelected: (reused, transactionId) => {
+      writeProtocol({ type: "event", id: message.id, event: "prepared_selected", reused, transactionId });
       return promptSelection.wait().then(() => {});
     },
     onMultipartStageAcknowledged: stageIndex => {
@@ -306,7 +306,7 @@ async function maintain(message: Exclude<MaintenanceMessage, { type: "verify" }>
   try {
     const worker = maintenanceWorker(message);
     const value = message.type === "inspect"
-      ? await worker.inspectSession(message.detectCapabilities)
+      ? await worker.inspectSession(message.detectCapabilities, message.id)
       : message.type === "limits" ? await worker.inspectLimitsPlan()
       : await worker.smokeTest(abortController.signal);
     writeProtocol({ type: "result", id: message.id, value });

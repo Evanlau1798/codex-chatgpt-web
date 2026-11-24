@@ -44,6 +44,7 @@ export interface CodexRolloutEnvironment {
   codexHome: string;
   /** Native model-visible projection; never used to grant execution permissions. */
   filesystemProfileXml?: string;
+  rolloutPath: string;
 }
 
 const CODEX_ID_SOURCE = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
@@ -205,7 +206,12 @@ function firstRolloutRecord(fd: number, size: number): Record<string, unknown> {
   throw new Error("Codex rollout has no complete session metadata record");
 }
 
-function latestRolloutPayload(fd: number, size: number, type: "turn_context" | "compacted"): Record<string, unknown> | undefined {
+function latestRolloutPayload(
+  fd: number,
+  size: number,
+  type: "turn_context" | "compacted" | "world_state",
+  matches: (payload: Record<string, unknown> | undefined) => boolean = () => true,
+): Record<string, unknown> | undefined {
   let position = size;
   let carry = Buffer.alloc(0);
   let firstSegmentAtEof = true;
@@ -234,7 +240,7 @@ function latestRolloutPayload(fd: number, size: number, type: "turn_context" | "
         throw new Error("Codex rollout JSONL record exceeds the bounded record size");
       }
       const item = parseJsonLine(line);
-      if (item.type === type) return record(item.payload);
+      if (item.type === type && matches(record(item.payload))) return record(item.payload);
     }
     carry = Buffer.from(data.subarray(0, lineEnd));
     if (carry.length > MAX_ROLLOUT_JSON_LINE_BYTES) {
@@ -243,7 +249,29 @@ function latestRolloutPayload(fd: number, size: number, type: "turn_context" | "
   }
   if (carry.length === 0) return undefined;
   const item = parseJsonLine(carry);
-  return item.type === type ? record(item.payload) : undefined;
+  return item.type === type && matches(record(item.payload)) ? record(item.payload) : undefined;
+}
+
+/**
+ * The rendered filesystem of the primary environment, which holds its current workspace roots.
+ * Desktop rollouts record those roots nowhere else: turn_context omits them and session_meta keeps
+ * the ones the task started with. Codex renders the whole element into both the model-visible
+ * envelope and world_state, whose partial records are JSON merge patches; see
+ * codex-rs/core/src/context/world_state/environment.rs (rust-v0.166.0). Compared only, never parsed.
+ */
+export function latestCodexRolloutFilesystem(rolloutPath: string): string | undefined {
+  const fd = openSync(rolloutPath, "r");
+  try {
+    const latest = latestRolloutPayload(fd, fstatSync(fd).size, "world_state", payload => {
+      const environments = record(payload?.state)?.environments;
+      return payload?.full === true || environments === null
+        || (record(environments) !== undefined && "filesystem" in record(environments)!);
+    });
+    const filesystem = record(record(latest?.state)?.environments)?.filesystem;
+    return typeof filesystem === "string" ? filesystem : undefined;
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function verifyCompactedEnvironmentItems(fd: number, size: number, items: Record<string, unknown>[]): void {
@@ -257,6 +285,118 @@ function verifyCompactedEnvironmentItems(fd: number, size: number, items: Record
     }
     previousIndex = matches[0]!.index;
   }
+}
+
+const CALENDAR_ONLY_ENVIRONMENT_PATTERN =
+  /^<environment_context>\s*<current_date>(\d{4}-\d{2}-\d{2})<\/current_date>\s*(?:<timezone>([^<>\r\n]+)<\/timezone>\s*)?<\/environment_context>$/;
+
+function calendarOnlyEnvironment(content: unknown): { currentDate: string; timezone?: string } | undefined {
+  if (!Array.isArray(content)) return undefined;
+  let parsed: { currentDate: string; timezone?: string } | undefined;
+  for (const part of content) {
+    const text = record(part)?.text;
+    if (typeof text !== "string" || !/<\/?environment_context\b/i.test(text)) continue;
+    if (parsed) return undefined;
+    const match = CALENDAR_ONLY_ENVIRONMENT_PATTERN.exec(text.trim());
+    if (!match) return undefined;
+    parsed = { currentDate: match[1]!, ...(match[2] ? { timezone: match[2].trim() } : {}) };
+  }
+  return parsed;
+}
+
+function worldStateMatchesCalendar(
+  payload: Record<string, unknown> | undefined,
+  calendar: { currentDate: string; timezone?: string },
+): boolean {
+  const environments = record(record(payload?.state)?.environments);
+  if (!environments || environments.current_date !== calendar.currentDate) return false;
+  return calendar.timezone === undefined || environments.timezone === calendar.timezone;
+}
+
+function verifyHistoricalEnvironmentMessages(
+  fd: number,
+  size: number,
+  turnId: string,
+  messages: ChatGptUnattributedEnvironmentMessage[],
+): void {
+  const pending = new Map(messages.map(message => [message.id, message.content]));
+  if (pending.size !== messages.length) throw new Error("Codex environment history repeats a message id");
+  // Codex 0.169+ records the initial date/timezone-only preamble after task_started and before
+  // turn_context, paired with world_state. Any environment claim carrying filesystem or policy
+  // tags must still appear before task_started.
+  let currentCalendarPreamble: {
+    id: string;
+    content: unknown;
+    calendar: { currentDate: string; timezone?: string };
+    itemMatched: boolean;
+    worldStateMatched: boolean;
+  } | undefined;
+  let position = 0;
+  let carry = Buffer.alloc(0);
+  while (position < size) {
+    const length = Math.min(ROLLOUT_READ_CHUNK_BYTES, size - position);
+    const chunk = Buffer.alloc(length);
+    if (readSync(fd, chunk, 0, length, position) !== length) {
+      throw new Error("Codex rollout changed during environment history lookup");
+    }
+    position += length;
+    const data = Buffer.concat([carry, chunk]);
+    let start = 0;
+    for (let end = data.indexOf(0x0a); end >= 0; end = data.indexOf(0x0a, start)) {
+      const line = data.subarray(start, end);
+      start = end + 1;
+      if (!line.length) continue;
+      if (line.length > MAX_ROLLOUT_JSON_LINE_BYTES) throw new Error("Codex rollout JSONL record exceeds the bounded record size");
+      const item = parseJsonLine(line);
+      const payload = record(item.payload);
+      if (currentCalendarPreamble) {
+        if (item.type === "turn_context" && payload?.turn_id === turnId) {
+          if (currentCalendarPreamble.itemMatched && currentCalendarPreamble.worldStateMatched) return;
+          throw new Error("Codex rollout does not authenticate the historical environment messages");
+        }
+        if (item.type === "event_msg" && payload?.type === "task_started") {
+          throw new Error("Codex rollout does not authenticate the historical environment messages");
+        }
+        if (item.type === "response_item" && payload?.type === "message" && payload.role === "user"
+          && payload.id === currentCalendarPreamble.id) {
+          if (!isDeepStrictEqual(payload.content, currentCalendarPreamble.content)) {
+            throw new Error("Historical environment message differs from its native Codex record");
+          }
+          currentCalendarPreamble.itemMatched = true;
+        } else if (item.type === "world_state" && worldStateMatchesCalendar(payload, currentCalendarPreamble.calendar)) {
+          currentCalendarPreamble.worldStateMatched = true;
+        }
+        continue;
+      }
+      // Core writes task_started before this turn's environment update. Merely finding matching
+      // XML somewhere in the file would also accept a current update as historical.
+      if (item.type === "event_msg" && payload?.type === "task_started" && payload.turn_id === turnId) {
+        if (pending.size === 0) return;
+        if (pending.size === 1) {
+          const [[id, content]] = [...pending.entries()] as [[string, unknown]];
+          const calendar = calendarOnlyEnvironment(content);
+          if (calendar) {
+            currentCalendarPreamble = { id, content, calendar, itemMatched: false, worldStateMatched: false };
+            continue;
+          }
+        }
+        throw new Error("Codex rollout does not authenticate the historical environment messages");
+      }
+      if (item.type !== "response_item" || payload?.type !== "message" || payload.role !== "user"
+        || typeof payload.id !== "string" || !pending.has(payload.id)) continue;
+      if (!isDeepStrictEqual(payload.content, pending.get(payload.id))) {
+        throw new Error("Historical environment message differs from its native Codex record");
+      }
+      pending.delete(payload.id);
+    }
+    carry = Buffer.from(data.subarray(start));
+    if (carry.length > MAX_ROLLOUT_JSON_LINE_BYTES) throw new Error("Codex rollout JSONL record exceeds the bounded record size");
+  }
+  throw new Error(
+    currentCalendarPreamble
+      ? "Codex rollout does not authenticate the historical environment messages"
+      : "Codex rollout has no current task boundary for environment history",
+  );
 }
 
 function validateSessionMeta(
@@ -286,49 +426,6 @@ function validateSessionMeta(
     || !matchesAgentPath(spawn.agent_path, lineage.agentName)) {
     throw new Error("Codex rollout session metadata does not authenticate the requested subagent");
   }
-}
-
-function verifyHistoricalEnvironmentMessages(
-  fd: number,
-  size: number,
-  turnId: string,
-  messages: ChatGptUnattributedEnvironmentMessage[],
-): void {
-  const pending = new Map(messages.map(message => [message.id, message.content]));
-  if (pending.size !== messages.length) throw new Error("Codex environment history repeats a message id");
-  let position = 0;
-  let carry = Buffer.alloc(0);
-  while (position < size) {
-    const length = Math.min(ROLLOUT_READ_CHUNK_BYTES, size - position);
-    const chunk = Buffer.alloc(length);
-    if (readSync(fd, chunk, 0, length, position) !== length) {
-      throw new Error("Codex rollout changed during environment history lookup");
-    }
-    position += length;
-    const data = Buffer.concat([carry, chunk]);
-    let start = 0;
-    for (let end = data.indexOf(0x0a); end >= 0; end = data.indexOf(0x0a, start)) {
-      const line = data.subarray(start, end);
-      start = end + 1;
-      if (!line.length) continue;
-      if (line.length > MAX_ROLLOUT_JSON_LINE_BYTES) throw new Error("Codex rollout JSONL record exceeds the bounded record size");
-      const item = parseJsonLine(line);
-      const payload = record(item.payload);
-      if (item.type === "event_msg" && payload?.type === "task_started" && payload.turn_id === turnId) {
-        if (pending.size === 0) return;
-        throw new Error("Codex rollout does not authenticate the historical environment messages");
-      }
-      if (item.type !== "response_item" || payload?.type !== "message" || payload.role !== "user"
-        || typeof payload.id !== "string" || !pending.has(payload.id)) continue;
-      if (!isDeepStrictEqual(payload.content, pending.get(payload.id))) {
-        throw new Error("Historical environment message differs from its native Codex record");
-      }
-      pending.delete(payload.id);
-    }
-    carry = Buffer.from(data.subarray(start));
-    if (carry.length > MAX_ROLLOUT_JSON_LINE_BYTES) throw new Error("Codex rollout JSONL record exceeds the bounded record size");
-  }
-  throw new Error("Codex rollout has no current task boundary for environment history");
 }
 
 function verifyCurrentTurnAnchor(
@@ -546,7 +643,7 @@ export function resolveCurrentCodexRolloutEnvironment(options: {
         verifyCompactedEnvironmentItems(fd, size, options.compactedEnvironmentItems);
       }
       const filesystemProfileXml = renderFilesystemProfile(latest.permission_profile, environment.roots);
-      matching.push({ environment, workspaceRootsDeclared, filesystemProfileXml, codexHome: owner.home });
+      matching.push({ environment, workspaceRootsDeclared, filesystemProfileXml, codexHome: owner.home, rolloutPath });
     } finally {
       closeSync(fd);
     }

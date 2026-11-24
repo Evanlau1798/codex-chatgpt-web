@@ -37,6 +37,7 @@ import {
 } from "./prompt-context";
 import {
   CHATGPT_BIGGER_CONTEXT_PARTS,
+  CHATGPT_ESTIMATE_TRANSACTION_ID,
   isChatGptWebMultipartPartCount,
   formatChatGptWebMultipartCommit,
   formatChatGptWebMultipartStage,
@@ -96,6 +97,11 @@ export interface CompileChatGptWebPromptOptions {
   captureLunaCheckpoint?: boolean;
   experimentalSkillAttachments?: boolean;
   experimentalMultipartParts?: ChatGptWebMultipartPartCount;
+  /** Browser-selected transaction identity, including its exact encoded token cost. */
+  multipartTransactionId?: string;
+  /** Reject a smaller compaction transport before it discards any history. */
+  requireCompleteHistory?: boolean;
+  /** Capture only when preparing a real browser submission, not during budget-planning probes. */
   /** Numerical submitted-context costs; never content or identifiers. */
   includeContextTokenBreakdown?: boolean;
   /** Native2 is attached only for bridge-authenticated control operations, not outer work tools. */
@@ -180,6 +186,7 @@ export function compileChatGptWebPrompt(
     parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID ? CHATGPT_WEB_LUNA_BACKEND_MODEL : CHATGPT_WEB_BACKEND_MODEL,
     mode.effort,
     capabilities,
+    parsed._chatgptModelFamily,
   );
   const bootstrapLimits = transportLimits.browserComposerCharLimit === undefined
     ? undefined
@@ -496,7 +503,7 @@ export function compileChatGptWebPrompt(
         ].join("\n"),
       };
       const imageTokens = images.reduce((sum, image) => sum + chatGptWebImageTokenReserve(image.detail), 0);
-      const transactionId = TOKEN_ESTIMATE_TRANSACTION;
+      const transactionId = options?.multipartTransactionId ?? CHATGPT_ESTIMATE_TRANSACTION_ID;
       // First try Instant-sized stages and give the final selected mode its own larger share.
       // Equal parts near Instant's maximum can be accepted once and rejected on the next Send.
       // If complete records cannot fit that allocation, plan with the wider available stage mode
@@ -509,7 +516,7 @@ export function compileChatGptWebPrompt(
         const budgets = multipart.parts.map((payload, index) => {
           const final = index === multipart.parts.length - 1;
           const effort = final ? mode.effort : stagingEffort;
-          const limits = resolveChatGptWebTransportLimits(backendModel, effort, capabilities);
+          const limits = resolveChatGptWebTransportLimits(backendModel, effort, capabilities, parsed._chatgptModelFamily);
           const tokenLimit = final
             ? resolveChatGptWebMessageTokenBudget(backendModel, effort, capabilities,
               imageTokens + skillFileTokens(skillFiles, parsed.modelId))
@@ -609,6 +616,7 @@ export function compileChatGptWebPrompt(
       if (!(error instanceof ChatGptWebAdapterError) || error.code !== "context_length_exceeded") throw error;
       failure = error;
     }
+    if (options?.requireCompleteHistory) throw failure;
     const discardIndex = sourceMessages.findIndex((message, index) => index !== checkpointIndex
       && index < sourceMessages.length - 1 && !requiredTasks.has(message));
     if (discardIndex >= 0) {

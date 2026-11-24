@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { ensureChatGptPersonalizedConnectorAccess } from "../src/adapters/chatgpt-web/personalization";
 import { matchesName, visibleLocator, personalizationLabels } from "./personalization-preflight-fixture";
+import { CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR } from "../src/chatgpt-session";
 
 test("a missing personalization control fails closed before connector selection", async () => {
   const diagnostics: string[] = [];
@@ -265,7 +266,8 @@ test("a localized preflight waits for its semantic control to hydrate without as
         expect(selector).toBe(
           '[data-testid="thread-header-right-actions"] [aria-haspopup="menu"], '
           + '#conversation-header-actions [aria-haspopup="menu"], '
-          + '[data-content-sheet-root] > button[aria-expanded][aria-controls]',
+          + '[data-content-sheet-root] > button[aria-expanded][aria-controls], '
+          + CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR,
         );
         return controls;
       }

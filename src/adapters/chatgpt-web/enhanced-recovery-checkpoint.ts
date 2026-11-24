@@ -16,7 +16,7 @@ const MAX_ENHANCED_RECOVERY_CHECKPOINTS = 128;
 interface CheckpointIdentity {
   threadId: string;
   modelId: string;
-  modelFamily: "5.6" | "6" | null;
+  modelFamily: "5.6" | "6" | "6.2" | null;
   effort: string | null;
 }
 
@@ -100,7 +100,7 @@ function validateStoredCheckpoint(value: unknown): StoredEnhancedRecoveryCheckpo
   const parsed = value as Partial<StoredEnhancedRecoveryCheckpoint>;
   if (typeof parsed.threadId !== "string" || !parsed.threadId.trim()
     || typeof parsed.modelId !== "string" || !parsed.modelId.trim()
-    || (parsed.modelFamily !== null && parsed.modelFamily !== "5.6" && parsed.modelFamily !== "6")
+    || (parsed.modelFamily !== null && parsed.modelFamily !== "5.6" && parsed.modelFamily !== "6" && parsed.modelFamily !== "6.2")
     || (parsed.effort !== null && typeof parsed.effort !== "string")
     || typeof parsed.prefixHash !== "string" || !/^[a-f0-9]{64}$/.test(parsed.prefixHash)
     || !Number.isSafeInteger(parsed.prefixLength) || (parsed.prefixLength as number) <= 0

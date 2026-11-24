@@ -139,7 +139,7 @@ export class ChatGptBrowserDiagnostics {
       const uiVariants = await withChatGptBrowserObservationTimeout(
         page.evaluate(chatGptUiVariantCounts, CHATGPT_UI_VARIANT_SELECTORS),
       ).then(validateChatGptUiVariantCounts).catch(() => undefined);
-      const failed = /turn-failed|response-stalled/.test(checkpoint);
+      const failed = /turn-failed|response-stalled|capability-inspection-failed/.test(checkpoint);
       // Verification remains content-free and normal captures avoid extra DOM work.
       // Detailed actionability probes run only for a failing owned turn.
       const interaction = failed && !this.contentFree
@@ -217,7 +217,7 @@ export class ChatGptBrowserDiagnostics {
   }
 }
 
-async function captureVerificationCapabilities(page: Page): Promise<Record<string, boolean>> {
+async function captureVerificationCapabilities(page: Page): Promise<Record<string, unknown>> {
   return page.evaluate(selectors => {
     const rendered = (element: Element): boolean => {
       const candidate = element as HTMLElement;
@@ -230,6 +230,10 @@ async function captureVerificationCapabilities(page: Page): Promise<Record<strin
     const composers = [...document.querySelectorAll(selectors.composer)].filter(rendered);
     const composerForm = composers.length === 1 ? composers[0]!.closest("form") : null;
     const effortControls = composerForm ? [...composerForm.querySelectorAll(selectors.effortControl)].filter(rendered) : [];
+    const integer = (element: Element, name: string): number | null => {
+      const value = element.getAttribute(name);
+      return value !== null && /^-?\d+$/.test(value) && Number.isSafeInteger(Number(value)) ? Number(value) : null;
+    };
     return {
       composerVisible: composers.length === 1,
       composerEditable: composers.length === 1 && (composers[0] instanceof HTMLTextAreaElement
@@ -246,11 +250,21 @@ async function captureVerificationCapabilities(page: Page): Promise<Record<strin
       menuVisible: any('[role="menu"], [role="listbox"], [data-testid="composer-intelligence-picker-content"]'),
       connectorRowsVisible: any('.__menu-item[tabindex="0"], [data-mention-list-scroll-area] button[data-list-navigation-item="true"]'),
       overlayVisible: any('[role="dialog"], [role="alert"], [role="status"]'),
+      effortSliders: [...document.querySelectorAll(selectors.effortSliderContainer)]
+        .filter(rendered).slice(-10).flatMap(container => [...container.querySelectorAll('[role="slider"]')].map(element => ({
+          min: integer(element, "aria-valuemin"), max: integer(element, "aria-valuemax"),
+          value: integer(element, "aria-valuenow"), power: container.hasAttribute("data-model-picker-power-slider"),
+          enabled: Boolean(container.querySelector('[data-orientation="horizontal"][aria-disabled="false"]')),
+          ticks: [...container.querySelectorAll("[data-selected]")].slice(0, 10).map(tick => ({
+            locked: tick.getAttribute("data-locked") === "true" ? true : tick.getAttribute("data-locked") === "false" ? false : null,
+          })),
+        }))),
     };
   }, {
     composer: CHATGPT_COMPOSER_SELECTOR,
     effortControl: CHATGPT_EFFORT_CONTROL_SELECTOR,
     effortItem: CHATGPT_EFFORT_ITEM_SELECTOR,
+    effortSliderContainer: CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR,
   });
 }
 

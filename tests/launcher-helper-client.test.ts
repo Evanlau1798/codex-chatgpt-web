@@ -395,6 +395,7 @@ test("launcher helper protocol preserves multipart context, broker identity and 
         id: message.id,
         event: "prepared_selected",
         reused: false,
+        transactionId: `ctx_${"a".repeat(32)}`,
       })));
     } else if (message.type === "prepared_selected_ack") {
       queueMicrotask(() => internal.handleLine(child, JSON.stringify({
@@ -411,7 +412,9 @@ test("launcher helper protocol preserves multipart context, broker identity and 
     reasoning: "high",
     capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: true },
     compaction: true,
-    prepare: async () => ({
+    prepare: async transactionId => {
+      expect(transactionId).toBe(`ctx_${"a".repeat(32)}`);
+      return ({
       text: "commit",
       turnToken: "turn_0123456789abcdef0123456789abcdef",
       images: [],
@@ -422,7 +425,7 @@ test("launcher helper protocol preserves multipart context, broker identity and 
       trimmedCompactionMessages: 4,
       contextTokenBreakdown: { developer: { records: 1, chars: 400, tokens: 100 } },
       release() {},
-    }),
+    }); },
     onTextDelta() {},
   })).resolves.toBe("done");
 

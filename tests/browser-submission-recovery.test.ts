@@ -60,13 +60,25 @@ function surface(
   readUsers: () => Promise<readonly string[]> = async () => ["conversation-turn-old"],
   options: { url?: () => string; composerText?: () => string } = {},
 ) {
+  const document = {};
+  const evaluate = (callback: (items: any[], name?: string) => unknown, items: any[], name?: string) => {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
+    try {
+      Object.defineProperty(globalThis, "document", { configurable: true, value: document });
+      return callback(items, name);
+    } finally {
+      if (previous) Object.defineProperty(globalThis, "document", previous);
+      else Reflect.deleteProperty(globalThis, "document");
+    }
+  };
   const hidden = {
     locator() { return this; },
-    evaluateAll: async (read: (elements: Element[]) => unknown) => read([]),
+    evaluateAll: async (read: (elements: Element[]) => unknown) => evaluate(read, []),
     filter() { return this; }, last() { return this; }, getByText() { return this; }, getByTestId() { return this; },
     isVisible: async () => false, count: async () => 0,
   };
   const elements = (identities: readonly string[]) => identities.map(identity => ({
+    ownerDocument: document,
     getAttribute: (name: string) => name.startsWith("data-turn-id") ? identity : null,
     parentElement: null,
     closest: () => null,
@@ -74,7 +86,7 @@ function surface(
   const users = {
     count: async () => 1,
     evaluateAll: async (callback: (items: unknown[], name?: string) => unknown, name?: string) => (
-      callback(elements(await readUsers()), name)
+      evaluate(callback, elements(await readUsers()), name)
     ),
   } as unknown as Locator;
   const selected: string[] = [];
@@ -95,7 +107,7 @@ function surface(
         knownTurnIdentities: observed.knownTurnIdentities
           ?? [...new Set(["conversation-turn-old", ...identities])],
       };
-      return callback(elements(identities), name);
+      return evaluate(callback, elements(identities), name);
     },
     nth: () => assistant, page: () => page,
   } as unknown as Locator;
@@ -114,7 +126,7 @@ function surface(
       if (selector.includes('data-message-author-role="user"')) return users;
       if (selector === "[data-turn-id-container], [data-turn-key]") {
         return {
-          evaluateAll: async (callback: (items: unknown[], name?: string) => unknown, name?: string) => callback(
+          evaluateAll: async (callback: (items: unknown[], name?: string) => unknown, name?: string) => evaluate(callback,
             elements(lastState.knownTurnIdentities ?? ["conversation-turn-old", ...(lastState.identities ?? [])]),
             name,
           ),

@@ -306,6 +306,15 @@ export class ChatGptTurnSession {
 
   canAcceptSteering(): boolean { return this.steering.canAccept(); }
 
+  isSupersededUserRevision(revision: string): boolean {
+    return this.userRevision !== revision && this.seenUserRevisions.includes(revision);
+  }
+
+  inheritUserRevisionHistory(previous: ChatGptTurnSession): void {
+    const history = [...new Set([...previous.seenUserRevisions, ...this.seenUserRevisions])].slice(-32);
+    this.seenUserRevisions.splice(0, this.seenUserRevisions.length, ...history);
+  }
+
   updateUserRevision(revision: string, steering: string, queue = true): string | undefined {
     if (this.userRevision === undefined) {
       this.seenUserRevisions.push(this.userRevision = revision);

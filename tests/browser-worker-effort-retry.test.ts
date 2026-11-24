@@ -6,6 +6,7 @@ import {
   CHATGPT_EFFORT_SLIDER_SELECTOR,
   CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR,
 } from "../src/chatgpt-session";
+import { CHATGPT_ACTIVE_EFFORT_SLIDER_SELECTOR } from "../src/chatgpt-ui/model-picker";
 import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-error";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
@@ -23,6 +24,7 @@ function effortMenuFixture(itemCount: number) {
     last() { return this; },
     isVisible: async () => true,
     locator: (selector: string) => {
+      if (selector.includes("data-active")) return rateLimitDialog;
       expect(selector).toBe(CHATGPT_EFFORT_ITEM_SELECTOR);
       return effortChoices;
     },
@@ -61,7 +63,7 @@ function effortMenuFixture(itemCount: number) {
     locator: (selector: string) => {
       if (selector === CHATGPT_EFFORT_MENU_SELECTOR) return effortMenu;
       if (selector === CHATGPT_EFFORT_SLIDER_SELECTOR) return effortSliderCollection;
-      if (selector === CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR) return {
+      if (selector === CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR || selector === CHATGPT_ACTIVE_EFFORT_SLIDER_SELECTOR) return {
         filter() { return this; }, last() { return this; }, isVisible: async () => true,
         waitFor: async () => {}, locator: () => effortSlider,
       };
@@ -127,7 +129,7 @@ describe("ChatGPT effort menu failure classification", () => {
       filter() { return this; },
       last() { return this; },
       isVisible: async () => true,
-      locator: () => ({ nth: () => modelRow }),
+      locator: (selector: string) => selector.includes("data-active") ? hiddenDialog : ({ nth: () => modelRow }),
     };
     const effortControl = {
       last() { return this; }, first() { return this; }, filter() { return this; },
@@ -146,7 +148,7 @@ describe("ChatGPT effort menu failure classification", () => {
       url: () => "https://chatgpt.com/?temporary-chat=true",
       locator: (selector: string) => {
         if (selector === CHATGPT_EFFORT_MENU_SELECTOR) return effortMenu;
-        if (selector === CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR) return {
+        if (selector === CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR || selector === CHATGPT_ACTIVE_EFFORT_SLIDER_SELECTOR) return {
           filter() { return this; }, last() { return this; },
           isVisible: async () => true, waitFor: async () => {},
           evaluate: async () => ({
@@ -209,7 +211,7 @@ describe("ChatGPT effort menu failure classification", () => {
       filter() { return this; },
       last() { return this; },
       isVisible: async () => false,
-      locator: () => ({ nth: () => unavailableChoice }),
+      locator: (selector: string) => selector.includes("data-active") ? hiddenDialog : ({ nth: () => unavailableChoice }),
     };
     const effortControl = {
       last() { return this; }, first() { return this; }, filter() { return this; },
@@ -230,7 +232,7 @@ describe("ChatGPT effort menu failure classification", () => {
       url: () => "https://chatgpt.com/?temporary-chat=true",
       locator: (selector: string) => {
         if (selector === CHATGPT_EFFORT_MENU_SELECTOR) return effortMenu;
-        if (selector === CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR) return {
+        if (selector === CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR || selector === CHATGPT_ACTIVE_EFFORT_SLIDER_SELECTOR) return {
           filter() { return this; }, last() { return this; },
           isVisible: async () => true, waitFor: async () => {},
           evaluate: async () => ({

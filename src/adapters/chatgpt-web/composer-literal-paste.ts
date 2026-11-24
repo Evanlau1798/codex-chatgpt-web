@@ -11,13 +11,20 @@ export async function pasteChatGptComposerLiteralText(
   metrics?: ChatGptPromptInsertionMetrics,
   operation?: ChatGptPromptOperation,
   recoverCaret?: () => Promise<void>,
+  replace = false,
 ): Promise<void> {
   const op = operation ?? new ChatGptPromptOperation(abortSignal);
   await op.mutate(options => composer.focus(options));
   metrics?.editStarted();
   const edit = await op.mutate(options => composer.evaluate((element, value) => {
     const selection = window.getSelection();
-    if (document.activeElement !== element || !selection?.isCollapsed
+    if (value.replace && document.activeElement === element && selection) {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    if (document.activeElement !== element || !selection || (!value.replace && !selection.isCollapsed)
       || !selection.anchorNode || !selection.focusNode
       || !element.contains(selection.anchorNode) || !element.contains(selection.focusNode)) {
       return { result: false, attempts: 0, accepted: 0 };
@@ -42,11 +49,11 @@ export async function pasteChatGptComposerLiteralText(
     }
     // Handling is not proof of text integrity: require settled readback before Send.
     return { result: handled, attempts: 1, accepted: handled ? 1 : 0 };
-  }, { text, metaKey: process.platform === "darwin" }, options));
+  }, { text, metaKey: process.platform === "darwin", replace }, options));
   const accepted = chatGptNativeEditValue(edit, metrics);
   if (!accepted && recoverCaret && typeof edit === "object" && edit !== null && edit.attempts === 0) {
     await recoverCaret();
-    return pasteChatGptComposerLiteralText(composer, text, abortSignal, metrics, op);
+    return pasteChatGptComposerLiteralText(composer, text, abortSignal, metrics, op, undefined, replace);
   }
   if (!accepted) throw chatGptWebSurfaceError("ChatGPT composer rejected the literal plain-text paste", false);
 }

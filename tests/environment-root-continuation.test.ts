@@ -386,7 +386,7 @@ test("a malformed current update is not replaced by a valid older transcript env
     { type: "response_item", payload: body.input[3] },
     childTurnContext(),
   ].map(record => JSON.stringify(record)).join("\n") + "\n");
-  expect(() => store.resolve(request)).toThrow("missing cwd");
+  expect(() => store.resolve(request)).toThrow("does not authenticate the historical environment messages");
 });
 
 test("root rollout lookup authenticates the indexed owner and current sandbox", () => {

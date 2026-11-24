@@ -216,7 +216,7 @@ test("v6.1.3 evidence is content-addressed, references v6.1.2, and reconstructs 
   }
 }, 30_000);
 
-test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8", "v6.1.10", "v6.1.11", "v6.1.12", "v6.1.13", "v6.1.15", "v6.1.16", "v6.1.17"])("continuing %s evidence closes source anchors and reconstructs the original merge from retained prerequisites", release => {
+test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8", "v6.1.10", "v6.1.11", "v6.1.12", "v6.1.13", "v6.1.15", "v6.1.16", "v6.1.17", "v6.2.0"])("continuing %s evidence closes source anchors and reconstructs the original merge from retained prerequisites", release => {
   const next = JSON.parse(readFileSync(resolve(root, `.github/upstream-audit/${release}.json`), "utf8"));
   if (release === "v6.1.5") {
     expect(next.coverage).toEqual({paths: 54, hunks: 202, testPaths: 21, testCaseDeltas: 61, pending: 0, missing: 0});
@@ -263,7 +263,14 @@ test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8", "v6.1.10", "v6.1.11", "v6.1.1
     expect(next.coverage).toEqual({ paths: 118, hunks: 555, testPaths: 50, testCaseDeltas: 226, pending: 0, missing: 0 });
   }
   const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
-  const publishedObjects = release === "v6.1.7" || release === "v6.1.8" || release === "v6.1.10" || release === "v6.1.11" || release === "v6.1.12" || release === "v6.1.13" || release === "v6.1.15" || release === "v6.1.16" || release === "v6.1.17"
+  if (release === "v6.2.0") {
+    expect(next.baseline).toBe("8d075318a09ad99c0cf2f5e6a9434a1c6d4e9b20");
+    expect(next.semanticBaseline).toBe("860fa576eb47d9e20d7d8289235bfea94392d2fd");
+    expect(next.upstream).toBe("fc701f6fbcff9fb65f679445389aca0c60410271");
+    expect(next.tag).toEqual({ type: "annotated", refTarget: "164770d5b02cb11101829cb14094e343236ddc34", object: "164770d5b02cb11101829cb14094e343236ddc34", commit: next.upstream, signed: false });
+    expect(next.coverage).toEqual({ paths: 87, hunks: 314, testPaths: 35, testCaseDeltas: 98, pending: 0, missing: 0 });
+  }
+  const publishedObjects = release === "v6.1.7" || release === "v6.1.8" || release === "v6.1.10" || release === "v6.1.11" || release === "v6.1.12" || release === "v6.1.13" || release === "v6.1.15" || release === "v6.1.16" || release === "v6.1.17" || release === "v6.2.0"
     ? new Set(git(["rev-list", "--objects", "HEAD"]).split(/\r?\n/).map(line => line.split(" ")[0])) : undefined;
   const retainedTargets = new Map<string, Buffer>();
   if (next.evidence.targetBlobs) {
@@ -293,7 +300,7 @@ test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8", "v6.1.10", "v6.1.11", "v6.1.1
   const textDigest = (text: string) => digest(Buffer.from(text.replaceAll("\r\n", "\n")));
   expect(next.tag.signed).toBeFalse();
   expect(git(["merge-base", next.semanticBaseline, next.upstream])).toBe(next.semanticBaseline);
-  expect(git(["rev-list", "--count", `${next.semanticBaseline}..${next.upstream}`])).toBe(release === "v6.1.17" ? "50" : release === "v6.1.16" ? "48" : release === "v6.1.15" ? "42" : release === "v6.1.10" ? "14" : release === "v6.1.7" ? "4" : release === "v6.1.8" || release === "v6.1.13" ? "3" : "1");
+  expect(git(["rev-list", "--count", `${next.semanticBaseline}..${next.upstream}`])).toBe(release === "v6.2.0" ? "35" : release === "v6.1.17" ? "50" : release === "v6.1.16" ? "48" : release === "v6.1.15" ? "42" : release === "v6.1.10" ? "14" : release === "v6.1.7" ? "4" : release === "v6.1.8" || release === "v6.1.13" ? "3" : "1");
   const expectedPaths = git(["diff", "--name-only", next.semanticBaseline, next.upstream]).split(/\r?\n/).sort();
   expect(next.paths.map((item: any) => item.path).sort()).toEqual(expectedPaths);
   expect(new Set(next.paths.map((item: any) => item.path)).size).toBe(expectedPaths.length);
@@ -308,7 +315,7 @@ test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8", "v6.1.10", "v6.1.11", "v6.1.1
     expect(next.obligations.some((entry: any) => entry.id === item.obligation), item.id).toBeTrue();
   }
   expect(new Set(next.tests.map((item: any) => item.id)).size).toBe(next.tests.length);
-  const declaredCases = (text: string, path: string) => upstreamAuditCases(text, path, release !== "v6.1.4", release === "v6.1.15" || release === "v6.1.16");
+  const declaredCases = (text: string, path: string) => upstreamAuditCases(text, path, release !== "v6.1.4", release === "v6.1.15" || release === "v6.1.16" || release === "v6.2.0");
   const expectedCases = expectedPaths.filter(path => /(^|\/)(tests?|__tests__)\/|\.test\./.test(path)).flatMap(path => {
     const previous = spawnSync("git", ["show", `${next.semanticBaseline}:${path}`], {cwd: root, encoding: "utf8"});
     const before = previous.status === 0 ? declaredCases(previous.stdout, path) : [];

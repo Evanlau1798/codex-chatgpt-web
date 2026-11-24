@@ -2,6 +2,7 @@ import { CHATGPT_WEB_PLATFORM_RESERVE_TOKENS, chatGptWebImageTokenReserve } from
 import { skillFileTokens } from "./skill-attachments";
 import { estimateTokens } from "../../lib/token-estimate";
 import {
+  CHATGPT_ESTIMATE_TRANSACTION_ID,
   formatChatGptWebMultipartCommit,
   formatChatGptWebMultipartStage,
 } from "./prompt-multipart";
@@ -21,55 +22,54 @@ export function estimateChatGptWebTextTokens(text: string, modelId: string, vari
   return count(text, 0);
 }
 
+function formatChatGptWebTransport(compiled: CompiledChatGptWebPrompt, transactionId = CHATGPT_ESTIMATE_TRANSACTION_ID) {
+  const multipart = compiled.multipart;
+  const stages = multipart?.parts.slice(0, -1).map((part, i) =>
+    formatChatGptWebMultipartStage(part, transactionId, i + 1, multipart.parts.length));
+  const finalPrompt = multipart ? formatChatGptWebMultipartCommit(multipart, transactionId) : compiled.text;
+  return { stages, finalPrompt };
+}
+
 export function compiledChatGptWebMessages(compiled: CompiledChatGptWebPrompt): string[] {
-  if (!compiled.multipart) return [compiled.text];
-  return [
-    ...compiled.multipart.parts.slice(0, -1).map((payload, index) => (
-      formatChatGptWebMultipartStage(
-        payload,
-        TOKEN_ESTIMATE_TRANSACTION,
-        index + 1,
-        compiled.multipart!.parts.length,
-      ).text
-    )),
-    formatChatGptWebMultipartCommit(compiled.multipart, TOKEN_ESTIMATE_TRANSACTION),
-  ];
+  const { stages, finalPrompt } = formatChatGptWebTransport(compiled);
+  return [...(stages ?? []).map(stage => stage.text), finalPrompt];
+}
+
+export function estimateCompiledChatGptWebInputTokens(
+  compiled: CompiledChatGptWebPrompt,
+  modelId: string,
+  transactionOrVariables?: string | readonly string[],
+): number {
+  return measureChatGptWebTransport(compiled, modelId,
+    typeof transactionOrVariables === "string" ? transactionOrVariables : undefined,
+    typeof transactionOrVariables === "string" ? [] : transactionOrVariables).estimatedInputTokens;
+}
+
+export function measureChatGptWebTransport(compiled: CompiledChatGptWebPrompt, modelId: string, transactionId?: string,
+  variableTokens: readonly string[] = []) {
+  const { stages, finalPrompt } = formatChatGptWebTransport(compiled, transactionId);
+  const imageTokens = estimateChatGptWebImageTokens(compiled);
+  const count = (text: string) => estimateChatGptWebTextTokens(text, modelId,
+    transactionId ? variableTokens : [...variableTokens, CHATGPT_ESTIMATE_TRANSACTION_ID]);
+  const finalMessageTokens = count(finalPrompt) + skillFileTokens(compiled.skillFiles, modelId);
+  const stageMessageTokens = (stages ?? []).map(stage => count(stage.text));
+  const stageTokens = (stages ?? []).reduce((sum, stage, i) =>
+    sum + stageMessageTokens[i]! + count(stage.acknowledgement), 0);
+  const maxStageChars = Math.max(0, ...(stages ?? []).map(stage => stage.text.length));
+  return {
+    stages, finalPrompt, finalMessageTokens, imageTokens, stageMessageTokens,
+    estimatedInputTokens: CHATGPT_WEB_PLATFORM_RESERVE_TOKENS + finalMessageTokens + stageTokens + imageTokens,
+    maxStageMessageTokens: Math.max(0, ...stageMessageTokens), maxStageChars,
+    maxMessageChars: Math.max(maxStageChars, finalPrompt.length),
+  };
 }
 
 export function compiledChatGptWebMaxMessageChars(compiled: CompiledChatGptWebPrompt): number {
   return Math.max(...compiledChatGptWebMessages(compiled).map(message => message.length));
 }
 
-/** Tokens present in the one visible browser message, excluding hidden product/tool reserves. */
-export function estimateCompiledChatGptWebMessageTokens(
-  compiled: CompiledChatGptWebPrompt,
-  modelId: string,
-): number {
-  const messages = compiledChatGptWebMessages(compiled);
-  return Math.max(...messages.map((message, index) => estimateTokens(message, modelId)
-    + (index === messages.length - 1 ? skillFileTokens(compiled.skillFiles, modelId) : 0)));
-}
-
-export function estimateCompiledChatGptWebInputTokens(
-  compiled: CompiledChatGptWebPrompt,
-  modelId: string,
-  variableTokens: readonly string[] = [],
-): number {
-  const imageTokens = estimateChatGptWebImageTokens(compiled);
-  const textTokens = (text: string) => estimateChatGptWebTextTokens(text, modelId, variableTokens);
-  const messageTokens = compiledChatGptWebMessages(compiled)
-    .reduce((total, message) => total + textTokens(message), 0);
-  const acknowledgementTokens = compiled.multipart
-    ? compiled.multipart.parts.slice(0, -1).reduce((total, payload, index) => total + textTokens(
-      formatChatGptWebMultipartStage(
-        payload,
-        TOKEN_ESTIMATE_TRANSACTION,
-        index + 1,
-        compiled.multipart!.parts.length,
-      ).acknowledgement,
-    ), 0)
-    : 0;
-  return CHATGPT_WEB_PLATFORM_RESERVE_TOKENS + messageTokens + acknowledgementTokens + imageTokens + skillFileTokens(compiled.skillFiles, modelId);
+export function estimateCompiledChatGptWebMessageTokens(compiled: CompiledChatGptWebPrompt, modelId: string): number {
+  return Math.max(...compiledChatGptWebMessages(compiled).map(message => estimateTokens(message, modelId)));
 }
 
 export function estimateChatGptWebImageTokens(compiled: CompiledChatGptWebPrompt): number {

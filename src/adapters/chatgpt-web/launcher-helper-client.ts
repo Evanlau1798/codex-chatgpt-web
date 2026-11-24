@@ -340,7 +340,7 @@ export class LauncherBrowserHelperClient {
       }
       else if (message.event === "prepared_selected") {
         const prepare = message.reused ? pending.turn.prepareResume : pending.turn.prepare;
-        void Promise.resolve().then(() => prepare?.())
+        void Promise.resolve().then(() => prepare?.(message.transactionId))
           .then(prepared => {
             if (!prepared) throw new Error("Launcher browser helper selected an unavailable resume prompt");
             if (this.pending.get(message.id) !== pending) {
@@ -349,7 +349,7 @@ export class LauncherBrowserHelperClient {
             }
             pending.prepared = prepared;
             if (prepared.skillFiles?.length && !this.helperFeatures.has("skill-attachments")) throw new Error("Launcher browser helper does not support skill attachments; update or restart the launcher");
-            return Promise.resolve(pending.turn.onPreparedSelected?.(message.reused))
+            return Promise.resolve(pending.turn.onPreparedSelected?.(message.reused, message.transactionId))
               .then(() => {
                 if (this.pending.get(message.id) !== pending) return;
                 return this.send({

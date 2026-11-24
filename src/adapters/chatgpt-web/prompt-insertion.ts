@@ -12,6 +12,7 @@ export async function insertChatGptPromptText(
     verify(expected: string): Promise<void>;
     reanchor(): Promise<void>;
     connectorSelected?: boolean;
+    replaceExisting?: boolean;
     existingPrefix?: string;
     onProgress?(snapshot: ChatGptPromptInsertionSnapshot): void;
   },
@@ -33,7 +34,7 @@ export async function insertChatGptPromptText(
     metrics.verified(expected.length);
   });
   try {
-    if (!actions.connectorSelected) await checked(() => actions.verify(""));
+    if (!actions.connectorSelected && !actions.replaceExisting) await checked(() => actions.verify(""));
     const prefix = actions.connectorSelected && actions.existingPrefix && text.startsWith(actions.existingPrefix)
       ? actions.existingPrefix : "";
     if (prefix.length > 1) {
@@ -49,7 +50,8 @@ export async function insertChatGptPromptText(
       await metrics.run("insert", async () => {
         const composer = await checked(() => actions.composer());
         metrics.chunk();
-        await checked(() => pasteChatGptComposerLiteralText(composer, insertionText.slice(offset, end), abortSignal, metrics, op, actions.reanchor));
+        await checked(() => pasteChatGptComposerLiteralText(composer, insertionText.slice(offset, end), abortSignal, metrics, op, actions.reanchor,
+          actions.replaceExisting === true && !actions.connectorSelected && offset === 0));
         metrics.inserted(end + prefixUnits);
       });
       // Every intermediate prefix must be exact before another mutation. The final

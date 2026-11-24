@@ -274,8 +274,11 @@ export async function readChatGptAssistantTurnState(
 export async function readChatGptTurnIdentities(
   turns: Pick<Locator, "evaluateAll">,
   attribute = "data-turn-id",
+  observedHistory = false,
 ): Promise<string[]> {
   const identities = await turns.evaluateAll((elements, name) => {
+    const includeHistory = name.endsWith(":observed");
+    if (includeHistory) name = name.slice(0, -":observed".length);
     const candidates = name === "data-turn-id-container"
       ? elements.filter(element => element.getAttribute("data-turn-key") !== null
         || (!element.closest("[data-turn-key]") && element.parentElement?.closest("[data-turn-id-container]")
@@ -296,8 +299,14 @@ export async function readChatGptTurnIdentities(
     if (identities.some(identity => typeof identity !== "string" || identity.trim().length === 0)) {
       throw new Error(`ChatGPT conversation turn has no stable ${name} identity`);
     }
+    if (name === "data-turn-id-container") {
+      const doc = (candidates[0]?.ownerDocument ?? document) as Document & { __codexObservedTurnIdentities?: Set<string> };
+      const history = doc.__codexObservedTurnIdentities ??= new Set<string>();
+      for (const identity of identities as string[]) history.add(identity);
+      if (includeHistory) return [...history];
+    }
     return identities as string[];
-  }, attribute);
+  }, observedHistory ? `${attribute}:observed` : attribute);
   if (new Set(identities).size !== identities.length) {
     throw new ChatGptTurnIdentityAmbiguityError("conversation");
   }

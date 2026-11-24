@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   activateChatGptEffortMenu, CHATGPT_EFFORT_MENU_SELECTOR, CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR,
 } from "../src/chatgpt-session";
+import { CHATGPT_ACTIVE_EFFORT_SLIDER_SELECTOR } from "../src/chatgpt-ui/model-picker";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 
@@ -26,7 +27,7 @@ function fixture(
   const modelChoice = { waitFor: async () => {}, getAttribute: async () => "true" };
   const owned = {
     isVisible: async () => opened,
-    locator: () => ({ nth: () => modelChoice, count: async () => 5 }),
+    locator: (selector: string) => selector.includes("data-active") ? hiddenAlert : ({ nth: () => modelChoice, count: async () => 5 }),
   };
   const stale = {
     ...hidden,
@@ -65,7 +66,7 @@ function fixture(
     locator: (selector: string) => {
       if (selector === '[id="owned-effort"]') return owned;
       if (selector === CHATGPT_EFFORT_MENU_SELECTOR) return stale;
-      if (selector === CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR) return {
+      if (selector === CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR || selector === CHATGPT_ACTIVE_EFFORT_SLIDER_SELECTOR) return {
         ...hidden,
         isVisible: async () => opened || openWith === "hidden-slider",
         waitFor: async () => { if (!opened && openWith !== "hidden-slider") throw new Error("container missing"); },

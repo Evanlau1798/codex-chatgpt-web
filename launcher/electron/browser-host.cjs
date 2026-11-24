@@ -204,6 +204,13 @@ function navigationErrorForLog(error) {
   return detail;
 }
 
+function logChatGptSessionLoss(host, result, source) {
+  // Only record an observed transition. The session payload can contain credentials.
+  if (host.state.authenticated && ["http-401", "session-error", "no-user", "expired"].includes(result.signedOutReason)) {
+    host.logger.info("browser.session_signed_out", { source, reason: result.signedOutReason });
+  }
+}
+
 function isTemporaryChatUrl(value) {
   let parsed;
   try {
@@ -1215,6 +1222,7 @@ class BrowserHost {
         if (this.destroyed || browserInteractionModeFor(this) !== "automatic") return;
         if (revision !== this.authenticationRevision) continue;
         if (this.reauthenticationRequired) return;
+        logChatGptSessionLoss(this, result, "idle");
         const availability = this.activeTraceId || this.manualOperation ? {} : result.sessionCheckError
           ? { status: "error", message: result.sessionCheckError }
           : result.sessionAuthenticated
@@ -2465,6 +2473,36 @@ class BrowserHost {
     });
   }
 
+  async resetEmbeddedBrowserData() {
+    return await this.withManualOperation("embedded browser data reset", async () => {
+      if (this.authView) this.closeAuthView(this.authView, true, false);
+      const contents = this.view?.webContents;
+      if (!contents || contents.isDestroyed()) throw new Error("Embedded ChatGPT browser is unavailable");
+      const tabs = [...this.turnTabs.values()];
+      const liveContents = [contents, ...tabs.map(tab => tab.view.webContents)]
+        .filter(candidate => candidate && !candidate.isDestroyed());
+      await Promise.all(liveContents.map(candidate => candidate.loadURL(IDLE_BROWSER_URL)));
+      await contents.session.clearStorageData();
+      await contents.session.clearCache();
+      contents.session.flushStorageData();
+      await contents.session.cookies.flushStore();
+      for (const tab of tabs) this.removeTurnTab(tab, true);
+      this.writeDescriptor();
+      this.primaryNavigationError = null;
+      this.authNavigationError = null;
+      this.reauthenticationRequired = false;
+      this.setState({
+        authenticated: false,
+        loading: false,
+        message: "Embedded browser data was reset. Sign in to ChatGPT",
+        status: "signed-out",
+        url: IDLE_BROWSER_URL,
+      });
+      this.logger.info("browser.session_reset");
+      return this.snapshot();
+    });
+  }
+
   refreshAuthentication() {
     requireAutomaticBrowserInspection(this, "ChatGPT authentication refresh");
     if (this.sessionRefreshOperation) return this.sessionRefreshOperation;
@@ -2578,6 +2616,7 @@ class BrowserHost {
       // A newer session change owns authentication. Do not publish an old in-flight
       // page probe after a sign-out/sign-in notification.
       if (revision !== this.authenticationRevision) return this.snapshot();
+      logChatGptSessionLoss(this, result, "page");
       if (result.sessionAuthenticated) {
         this.reauthenticationRequired = false;
         if (this.authView && !this.authView.webContents.isDestroyed()) {

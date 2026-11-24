@@ -9,11 +9,13 @@ import {
   waitForChatGptMutationPoll,
 } from "../../browser-mutation";
 import { ChatGptWebAdapterError } from "./adapter-error";
+import { CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR } from "../../chatgpt-session";
 
 const CONTROL_SELECTOR = [
   '[data-testid="thread-header-right-actions"] [aria-haspopup="menu"]',
   '#conversation-header-actions [aria-haspopup="menu"]',
   '[data-content-sheet-root] > button[aria-expanded][aria-controls]',
+  CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR,
 ].join(", ");
 const CHOICE_SELECTOR = '[role="menuitemradio"], [role="radio"]';
 const PREFLIGHT_TIMEOUT_MS = 30_000;

@@ -24,6 +24,37 @@ function send(server: ReturnType<typeof startServer>, data: unknown, headers: Re
     headers: { "content-type": "application/json", authorization: `Bearer ${key}`, ...headers }, body: JSON.stringify(data) });
 }
 
+test.each([
+  ["6.2", 520_000, false, 400], ["6.2", 520_000, true, 400],
+  ["6", 520_000, false, 200], ["6.2", 490_000, false, 200],
+] as const)("HTTP family %s preflights %i characters before admission (stream=%s)", async (family, chars, stream, status) => {
+  const root = mkdtempSync(join(tmpdir(), "http-family-budget-"));
+  const safety = new ChatGptAccountSafety(join(root, "safety.json"));
+  let admissions = 0, workers = 0;
+  const admit = safety.admit.bind(safety);
+  safety.admit = (...args) => { admissions++; return admit(...args); };
+  const execute = createChatCompletionExecutor({ safety, worker: () => ({ async run(turn) {
+    workers++; expect(turn.modelFamily).toBe(family); return "within-limit";
+  } }) });
+  try {
+    const response = await chatCompletionRequest(new Request("http://127.0.0.1/v1/chat/completions", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body({
+        model: `chatgpt-web/gpt-${family}-sol-instant`, stream,
+        messages: [{ role: "user", content: "inert fixture" + " ".repeat(chars) }],
+      })),
+    }), { ...defaultConfig(), solAvailable: true, proAvailable: true, extraHighAvailable: true },
+    new AbortController().signal, execute);
+    expect(response.status).toBe(status);
+    if (status === 400) {
+      expect(await response.json()).toMatchObject({ error: { code: "context_length_exceeded", param: "messages" } });
+      expect(admissions).toBe(0); expect(workers).toBe(0);
+    } else {
+      expect((await response.json() as any).choices[0].message.content).toBe("within-limit");
+      expect(admissions).toBe(1); expect(workers).toBe(1);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test.each(["5.6", "6"] as const)("HTTP Medium succeeds with High locked for family %s without a fallback", async family => {
   const root = mkdtempSync(join(tmpdir(), "http-locked-effort-"));
   const model = family === "5.6" ? "chatgpt-web/gpt-5.6-sol" : "chatgpt-web/latest";

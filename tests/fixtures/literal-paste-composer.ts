@@ -46,7 +46,7 @@ export function literalPasteComposer(options: {
     addRange(range: Range) {
       anchor = focus = range.startContainer;
       anchorOffset = range.startOffset;
-      collapsed = true;
+      collapsed = range.collapsed;
     },
   };
   const view = { getSelection: () => selection };
@@ -57,10 +57,13 @@ export function literalPasteComposer(options: {
   document.createRange = () => {
     let startNode: Node = element;
     let startOffset = 0;
+    let rangeCollapsed = true;
     return {
       setStart(node: Node, offset: number) { startNode = node; startOffset = offset; },
       setEnd() {},
-      collapse() {},
+      selectNodeContents(node: Node) { startNode = node; startOffset = 0; rangeCollapsed = false; },
+      collapse() { rangeCollapsed = true; },
+      get collapsed() { return rangeCollapsed; },
       get startContainer() { return startNode; },
       get startOffset() { return startOffset; },
       cloneContents() {
@@ -144,6 +147,7 @@ export function literalPasteComposer(options: {
       events.push({ type: event.type, plainPaste });
       if (options.acceptPaste === false || (options.requirePlainPaste && !plainPaste)) return;
       event.preventDefault();
+      if (!collapsed) setText("");
       const span = document.createElement("span");
       // Model the public editor representation: LF is inline BR; everything else is text.
       value.split("\n").forEach((line, index) => {

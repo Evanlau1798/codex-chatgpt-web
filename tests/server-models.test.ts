@@ -39,6 +39,8 @@ test("serves the account-scoped Claude gateway model catalog without proxying up
       { id: "claude-chatgpt-web-light", display_name: "ChatGPT Web — Instant", max_input_tokens: 41_000 },
       { id: "claude-chatgpt-web-medium", display_name: "ChatGPT Web — Medium", max_input_tokens: 90_000 },
       { id: "claude-chatgpt-web-high", display_name: "ChatGPT Web — High", max_input_tokens: 90_000 },
+      { id: "claude-chatgpt-web-gpt-6.2-sol-instant", display_name: "GPT-6.2 Sol Instant (Web)", max_input_tokens: 41_000 },
+      { id: "claude-chatgpt-web-gpt-6.2-sol", display_name: "GPT-6.2 Sol (Web)", max_input_tokens: 90_000 },
       { id: "claude-chatgpt-web-gpt-6-sol-instant", display_name: "GPT-6 Sol Instant (Web)", max_input_tokens: 41_000 },
       { id: "claude-chatgpt-web-gpt-6-sol", display_name: "GPT-6 Sol (Web)", max_input_tokens: 90_000 },
       { id: "claude-chatgpt-web-gpt-5.6-sol-instant", display_name: "GPT-5.6 Sol Instant (Web)", max_input_tokens: 41_000 },
@@ -105,6 +107,8 @@ test("proxies official /models auth and query, then appends the fixed ChatGPT We
   };
   expect(body.models.map(model => model.slug)).toEqual([
     "gpt-5.6-sol",
+    "chatgpt-web/gpt-6.2-sol-instant",
+    "chatgpt-web/gpt-6.2-sol",
     "chatgpt-web/gpt-6-sol-instant",
     "chatgpt-web/gpt-6-sol",
     "chatgpt-web/gpt-5.6-sol-instant",
@@ -186,7 +190,7 @@ test("ChatGPT-only native catalog rows do not turn model discovery into a 502", 
   const body = await response.json() as { models: Array<{ slug: string; supported_in_api?: boolean }> };
   expect(body.models[0]).toMatchObject({ slug: "gpt-chatgpt-only", supported_in_api: false });
   expect(body.models.filter(model => model.slug.startsWith("chatgpt-web/")))
-    .toHaveLength(7);
+    .toHaveLength(9);
   expect(body.models.filter(model => model.slug.startsWith("chatgpt-web/"))
     .every(model => model.supported_in_api === true)).toBe(true);
 });
