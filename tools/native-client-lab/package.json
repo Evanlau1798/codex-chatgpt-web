@@ -1,0 +1,14 @@
+{
+  "name": "astra6-pro-native-client-lab",
+  "private": true,
+  "type": "module",
+  "description": "Disposable, recorded native Codex and Claude Code launchers for the Astra6 Pro Web route.",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "syntax": "node --check src/launch.mjs && node --check src/proxy.mjs && node --check bin/codex-astrapro.mjs && node --check bin/claude-astrapro.mjs && node --check tests/proxy.test.mjs && node --check tests/launch-args.test.mjs",
+    "catalog": "node scripts/model-catalog.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,33 @@
+name: Native lab offline contracts
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  offline:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, windows-latest]
+        codex: ['0.159.2', '0.160.0']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - run: bun install --frozen-lockfile
+      - run: node --test tools/native-client-lab/tests/*.test.mjs
+      - name: Install pinned native parser for integration-only checks
+        run: npm install --global @openai/codex@${{ matrix.codex }}
+      - name: Verify installed native parser without an inference request
+        env:
+          NATIVE_LAB_CODEX_INTEGRATION_VERSION: ${{ matrix.codex }}
+        run: >-
+          node --input-type=module -e "import {executableOnPath} from './tools/native-client-lab/src/launch-args.mjs'; import {spawnSync} from 'node:child_process'; const r=spawnSync(process.execPath,['--test','tools/native-client-lab/tests/launch-args.test.mjs'],{stdio:'inherit',env:{...process.env,NATIVE_LAB_CODEX_INTEGRATION_PATH:executableOnPath('codex')}}); process.exit(r.status??1);"
